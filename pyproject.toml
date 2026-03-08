@@ -1,0 +1,28 @@
+[project]
+name = "swarmmind"
+version = "0.1.0"
+description = "SwarmMind sandbox-driven Python analysis runner"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "opensandbox>=0.1.5,<0.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+agents = [
+  "agentscope>=1.0.16,<2.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["swarmmind*"]

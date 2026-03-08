@@ -305,11 +305,11 @@ async def generate_excel_and_chart():
         resourceLimits={"cpu": "1", "memory": "1Gi"},
         env={"PYTHONUNBUFFERED": "1"}
     )
-    
+
     async with sandbox:
         # 2. 安装依赖（如果镜像未预装）
         await sandbox.commands.run("pip install pandas openpyxl matplotlib seaborn")
-        
+
         # 3. 写入 Python 脚本到容器内
         script = """
 import pandas as pd
@@ -338,7 +338,7 @@ df = pd.DataFrame(data)
 # 1. 保存为 Excel 文件（多个 sheet）
 with pd.ExcelWriter('/tmp/sales_report.xlsx', engine='openpyxl') as writer:
     df.to_excel(writer, sheet_name='原始数据', index=False)
-    
+
     # 添加汇总 sheet
     summary = df.groupby('品类').agg({
         '销售额': ['sum', 'mean', 'count'],
@@ -346,7 +346,7 @@ with pd.ExcelWriter('/tmp/sales_report.xlsx', engine='openpyxl') as writer:
     }).round(2)
     summary.columns = ['销售额_总和', '销售额_均值', '订单数', '利润_总和']
     summary.to_excel(writer, sheet_name='品类汇总')
-    
+
     # 添加日期汇总
     daily = df.groupby(df['日期'].dt.date).agg({'销售额': 'sum', '利润': 'sum'})
     daily.to_excel(writer, sheet_name='每日汇总')
@@ -395,28 +395,28 @@ print(f"时间范围: {df['日期'].min()} 到 {df['日期'].max()}")
 print(f"总销售额: {df['销售额'].sum():,.0f}")
 print(f"总利润: {df['利润'].sum():,.2f}")
 """
-        
+
         await sandbox.files.write_files([
             WriteEntry(path="/tmp/generate_report.py", data=script, mode=644)
         ])
-        
+
         # 4. 执行脚本
         execution = await sandbox.commands.run("python /tmp/generate_report.py")
         print("脚本输出:", execution.logs.stdout[0].text)
-        
+
         # 5. 读取生成的 Excel 文件（前几行）
-        excel_content = await sandbox.files.read_file("/tmp/sales_report.xlsx", binary=True)
+        excel_content = await sandbox.files.read_file("/tmp/sales_report.xlsx", encoding="utf-8")
         print(f"Excel 文件大小: {len(excel_content)} 字节")
-        
+
         # 6. 读取图表图片
-        chart_content = await sandbox.files.read_file("/tmp/sales_charts.png", binary=True)
+        chart_content = await sandbox.files.read_file("/tmp/sales_charts.png", encoding="utf-8")
         print(f"图表文件大小: {len(chart_content)} 字节")
-        
+
         # 7. 可选：将文件下载到本地
         # 这里可以添加代码将文件通过 HTTP 或其他方式传输到 SwarmMind 存储
-        
+
         print("任务完成！")
-    
+
     await sandbox.kill()
 
 # 运行示例
@@ -435,7 +435,7 @@ import base64
 class DataProcessor:
     def __init__(self, sandbox_provider):
         self.sandbox_provider = sandbox_provider
-    
+
     async def generate_excel_report(
         self,
         data: Dict[str, Any],
@@ -446,26 +446,26 @@ class DataProcessor:
             image="jupyter/datascience-notebook",
             resource_limits={"cpu": "1", "memory": "2Gi"}
         )
-        
+
         try:
             # 将数据写入容器
             await sandbox.files.write_json("/tmp/input_data.json", data)
-            
+
             # 执行报表生成脚本
             result = await sandbox.commands.run(
                 "python /app/generate_report.py /tmp/input_data.json /tmp/output.xlsx"
             )
-            
+
             if result.exit_code != 0:
                 raise RuntimeError(f"报表生成失败: {result.logs.stderr}")
-            
+
             # 读取生成的 Excel
             excel_bytes = await sandbox.files.read_file("/tmp/output.xlsx", binary=True)
             return excel_bytes
-            
+
         finally:
             await sandbox.kill()
-    
+
     async def create_chart(
         self,
         data: Dict[str, Any],
@@ -501,16 +501,16 @@ graph TD
     B --> C{选择镜像}
     C --> D[python:3.11-slim<br/>+ 按需安装]
     C --> E[预装数据科学镜像]
-    
+
     D --> F[安装 pandas/matplotlib]
     E --> F
-    
+
     F --> G[执行数据处理脚本]
     G --> H[生成 Excel/图表文件]
     H --> I[读取文件内容]
     I --> J[返回给 Agent]
     J --> K[销毁沙箱<br/>释放资源]
-    
+
     style A fill:#e1f5fe
     style J fill:#c8e6c9
     style K fill:#ffebee
