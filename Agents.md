@@ -220,7 +220,7 @@ SwarmMind/
 
 ## 7. 分阶段实施计划（详细）
 
-## Phase 0：技术预研（1 周）
+## Phase 0：技术预研（1 周）- 已完成
 
 - 跑通 OpenSandbox 本地最小示例：create/exec/files/kill。
 - 跑通 AgentScope 最小多 Agent（2~3 agent + MsgHub）。

@@ -1,0 +1,10 @@
+{
+  "goal": "监控股票价格变化，超过5%时发送邮件提醒",
+  "constraints": {
+    "symbols": ["AAPL", "GOOGL", "MSFT"],
+    "threshold": 5.0,
+    "alert_email": "user@example.com"
+  },
+  "priority": "normal",
+  "profile": "py-basic"
+}

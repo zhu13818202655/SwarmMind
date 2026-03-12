@@ -1,0 +1,14 @@
+# Py Basic Profile - Python with basic tools
+
+name: py-basic
+image: opensandbox/code-interpreter:python3.11
+entrypoint: /bin/bash
+timeout_seconds: 300
+
+env:
+  PYTHONPATH: /tmp
+  PIP_NO_CACHE_DIR: "1"
+
+resource_limits:
+  cpu: 2
+  memory: 2048

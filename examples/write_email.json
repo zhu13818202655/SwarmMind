@@ -1,0 +1,10 @@
+{
+  "goal": "写一封邮件给老板，汇报项目进度",
+  "constraints": {
+    "recipient": "boss@example.com",
+    "subject": "项目进度汇报",
+    "tone": "professional"
+  },
+  "priority": "high",
+  "profile": "py-basic"
+}
