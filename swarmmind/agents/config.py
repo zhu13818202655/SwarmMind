@@ -3,6 +3,8 @@
 from typing import Any
 from pydantic import BaseModel, Field
 
+from swarmmind.models.capability import AgentRole, ToolGroup
+
 
 class AgentScopeConfig(BaseModel):
     """AgentScope configuration."""
@@ -19,6 +21,7 @@ class AgentConfig(BaseModel):
     """Agent configuration."""
 
     name: str = Field(default="main", description="Agent name")
+    role: AgentRole = Field(default=AgentRole.EXECUTOR, description="Logical agent role")
     scope_config: AgentScopeConfig = Field(default_factory=AgentScopeConfig)
     max_steps: int = Field(default=100, description="Max steps")
     memory_config: dict[str, Any] = Field(
@@ -26,3 +29,11 @@ class AgentConfig(BaseModel):
         description="Memory configuration",
     )
     system_prompt: str | None = Field(default=None, description="System prompt")
+    skill_profiles: list[str] = Field(
+        default_factory=list,
+        description="Skill profiles equipped on this agent",
+    )
+    tool_groups: list[ToolGroup] = Field(
+        default_factory=list,
+        description="Tool groups equipped on this agent",
+    )

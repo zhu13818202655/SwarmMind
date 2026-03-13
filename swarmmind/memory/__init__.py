@@ -1,7 +1,8 @@
-"""Memory module for SwarmMind."""
+"""Memory module for SwarmMind.
 
-from swarmmind.memory.manager import MemoryManager
+The package intentionally avoids importing heavyweight optional dependencies at
+module import time. Import concrete helpers such as `MemoryManager` or
+`Transcript` from their submodules when needed.
+"""
 
-__all__ = [
-    "MemoryManager",
-]
+__all__: list[str] = []

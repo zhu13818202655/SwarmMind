@@ -5,6 +5,8 @@ import inspect
 
 from agentscope.tool import Toolkit
 
+from swarmmind.models.capability import ToolGroup
+
 
 class ToolRegistry:
     """Tool registry for managing tools."""
@@ -12,8 +14,16 @@ class ToolRegistry:
     def __init__(self):
         self._toolkit = Toolkit()
         self._funcs: dict[str, Callable] = {}
+        self._tool_groups: dict[str, list[ToolGroup]] = {}
+        self._descriptions: dict[str, str] = {}
 
-    def register(self, func: Callable, name: str | None = None, description: str | None = None) -> None:
+    def register(
+        self,
+        func: Callable,
+        name: str | None = None,
+        description: str | None = None,
+        groups: list[ToolGroup | str] | None = None,
+    ) -> None:
         """Register a function as a tool."""
         tool_name = name or func.__name__
 
@@ -33,6 +43,11 @@ class ToolRegistry:
             description,
         )
         self._funcs[tool_name] = func
+        self._descriptions[tool_name] = description
+        self._tool_groups[tool_name] = [
+            group if isinstance(group, ToolGroup) else ToolGroup(group)
+            for group in (groups or [])
+        ]
 
     def get_tool(self, name: str) -> Any:
         """Get tool by name."""
@@ -41,6 +56,38 @@ class ToolRegistry:
     def get_all_tools(self) -> list[dict[str, Any]]:
         """Get all registered tools."""
         return self._toolkit.get_json_schemas()
+
+    def get_tools_for_groups(self, groups: list[ToolGroup | str]) -> list[dict[str, Any]]:
+        """Get tool schemas matching any of the provided groups."""
+        normalized_groups = {
+            group if isinstance(group, ToolGroup) else ToolGroup(group)
+            for group in groups
+        }
+        selected_names = {
+            name
+            for name, tool_groups in self._tool_groups.items()
+            if normalized_groups.intersection(tool_groups)
+        }
+        return [
+            schema
+            for schema in self._toolkit.get_json_schemas()
+            if schema.get("name") in selected_names
+        ]
+
+    def get_tool_groups(self, name: str) -> list[ToolGroup]:
+        """Return the tool groups associated with a tool."""
+        return self._tool_groups.get(name, [])
+
+    def get_tool_metadata(self) -> list[dict[str, Any]]:
+        """Return tool metadata including tool group assignments."""
+        return [
+            {
+                "name": name,
+                "description": self._descriptions.get(name, ""),
+                "groups": [group.value for group in self._tool_groups.get(name, [])],
+            }
+            for name in self._funcs
+        ]
 
     def get_tool_names(self) -> list[str]:
         """Get all tool names."""
@@ -62,6 +109,8 @@ class ToolRegistry:
         """Clear all registered tools."""
         self._toolkit.clear()
         self._funcs.clear()
+        self._tool_groups.clear()
+        self._descriptions.clear()
 
     @property
     def toolkit(self) -> Toolkit:

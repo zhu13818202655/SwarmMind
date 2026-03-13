@@ -1,103 +1,97 @@
-"""Task orchestrator for managing task execution."""
+"""Task orchestrator for the first rewrite round."""
 
-from typing import Any
-from swarmmind.models.task import Task, SubTask, TaskStatus
-from swarmmind.gateway.gateway import Gateway
-from swarmmind.agents.factory import AgentFactory
-from swarmmind.sandbox.manager import SandboxManager
-from swarmmind.memory.transcript import Transcript
+from __future__ import annotations
+
+import uuid
+
+from swarmmind.events.bus import EventBus
+from swarmmind.models.event import DomainEvent
+from swarmmind.models.run import RunPhase
+from swarmmind.models.task import TaskStatus
+from swarmmind.orchestration.coordinator import Coordinator
+from swarmmind.orchestration.planner import Planner
+from swarmmind.orchestration.scheduler import Scheduler
+from swarmmind.repositories import RunRepository, SubTaskRepository, TaskRepository
 
 
 class TaskOrchestrator:
-    """Orchestrator for managing task execution."""
+    """Event-driven task orchestrator skeleton."""
 
     def __init__(
         self,
-        gateway: Gateway,
-        agent_factory: AgentFactory,
-        sandbox_manager: SandboxManager,
+        task_repository: TaskRepository,
+        run_repository: RunRepository,
+        subtask_repository: SubTaskRepository,
+        event_bus: EventBus,
+        planner: Planner,
+        coordinator: Coordinator,
+        scheduler: Scheduler,
     ):
-        self._gateway = gateway
-        self._agent_factory = agent_factory
-        self._sandbox_manager = sandbox_manager
+        self._task_repository = task_repository
+        self._run_repository = run_repository
+        self._subtask_repository = subtask_repository
+        self._event_bus = event_bus
+        self._planner = planner
+        self._coordinator = coordinator
+        self._scheduler = scheduler
 
-    async def execute_task(self, task: Task) -> dict[str, Any]:
-        """Execute a task."""
-        # Create session
-        session = self._gateway.create_session(task.id)
-        transcript: Transcript = session["transcript"]
+    async def handle_task_created(self, event: DomainEvent) -> None:
+        """Build the initial task graph and assign ready subtasks."""
+        task = await self._task_repository.get(event.task_id or "")
+        run = await self._run_repository.get(event.run_id or "")
+        if task is None or run is None:
+            return
 
-        try:
-            # Mark as running
-            task.start()
-            await self._gateway.update_task(task)
-            transcript.add_event("task_started", {"goal": task.goal})
+        task.status = TaskStatus.PLANNING
+        await self._task_repository.save(task)
 
-            # Decompose task into subtasks
-            decomposer = TaskDecomposer()
-            subtasks = await decomposer.decompose(task.goal)
-            session["subtasks"] = subtasks
+        run.start()
+        run.set_phase(RunPhase.PLANNING)
+        await self._run_repository.save(run)
 
-            # Execute subtasks
-            results = []
-            for subtask in subtasks:
-                result = await self._execute_subtask(subtask, transcript)
-                results.append(result)
+        subtasks = await self._planner.plan(task, run)
+        await self._subtask_repository.create_many(subtasks)
 
-            # Complete task
-            task.succeed({"results": results, "task_id": task.id})
-            await self._gateway.update_task(task)
-            transcript.add_event("task_completed", {"results_count": len(results)})
+        run.attach_subtasks([subtask.id for subtask in subtasks])
+        run.set_phase(RunPhase.COORDINATING)
+        await self._run_repository.save(run)
 
-            return task.result
-
-        except Exception as e:
-            task.fail(str(e))
-            await self._gateway.update_task(task)
-            transcript.add_error(str(e))
-            raise
-
-    async def _execute_subtask(self, subtask: SubTask, transcript: Transcript) -> dict[str, Any]:
-        """Execute a subtask."""
-        subtask.status = TaskStatus.RUNNING
-        transcript.add_event("subtask_started", {"subtask": subtask.name})
-
-        try:
-            # Create sandbox if needed
-            if subtask.sandbox_profile:
-                handle = await self._sandbox_manager.create(subtask.sandbox_profile)
-                subtask.agent_id = handle.sandbox_id
-
-            # Execute (simplified - just mark as done)
-            result = {"subtask_id": subtask.id, "status": "completed"}
-            subtask.complete(result)
-
-            transcript.add_event("subtask_completed", {"subtask": subtask.name})
-            return result
-
-        except Exception as e:
-            subtask.fail(str(e))
-            transcript.add_error(f"subtask_{subtask.id}: {str(e)}")
-            raise
-
-
-class TaskDecomposer:
-    """Decompose a task into subtasks."""
-
-    async def decompose(self, goal: str) -> list[SubTask]:
-        """Decompose a goal into subtasks."""
-        # Simplified implementation
-        # In production, this would use LLM to decompose
-
-        import uuid
-
-        # Single subtask for now
-        return [
-            SubTask(
-                id=str(uuid.uuid4()),
-                task_id="",
-                name="main",
-                description=goal,
-                sandbox_profile="py-basic",
+        await self._event_bus.publish(
+            DomainEvent(
+                event_id=str(uuid.uuid4()),
+                topic="task.planning.completed",
+                tenant_id=event.tenant_id,
+                session_id=event.session_id,
+                task_id=task.id,
+                run_id=run.id,
+                payload={"subtask_count": len(subtasks)},
             )
-        ]
+        )
+
+        ready_subtasks = self._scheduler.get_ready_subtasks(subtasks)
+        assigned_subtasks = await self._coordinator.assign(task, run, ready_subtasks)
+        for subtask in assigned_subtasks:
+            await self._subtask_repository.save(subtask)
+            await self._event_bus.publish(
+                DomainEvent(
+                    event_id=str(uuid.uuid4()),
+                    topic="subtask.assigned",
+                    tenant_id=event.tenant_id,
+                    session_id=event.session_id,
+                    task_id=task.id,
+                    run_id=run.id,
+                    subtask_id=subtask.id,
+                    payload={
+                        "name": subtask.name,
+                        "role": subtask.role,
+                        "preferred_skill": subtask.preferred_skill,
+                    },
+                )
+            )
+
+        task.start()
+        await self._task_repository.save(task)
+
+        run.set_phase(RunPhase.EXECUTING)
+        await self._run_repository.save(run)
+

@@ -5,6 +5,8 @@ from enum import Enum
 from typing import Any
 from pydantic import BaseModel, Field
 
+from swarmmind.models.capability import AgentRole, ToolGroup
+
 
 class TaskStatus(str, Enum):
     """Task status enum."""
@@ -73,10 +75,21 @@ class SubTask(BaseModel):
     description: str = Field(..., description="Sub-task description")
     status: TaskStatus = Field(default=TaskStatus.PENDING)
     agent_id: str | None = Field(default=None, description="Agent assigned to this sub-task")
+    role: AgentRole = Field(default=AgentRole.EXECUTOR, description="Logical executor role")
+    preferred_skill: str | None = Field(default=None, description="Preferred skill profile")
+    required_tool_groups: list[ToolGroup] = Field(
+        default_factory=list,
+        description="Tool groups required by this sub-task",
+    )
     sandbox_profile: str | None = Field(default=None, description="Sandbox profile")
+    acceptance_criteria: list[str] = Field(
+        default_factory=list,
+        description="Acceptance criteria for validation and review",
+    )
     result: dict[str, Any] | None = Field(default=None)
     error: str | None = Field(default=None)
     dependencies: list[str] = Field(default_factory=list, description="Sub-task IDs this depends on")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional execution metadata")
 
     def complete(self, result: dict[str, Any]) -> None:
         """Mark sub-task as completed."""
@@ -96,6 +109,11 @@ class TaskRequest(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
     profile: str = Field(default="py-basic", description="Sandbox profile")
+    preferred_skill: str | None = Field(default=None, description="Preferred top-level skill")
+    required_tool_groups: list[ToolGroup] = Field(
+        default_factory=list,
+        description="Tool groups required for the task by policy or user request",
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
