@@ -34,7 +34,7 @@ htmlcov/
 # IDE and OS files
 .DS_Store
 Thumbs.db
-.vscode/
+# .vscode/
 .idea/
 
 # Logs and runtime artifacts

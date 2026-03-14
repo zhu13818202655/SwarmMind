@@ -1,0 +1,54 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "SwarmMind API",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "swarmmind.api.server:create_app",
+        "--factory",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
+      "name": "Submit Task Script",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/submit_task.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--base-url",
+        "http://127.0.0.1:8000",
+        "--wait-for-service",
+        "20",
+        "--poll"
+      ]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "SwarmMind API + Submit Task",
+      "configurations": [
+        "SwarmMind API",
+        "Submit Task Script"
+      ],
+      "stopAll": true
+    }
+  ]
+}
