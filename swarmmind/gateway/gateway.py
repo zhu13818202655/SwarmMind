@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from swarmmind.events import InMemoryEventBus
+from swarmmind.events import EventBus, InMemoryEventBus
 from swarmmind.gateway.admission import AdmissionController
 from swarmmind.gateway.dispatcher import GatewayDispatcher
 from swarmmind.gateway.envelopes import TaskDetail, TaskSubmitRequest, TaskSubmissionResult
@@ -19,6 +19,12 @@ from swarmmind.models.run import Run
 from swarmmind.models.task import Task, TaskRequest, TaskStatus
 from swarmmind.query import QueryService
 from swarmmind.repositories import (
+    ArtifactRepository,
+    ReplayRepository,
+    RunRepository,
+    SessionRepository,
+    SubTaskRepository,
+    TaskRepository,
     InMemoryArtifactRepository,
     InMemoryReplayRepository,
     InMemoryRunRepository,
@@ -33,13 +39,13 @@ class Gateway:
 
     def __init__(
         self,
-        task_repository: InMemoryTaskRepository | None = None,
-        session_repository: InMemorySessionRepository | None = None,
-        run_repository: InMemoryRunRepository | None = None,
-        subtask_repository: InMemorySubTaskRepository | None = None,
-        artifact_repository: InMemoryArtifactRepository | None = None,
-        replay_repository: InMemoryReplayRepository | None = None,
-        event_bus: InMemoryEventBus | None = None,
+        task_repository: TaskRepository | None = None,
+        session_repository: SessionRepository | None = None,
+        run_repository: RunRepository | None = None,
+        subtask_repository: SubTaskRepository | None = None,
+        artifact_repository: ArtifactRepository | None = None,
+        replay_repository: ReplayRepository | None = None,
+        event_bus: EventBus | None = None,
         identity_resolver: StaticIdentityResolver | None = None,
         authorization_policy: AuthorizationPolicy | None = None,
         query_service: QueryService | None = None,
@@ -104,17 +110,7 @@ class Gateway:
             ReplayRoot(id=str(uuid.uuid4()), task_id=task.id, run_id=run.id)
         )
 
-        await self._dispatcher.dispatch(
-            DomainEvent(
-                event_id=str(uuid.uuid4()),
-                topic="run.created",
-                tenant_id=identity.tenant_id,
-                session_id=session.id,
-                task_id=task.id,
-                run_id=run.id,
-            )
-        )
-        await self._dispatcher.dispatch(
+        self._dispatcher.dispatch_background(
             DomainEvent(
                 event_id=str(uuid.uuid4()),
                 topic="task.created",

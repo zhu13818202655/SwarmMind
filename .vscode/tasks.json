@@ -4,7 +4,7 @@
     {
       "label": "Run SwarmMind API",
       "type": "shell",
-      "command": "python",
+      "command": "${command:python.interpreterPath}",
       "args": [
         "-m",
         "uvicorn",
@@ -27,12 +27,38 @@
     {
       "label": "Submit SwarmMind Task",
       "type": "shell",
-      "command": "python",
+      "command": "${command:python.interpreterPath}",
       "args": [
         "scripts/submit_task.py",
         "--base-url",
         "http://127.0.0.1:8000",
         "--poll"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Submit Snake Task",
+      "type": "shell",
+      "command": "${command:python.interpreterPath}",
+      "args": [
+        "scripts/submit_task.py",
+        "--base-url",
+        "http://127.0.0.1:8000",
+        "--goal",
+        "写一个python版本贪吃蛇",
+        "--poll",
+        "--wait-for-service",
+        "15",
+        "--request-timeout",
+        "300",
+        "--timeout",
+        "900"
       ],
       "options": {
         "cwd": "${workspaceFolder}",

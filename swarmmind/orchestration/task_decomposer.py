@@ -5,29 +5,7 @@ import uuid
 from typing import Any
 from swarmmind.models.capability import AgentRole, ToolGroup
 from swarmmind.models.task import SubTask
-
-
-LLM_DECOMPOSE_PROMPT = """You are a task decomposition assistant. Break down the user's task into clear, sequential steps.
-
-Task: {goal}
-
-Analyze the task and break it down into subtasks. Consider:
-1. What needs to be done first?
-2. What information is needed?
-3. What are the dependencies between steps?
-
-Respond with a JSON array of subtasks, each with:
-- name: short identifier for the step
-- description: what this step should accomplish
-- sandbox_profile: recommended sandbox profile (py-basic, node-basic, secure-offline)
-
-Example output format:
-[
-    {{"name": "research", "description": "Search for information about...", "role": "researcher", "preferred_skill": "research", "required_tool_groups": ["web_search", "browser_read"], "sandbox_profile": "py-basic"}},
-    {{"name": "write", "description": "Write the report based on research", "role": "writer", "preferred_skill": "write_report", "required_tool_groups": ["project_write"], "sandbox_profile": "py-basic"}}
-]
-
-Respond ONLY with the JSON array, no other text."""
+from swarmmind.prompt_template import render_prompt_template
 
 
 class TaskDecomposer:
@@ -209,7 +187,7 @@ class TaskDecomposer:
 
     async def _decompose_with_llm(self, goal: str, task_id: str) -> list[SubTask] | None:
         """Decompose using LLM."""
-        prompt = LLM_DECOMPOSE_PROMPT.format(goal=goal)
+        prompt = render_prompt_template("task_decomposer_llm_v1.md", {"goal": goal})
 
         # Call LLM (simplified - actual implementation depends on model client)
         response = await self._model_client.chat(

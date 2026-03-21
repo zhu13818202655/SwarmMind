@@ -37,6 +37,8 @@
         "http://127.0.0.1:8000",
         "--wait-for-service",
         "20",
+        "--goal",
+        "写一个python版本贪吃蛇",
         "--poll"
       ]
     }

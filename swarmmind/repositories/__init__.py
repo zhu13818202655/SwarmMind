@@ -14,6 +14,15 @@ from swarmmind.repositories.in_memory import (
     InMemorySubTaskRepository,
     InMemoryTaskRepository,
 )
+from swarmmind.repositories.postgres import (
+    PostgresArtifactRepository,
+    PostgresReplayRepository,
+    PostgresRunRepository,
+    PostgresSessionRepository,
+    PostgresStore,
+    PostgresSubTaskRepository,
+    PostgresTaskRepository,
+)
 
 __all__ = [
     "ArtifactRepository",
@@ -23,6 +32,13 @@ __all__ = [
     "InMemorySessionRepository",
     "InMemorySubTaskRepository",
     "InMemoryTaskRepository",
+    "PostgresArtifactRepository",
+    "PostgresReplayRepository",
+    "PostgresRunRepository",
+    "PostgresSessionRepository",
+    "PostgresStore",
+    "PostgresSubTaskRepository",
+    "PostgresTaskRepository",
     "ReplayRepository",
     "RunRepository",
     "SessionRepository",

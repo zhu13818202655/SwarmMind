@@ -5,6 +5,8 @@ from enum import Enum
 from typing import Any
 from pydantic import BaseModel, Field
 
+from swarmmind.utils import utc_now
+
 
 class MessageRole(str, Enum):
     """Message role enum."""
@@ -21,7 +23,7 @@ class Message(BaseModel):
     id: str = Field(..., description="Unique message identifier")
     role: MessageRole = Field(..., description="Message role")
     content: str = Field(..., description="Message content")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     tool_calls: list[dict[str, Any]] | None = Field(default=None, description="Tool calls if any")
     tool_call_id: str | None = Field(default=None, description="Tool call ID for tool responses")
@@ -30,7 +32,7 @@ class Message(BaseModel):
     def user_message(cls, content: str) -> "Message":
         """Create a user message."""
         return cls(
-            id=f"msg_{datetime.utcnow().timestamp()}",
+            id=f"msg_{utc_now().timestamp()}",
             role=MessageRole.USER,
             content=content,
         )
@@ -39,7 +41,7 @@ class Message(BaseModel):
     def assistant_message(cls, content: str, tool_calls: list[dict[str, Any]] | None = None) -> "Message":
         """Create an assistant message."""
         return cls(
-            id=f"msg_{datetime.utcnow().timestamp()}",
+            id=f"msg_{utc_now().timestamp()}",
             role=MessageRole.ASSISTANT,
             content=content,
             tool_calls=tool_calls,
@@ -49,7 +51,7 @@ class Message(BaseModel):
     def tool_message(cls, content: str, tool_call_id: str) -> "Message":
         """Create a tool message."""
         return cls(
-            id=f"msg_{datetime.utcnow().timestamp()}",
+            id=f"msg_{utc_now().timestamp()}",
             role=MessageRole.TOOL,
             content=content,
             tool_call_id=tool_call_id,

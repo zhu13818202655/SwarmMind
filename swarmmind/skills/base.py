@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from swarmmind.utils import utc_now
+
 
 @dataclass
 class SkillResult:
@@ -14,7 +16,7 @@ class SkillResult:
     output: Any = None
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    executed_at: datetime = field(default_factory=datetime.utcnow)
+    executed_at: datetime = field(default_factory=utc_now)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""

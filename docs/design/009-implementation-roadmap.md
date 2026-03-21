@@ -551,7 +551,7 @@ swarmmind/
       __init__.py
       config.py
       factory.py
-      prompts/
+   prompt_template/
    memory/
       __init__.py
       manager.py

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
+from swarmmind.utils import utc_now
+
 
 @dataclass(slots=True)
 class SandboxHandle:
@@ -14,7 +16,7 @@ class SandboxHandle:
     sandbox_id: str
     profile: str
     image: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=utc_now)
 
 
 @dataclass(slots=True)

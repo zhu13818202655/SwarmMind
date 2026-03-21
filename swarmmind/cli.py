@@ -6,13 +6,14 @@ import sys
 from typing import Optional
 
 import click
-from swarmmind.models.config import SwarmMindConfig
+from agentscope.message import Msg
+from swarmmind.config import get_settings
 from swarmmind.models.task import TaskRequest
 from swarmmind.gateway.gateway import Gateway
 from swarmmind.sandbox.opensandbox_adapter import OpenSandboxAdapter
 from swarmmind.sandbox.manager import SandboxManager
 from swarmmind.agents.factory import AgentFactory
-from swarmmind.agents.config import AgentConfig
+from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.tools.registry import ToolRegistry
 
 
@@ -39,20 +40,28 @@ async def _run_task(goal: str, output: Optional[str], profile: str, api_key: Opt
     click.echo(f"Task: {goal}")
 
     # Initialize components
-    config = SwarmMindConfig()
+    config = get_settings()
 
     # Setup sandbox
-    sandbox_key = sandbox_key or "dev-key"
+    sandbox_key = sandbox_key or config.sandbox.api_key or "dev-key"
     sandbox_adapter = OpenSandboxAdapter(
         api_key=sandbox_key,
-        base_url="http://localhost:45698",
+        base_url=config.sandbox.base_url,
     )
     sandbox_manager = SandboxManager(sandbox_adapter)
 
     # Setup agent
     agent_config = AgentConfig(
         name="main",
-        scope_config=config.agent.model,
+        scope_config=AgentScopeConfig(
+            model_type=config.agent.model.provider,
+            model_name=config.agent.model.name,
+            api_key=api_key or config.agent.model.api_key,
+            base_url=config.agent.model.base_url,
+            temperature=config.agent.model.temperature,
+            max_tokens=config.agent.model.max_tokens,
+        ),
+        max_steps=config.agent.max_steps,
     )
     agent_factory = AgentFactory(agent_config)
 
@@ -82,18 +91,18 @@ async def _run_task(goal: str, output: Optional[str], profile: str, api_key: Opt
         tool_registry = ToolRegistry()
         tool_registry.register(search, name="search", description="Search the web for information")
 
-        # Create agent (without tools for now, just basic)
-        # In production, tools would be registered
-        agent = agent_factory.create_main_agent()
+        agent = agent_factory.create_main_agent(tools=[search])
 
         # Run agent
         transcript.add_message("user", goal)
-        result = await agent(goal)
+        result = await agent(Msg(name="user", content=goal, role="user"))
+        result_payload = result.to_dict()
+        result_text = result.get_text_content() or str(result_payload)
 
         # Task completed
-        task.succeed({"result": result, "task_id": task.id})
+        task.succeed({"result": result_payload, "task_id": task.id})
         await gateway.update_task(task)
-        transcript.add_event("task_completed", {"result": str(result)[:500]})
+        transcript.add_event("task_completed", {"result": result_text[:500]})
 
         # Output result
         if output:
@@ -101,7 +110,7 @@ async def _run_task(goal: str, output: Optional[str], profile: str, api_key: Opt
                 json.dump(task.result, f, ensure_ascii=False, indent=2)
             click.echo(f"Result saved to {output}")
         else:
-            click.echo(f"Result: {result}")
+            click.echo(f"Result: {result_text}")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

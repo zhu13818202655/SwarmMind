@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from swarmmind.utils import utc_now
+
 
 class RunStatus(str, Enum):
     """Execution status for a run."""
@@ -37,8 +39,8 @@ class Run(BaseModel):
     status: RunStatus = Field(default=RunStatus.PENDING)
     phase: RunPhase = Field(default=RunPhase.INTAKE)
     subtask_ids: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
@@ -47,28 +49,28 @@ class Run(BaseModel):
     def start(self) -> None:
         """Mark the run as active."""
         self.status = RunStatus.RUNNING
-        self.started_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.started_at = utc_now()
+        self.updated_at = utc_now()
 
     def set_phase(self, phase: RunPhase) -> None:
         """Advance the run phase."""
         self.phase = phase
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utc_now()
 
     def attach_subtasks(self, subtask_ids: list[str]) -> None:
         """Attach subtasks to this run."""
         self.subtask_ids = list(subtask_ids)
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utc_now()
 
     def succeed(self) -> None:
         """Mark the run as successful."""
         self.status = RunStatus.SUCCEEDED
-        self.finished_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.finished_at = utc_now()
+        self.updated_at = utc_now()
 
     def fail(self, error: str) -> None:
         """Mark the run as failed."""
         self.status = RunStatus.FAILED
         self.error = error
-        self.finished_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.finished_at = utc_now()
+        self.updated_at = utc_now()

@@ -70,6 +70,13 @@ class TaskOrchestrator:
 
         ready_subtasks = self._scheduler.get_ready_subtasks(subtasks)
         assigned_subtasks = await self._coordinator.assign(task, run, ready_subtasks)
+
+        task.start()
+        await self._task_repository.save(task)
+
+        run.set_phase(RunPhase.EXECUTING)
+        await self._run_repository.save(run)
+
         for subtask in assigned_subtasks:
             await self._subtask_repository.save(subtask)
             await self._event_bus.publish(
@@ -88,10 +95,4 @@ class TaskOrchestrator:
                     },
                 )
             )
-
-        task.start()
-        await self._task_repository.save(task)
-
-        run.set_phase(RunPhase.EXECUTING)
-        await self._run_repository.save(run)
 

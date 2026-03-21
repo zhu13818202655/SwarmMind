@@ -1,8 +1,31 @@
-"""Memory module for SwarmMind.
+"""Memory module for SwarmMind."""
 
-The package intentionally avoids importing heavyweight optional dependencies at
-module import time. Import concrete helpers such as `MemoryManager` or
-`Transcript` from their submodules when needed.
-"""
+from swarmmind.memory.long_term import (
+	ChromaLongTermMemory,
+	EmbeddingProvider,
+	HashingEmbeddingProvider,
+	InMemoryLongTermMemory,
+	InMemoryVectorStore,
+	LongTermMemoryBase,
+	MemoryItem,
+	QdrantLongTermMemory,
+	QdrantVectorStore,
+	VectorLongTermMemory,
+	VectorStore,
+	create_long_term_memory,
+)
 
-__all__: list[str] = []
+__all__ = [
+	"ChromaLongTermMemory",
+	"EmbeddingProvider",
+	"HashingEmbeddingProvider",
+	"InMemoryLongTermMemory",
+	"InMemoryVectorStore",
+	"LongTermMemoryBase",
+	"MemoryItem",
+	"QdrantLongTermMemory",
+	"QdrantVectorStore",
+	"VectorLongTermMemory",
+	"VectorStore",
+	"create_long_term_memory",
+]

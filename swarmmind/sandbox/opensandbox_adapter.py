@@ -14,6 +14,12 @@ from swarmmind.sandbox.profiles import SandboxProfile, DEFAULT_PROFILES
 from swarmmind.sandbox.provider import ExecResult, SandboxHandle, SandboxProvider, WriteFileEntry
 
 
+FALLBACK_INTERPRETER_IMAGES = [
+    "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.1",
+    "opensandbox/code-interpreter:v1.0.1",
+]
+
+
 class OpenSandboxAdapter(SandboxProvider):
     """OpenSandbox adapter implementation."""
 
@@ -24,13 +30,18 @@ class OpenSandboxAdapter(SandboxProvider):
         base_url: str = "http://localhost:45698",
         create_retry_count: int = 3,
         create_retry_backoff_seconds: float = 1.0,
+        request_timeout_seconds: int = 180,
         profiles: dict[str, SandboxProfile] | None = None,
     ) -> None:
         self._create_retry_count = create_retry_count
         self._create_retry_backoff_seconds = create_retry_backoff_seconds
         self._profiles = profiles or DEFAULT_PROFILES
         self._sandboxes: dict[str, Sandbox] = {}
-        self._connection_config = self._build_connection_config(api_key=api_key, base_url=base_url)
+        self._connection_config = self._build_connection_config(
+            api_key=api_key,
+            base_url=base_url,
+            request_timeout_seconds=request_timeout_seconds,
+        )
 
     async def create(self, profile: str, metadata: dict[str, str] | None = None) -> SandboxHandle:
         """Create a sandbox."""
@@ -107,30 +118,71 @@ class OpenSandboxAdapter(SandboxProvider):
 
     async def _create_sandbox(self, profile: SandboxProfile, metadata: dict[str, str]) -> Sandbox:
         """Create sandbox."""
-        common_kwargs = {
-            "entrypoint": profile.entrypoint,
-            "timeout": timedelta(seconds=profile.timeout_seconds),
-            "env": profile.env,
-            "metadata": metadata,
-        }
+        create_variants: list[dict[str, object]] = [
+            {
+                "image": profile.image,
+                "entrypoint": profile.entrypoint,
+                "resource": profile.resource_limits,
+            },
+            {
+                "image": profile.image,
+                "entrypoint": profile.entrypoint,
+                "resource": None,
+            },
+        ]
 
-        try:
-            return await Sandbox.create(
-                profile.image,
-                resource=profile.resource_limits,
-                connection_config=self._connection_config,
-                **common_kwargs,
+        for fallback_image in FALLBACK_INTERPRETER_IMAGES:
+            create_variants.extend(
+                [
+                    {
+                        "image": fallback_image,
+                        "entrypoint": ["/opt/opensandbox/code-interpreter.sh"],
+                        "resource": profile.resource_limits,
+                    },
+                    {
+                        "image": fallback_image,
+                        "entrypoint": ["/opt/opensandbox/code-interpreter.sh"],
+                        "resource": None,
+                    },
+                ]
             )
-        except TypeError:
-            return await Sandbox.create(
-                profile.image,
-                resource=profile.resource_limits,
-                connection_config=self._connection_config,
-                **common_kwargs,
-            )
+
+        last_exc: Exception | None = None
+        seen: set[tuple[str, str, str]] = set()
+
+        for variant in create_variants:
+            image = str(variant["image"])
+            entrypoint = variant["entrypoint"]
+            resource = variant["resource"]
+            key = (image, str(entrypoint), str(resource))
+            if key in seen:
+                continue
+            seen.add(key)
+
+            common_kwargs = {
+                "entrypoint": entrypoint,
+                "timeout": timedelta(seconds=profile.timeout_seconds),
+                "env": profile.env,
+                "metadata": metadata,
+            }
+
+            try:
+                return await Sandbox.create(
+                    image,
+                    resource=resource,
+                    connection_config=self._connection_config,
+                    **common_kwargs,
+                )
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("OpenSandbox create failed with all profile variants")
 
     @staticmethod
-    def _build_connection_config(*, api_key: str, base_url: str) -> ConnectionConfig:
+    def _build_connection_config(*, api_key: str, base_url: str, request_timeout_seconds: int) -> ConnectionConfig:
         """Build connection config."""
         normalized = base_url.strip()
         if not normalized:
@@ -148,7 +200,12 @@ class OpenSandboxAdapter(SandboxProvider):
             if path and path != "v1":
                 domain = path
 
-        return ConnectionConfig(api_key=api_key, domain=domain, protocol=protocol)
+        return ConnectionConfig(
+            api_key=api_key,
+            domain=domain,
+            protocol=protocol,
+            request_timeout=timedelta(seconds=max(30, int(request_timeout_seconds))),
+        )
 
     def _get_sandbox(self, sandbox_id: str) -> Sandbox:
         """Get sandbox by ID."""

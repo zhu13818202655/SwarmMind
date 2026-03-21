@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from swarmmind.utils import utc_now
+
 
 class DomainEvent(BaseModel):
     """A platform event with normalized execution context."""
@@ -18,4 +20,4 @@ class DomainEvent(BaseModel):
     subtask_id: str | None = Field(default=None)
     sandbox_id: str | None = Field(default=None)
     payload: dict[str, Any] = Field(default_factory=dict)
-    occurred_at: datetime = Field(default_factory=datetime.utcnow)
+    occurred_at: datetime = Field(default_factory=utc_now)

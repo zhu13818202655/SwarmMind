@@ -5,6 +5,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from swarmmind.utils import utc_now
+
 
 class SandboxStatus(str, Enum):
     """Lifecycle status for a sandbox lease."""
@@ -32,7 +34,7 @@ class SandboxLease(BaseModel):
     sandbox_id: str
     profile: str
     status: SandboxStatus = Field(default=SandboxStatus.READY)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class CommandRequest(BaseModel):
@@ -50,4 +52,4 @@ class SandboxExecution(BaseModel):
     exit_code: int
     stdout: str = ""
     stderr: str = ""
-    executed_at: datetime = Field(default_factory=datetime.utcnow)
+    executed_at: datetime = Field(default_factory=utc_now)

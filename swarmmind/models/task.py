@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from swarmmind.models.capability import AgentRole, ToolGroup
+from swarmmind.utils import utc_now
 
 
 class TaskStatus(str, Enum):
@@ -37,8 +38,8 @@ class Task(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict, description="Task constraints")
     status: TaskStatus = Field(default=TaskStatus.PENDING, description="Task status")
     priority: TaskPriority = Field(default=TaskPriority.NORMAL, description="Task priority")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
     started_at: datetime | None = Field(default=None, description="Task start time")
     finished_at: datetime | None = Field(default=None, description="Task finish time")
     result: dict[str, Any] | None = Field(default=None, description="Task result")
@@ -48,22 +49,22 @@ class Task(BaseModel):
     def start(self) -> None:
         """Mark task as started."""
         self.status = TaskStatus.RUNNING
-        self.started_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.started_at = utc_now()
+        self.updated_at = utc_now()
 
     def succeed(self, result: dict[str, Any]) -> None:
         """Mark task as succeeded."""
         self.status = TaskStatus.SUCCEEDED
         self.result = result
-        self.finished_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.finished_at = utc_now()
+        self.updated_at = utc_now()
 
     def fail(self, error: str) -> None:
         """Mark task as failed."""
         self.status = TaskStatus.FAILED
         self.error = error
-        self.finished_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.finished_at = utc_now()
+        self.updated_at = utc_now()
 
 
 class SubTask(BaseModel):

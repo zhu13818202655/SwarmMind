@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from starlette.responses import StreamingResponse
 
 from swarmmind.app import get_container
+from swarmmind.config import SwarmMindConfig, get_settings
 from swarmmind.gateway import RunDetail, TaskDetail, TaskSubmitRequest
 from swarmmind.models.run import RunPhase, RunStatus
 from swarmmind.models.task import TaskPriority, TaskStatus
@@ -17,7 +21,7 @@ from swarmmind.models.task import TaskPriority, TaskStatus
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager."""
-    app.state.container = await get_container()
+    app.state.container = await get_container(app.state.settings)
     yield
 
 
@@ -74,6 +78,23 @@ class TaskDetailResponse(BaseModel):
     runs: list[RunDetailResponse] = Field(default_factory=list)
 
 
+class RunEventResponse(BaseModel):
+    """Single run replay event item."""
+
+    cursor: int
+    event_type: str
+    timestamp: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunEventsResponse(BaseModel):
+    """Paged run replay events."""
+
+    run_id: str
+    next_cursor: int
+    events: list[RunEventResponse] = Field(default_factory=list)
+
+
 async def resolve_identity(request: Request):
     """Resolve the current identity context from the container."""
     container = request.app.state.container
@@ -126,21 +147,46 @@ def to_task_detail_response(task_detail: TaskDetail) -> TaskDetailResponse:
     )
 
 
-def create_app() -> FastAPI:
+def build_run_events_response(run_id: str, replay, cursor: int, limit: int) -> RunEventsResponse:
+    """Build a paged replay response from a replay root."""
+    start = max(0, cursor)
+    selected_entries = replay.entries[start : start + max(1, limit)]
+
+    events: list[RunEventResponse] = []
+    for offset, entry in enumerate(selected_entries):
+        events.append(
+            RunEventResponse(
+                cursor=start + offset,
+                event_type=entry.event_type,
+                timestamp=entry.timestamp.isoformat(),
+                payload=entry.payload,
+            )
+        )
+
+    return RunEventsResponse(
+        run_id=run_id,
+        next_cursor=start + len(events),
+        events=events,
+    )
+
+
+def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
     """Create and configure the FastAPI application."""
+    settings = settings or get_settings()
     app = FastAPI(
-        title="SwarmMind API",
-        description="A general-purpose AI task assistant API",
-        version="0.1.0",
+        title=settings.api.title,
+        description=settings.api.description,
+        version=settings.api.version,
         lifespan=lifespan,
     )
+    app.state.settings = settings
 
     @app.get("/")
     async def root():
         """Root endpoint."""
         return {
-            "name": "SwarmMind API",
-            "version": "0.1.0",
+            "name": settings.api.title,
+            "version": settings.api.version,
             "status": "running",
         }
 
@@ -260,6 +306,117 @@ def create_app() -> FastAPI:
             )
         return to_run_status_response(run_detail)
 
+    @app.get("/v1/runs/{run_id}/events", response_model=RunEventsResponse)
+    async def get_run_events(
+        run_id: str,
+        raw_request: Request,
+        cursor: int = 0,
+        limit: int = 100,
+    ):
+        """Get paged replay events for a run."""
+        container = raw_request.app.state.container
+        identity = await resolve_identity(raw_request)
+        container.authorization_policy.ensure_can_read_run(identity)
+
+        run_detail = await container.query_service.get_run_detail(run_id, identity)
+        if run_detail is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run not found: {run_id}",
+            )
+
+        replay = await container.replay_repository.get_by_run(run_id)
+        if replay is None:
+            return RunEventsResponse(run_id=run_id, next_cursor=max(0, cursor), events=[])
+
+        return build_run_events_response(run_id, replay, cursor, limit)
+
+    @app.get("/v1/runs/{run_id}/stream")
+    async def stream_run_events(
+        run_id: str,
+        raw_request: Request,
+        cursor: int = 0,
+        poll_interval: float = 0.5,
+    ):
+        """Stream run replay events as Server-Sent Events."""
+        container = raw_request.app.state.container
+        identity = await resolve_identity(raw_request)
+        container.authorization_policy.ensure_can_read_run(identity)
+
+        run_detail = await container.query_service.get_run_detail(run_id, identity)
+        if run_detail is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run not found: {run_id}",
+            )
+
+        async def event_stream():
+            next_cursor = max(0, cursor)
+            heartbeat_tick = 0
+
+            while True:
+                replay = await container.replay_repository.get_by_run(run_id)
+                if replay is not None:
+                    page = build_run_events_response(run_id, replay, next_cursor, 256)
+                    for item in page.events:
+                        payload = {
+                            "run_id": run_id,
+                            "cursor": item.cursor,
+                            "event_type": item.event_type,
+                            "timestamp": item.timestamp,
+                            "payload": item.payload,
+                        }
+                        yield (
+                            f"id: {item.cursor}\n"
+                            "event: run.event\n"
+                            f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                        )
+                    next_cursor = page.next_cursor
+
+                latest = await container.query_service.get_run_detail(run_id, identity)
+                if latest is not None and latest.run.status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}:
+                    replay = await container.replay_repository.get_by_run(run_id)
+                    if replay is not None:
+                        page = build_run_events_response(run_id, replay, next_cursor, 256)
+                        for item in page.events:
+                            payload = {
+                                "run_id": run_id,
+                                "cursor": item.cursor,
+                                "event_type": item.event_type,
+                                "timestamp": item.timestamp,
+                                "payload": item.payload,
+                            }
+                            yield (
+                                f"id: {item.cursor}\n"
+                                "event: run.event\n"
+                                f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                            )
+                    terminal_payload = {
+                        "run_id": run_id,
+                        "status": latest.run.status,
+                        "phase": latest.run.phase,
+                    }
+                    yield (
+                        "event: run.terminal\n"
+                        f"data: {json.dumps(terminal_payload, ensure_ascii=False)}\n\n"
+                    )
+                    break
+
+                heartbeat_tick += 1
+                if heartbeat_tick % 20 == 0:
+                    yield ": keep-alive\n\n"
+                await asyncio.sleep(max(0.1, poll_interval))
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @app.delete("/v1/tasks/{task_id}")
     async def delete_task(task_id: str, raw_request: Request):
         """Delete a task."""
@@ -278,13 +435,18 @@ def create_app() -> FastAPI:
     return app
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8000, reload: bool = False):
+def run_server(host: str | None = None, port: int | None = None, reload: bool | None = None):
     """Run the API server."""
     import uvicorn
-    from swarmmind.api.server import create_app
 
-    app = create_app()
-    uvicorn.run(app, host=host, port=port, reload=reload)
+    settings = get_settings()
+    app = create_app(settings)
+    uvicorn.run(
+        app,
+        host=host or settings.api.host,
+        port=port or settings.api.port,
+        reload=settings.api.reload if reload is None else reload,
+    )
 
 
 if __name__ == "__main__":

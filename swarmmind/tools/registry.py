@@ -38,9 +38,9 @@ class ToolRegistry:
             return func(*args, **kwargs)
 
         self._toolkit.register_tool_function(
-            tool_name,
             async_wrapper,
-            description,
+            func_name=tool_name,
+            func_description=description,
         )
         self._funcs[tool_name] = func
         self._descriptions[tool_name] = description

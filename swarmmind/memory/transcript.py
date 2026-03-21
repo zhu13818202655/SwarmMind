@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from swarmmind.models.task import Task
+from swarmmind.utils import utc_now
 
 
 class TranscriptEvent:
@@ -17,7 +17,7 @@ class TranscriptEvent:
         data: dict[str, Any] | None = None,
     ):
         self.event_type = event_type
-        self.timestamp = timestamp or datetime.utcnow()
+        self.timestamp = timestamp or utc_now()
         self.data = data or {}
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,7 +34,7 @@ class Transcript:
     def __init__(self, task_id: str):
         self.task_id = task_id
         self.events: list[TranscriptEvent] = []
-        self.started_at = datetime.utcnow()
+        self.started_at = utc_now()
 
     def add_event(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         """Add an event to the transcript."""
@@ -61,7 +61,7 @@ class Transcript:
         return {
             "task_id": self.task_id,
             "started_at": self.started_at.isoformat(),
-            "finished_at": datetime.utcnow().isoformat(),
+            "finished_at": utc_now().isoformat(),
             "events": [e.to_dict() for e in self.events],
         }
 

@@ -46,6 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="Wait up to N seconds for the API health endpoint before submitting the task",
     )
+    parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=180.0,
+        help="HTTP request timeout in seconds for submit/query calls",
+    )
     return parser
 
 
@@ -73,9 +79,14 @@ def parse_constraints(raw: str) -> dict[str, object]:
     return value
 
 
-def submit_task(client: httpx.Client, base_url: str, payload: dict[str, object]) -> dict[str, object]:
+def submit_task(
+    client: httpx.Client,
+    base_url: str,
+    payload: dict[str, object],
+    request_timeout: float,
+) -> dict[str, object]:
     """Submit the task and return the API response."""
-    response = client.post(f"{base_url}/v1/tasks", json=payload, timeout=30.0)
+    response = client.post(f"{base_url}/v1/tasks", json=payload, timeout=request_timeout)
     response.raise_for_status()
     return response.json()
 
@@ -97,27 +108,34 @@ def wait_for_service(client: httpx.Client, base_url: str, timeout: float) -> Non
     raise TimeoutError(f"service did not become healthy within {timeout} seconds")
 
 
-def fetch_task(client: httpx.Client, base_url: str, task_id: str) -> dict[str, object]:
+def fetch_task(client: httpx.Client, base_url: str, task_id: str, request_timeout: float) -> dict[str, object]:
     """Fetch the latest task state."""
-    response = client.get(f"{base_url}/v1/tasks/{task_id}", timeout=30.0)
+    response = client.get(f"{base_url}/v1/tasks/{task_id}", timeout=request_timeout)
     response.raise_for_status()
     return response.json()
 
 
-def fetch_run(client: httpx.Client, base_url: str, run_id: str) -> dict[str, object]:
+def fetch_run(client: httpx.Client, base_url: str, run_id: str, request_timeout: float) -> dict[str, object]:
     """Fetch the latest run detail."""
-    response = client.get(f"{base_url}/v1/runs/{run_id}", timeout=30.0)
+    response = client.get(f"{base_url}/v1/runs/{run_id}", timeout=request_timeout)
     response.raise_for_status()
     return response.json()
 
 
-def poll_task(client: httpx.Client, base_url: str, task_id: str, interval: float, timeout: float) -> dict[str, object]:
+def poll_task(
+    client: httpx.Client,
+    base_url: str,
+    task_id: str,
+    interval: float,
+    timeout: float,
+    request_timeout: float,
+) -> dict[str, object]:
     """Poll the task until it reaches a terminal state or timeout."""
     deadline = time.monotonic() + timeout
     last_payload: dict[str, object] | None = None
 
     while time.monotonic() < deadline:
-        last_payload = fetch_task(client, base_url, task_id)
+        last_payload = fetch_task(client, base_url, task_id, request_timeout)
         status = str(last_payload.get("status", "")).lower()
         print(f"[poll] task_id={task_id} status={status}")
         if status in TERMINAL_STATUSES:
@@ -127,17 +145,25 @@ def poll_task(client: httpx.Client, base_url: str, task_id: str, interval: float
     raise TimeoutError(f"timed out waiting for task {task_id} after {timeout} seconds")
 
 
-def poll_run(client: httpx.Client, base_url: str, run_id: str, interval: float, timeout: float) -> dict[str, object]:
+def poll_run(
+    client: httpx.Client,
+    base_url: str,
+    run_id: str,
+    interval: float,
+    timeout: float,
+    request_timeout: float,
+) -> dict[str, object]:
     """Poll the run detail until it reaches a terminal state or timeout."""
     deadline = time.monotonic() + timeout
     last_payload: dict[str, object] | None = None
 
     while time.monotonic() < deadline:
-        last_payload = fetch_run(client, base_url, run_id)
+        last_payload = fetch_run(client, base_url, run_id, request_timeout)
         run = last_payload.get("run", {}) if isinstance(last_payload, dict) else {}
         status = str(run.get("status", "")).lower() if isinstance(run, dict) else ""
         phase = str(run.get("phase", "")) if isinstance(run, dict) else ""
-        subtask_count = len(last_payload.get("subtasks", [])) if isinstance(last_payload, dict) else 0
+        subtasks = last_payload.get("subtasks", []) if isinstance(last_payload, dict) else []
+        subtask_count = len(subtasks) if isinstance(subtasks, list) else 0
         print(f"[poll] run_id={run_id} status={status} phase={phase} subtasks={subtask_count}")
         if status in RUN_TERMINAL_STATUSES:
             return last_payload
@@ -149,8 +175,10 @@ def poll_run(client: httpx.Client, base_url: str, run_id: str, interval: float, 
 def print_run_summary(run_payload: dict[str, object]) -> None:
     """Print a compact run summary for manual testing."""
     run = run_payload.get("run", {}) if isinstance(run_payload, dict) else {}
-    subtasks = run_payload.get("subtasks", []) if isinstance(run_payload, dict) else []
-    artifacts = run_payload.get("artifacts", []) if isinstance(run_payload, dict) else []
+    subtasks_raw = run_payload.get("subtasks", []) if isinstance(run_payload, dict) else []
+    artifacts_raw = run_payload.get("artifacts", []) if isinstance(run_payload, dict) else []
+    subtasks = subtasks_raw if isinstance(subtasks_raw, list) else []
+    artifacts = artifacts_raw if isinstance(artifacts_raw, list) else []
 
     print("Run 摘要：")
     print(
@@ -170,6 +198,15 @@ def print_run_summary(run_payload: dict[str, object]) -> None:
                     if isinstance(subtask, dict)
                 ],
                 "artifact_count": len(artifacts),
+                "artifacts": [
+                    {
+                        "id": artifact.get("id"),
+                        "name": artifact.get("name"),
+                        "type": artifact.get("type"),
+                    }
+                    for artifact in artifacts
+                    if isinstance(artifact, dict)
+                ],
             },
             ensure_ascii=False,
             indent=2,
@@ -199,7 +236,12 @@ def main() -> int:
     with httpx.Client() as client:
         try:
             wait_for_service(client, args.base_url.rstrip("/"), args.wait_for_service)
-            created = submit_task(client, args.base_url.rstrip("/"), payload)
+            created = submit_task(
+                client,
+                args.base_url.rstrip("/"),
+                payload,
+                request_timeout=args.request_timeout,
+            )
         except (httpx.HTTPError, TimeoutError) as exc:
             print(f"request failed: {exc}", file=sys.stderr)
             return 1
@@ -211,7 +253,12 @@ def main() -> int:
             run_id = str(created.get("run_id", ""))
             if run_id:
                 try:
-                    run_detail = fetch_run(client, args.base_url.rstrip("/"), run_id)
+                    run_detail = fetch_run(
+                        client,
+                        args.base_url.rstrip("/"),
+                        run_id,
+                        request_timeout=args.request_timeout,
+                    )
                     print_run_summary(run_detail)
                 except httpx.HTTPError:
                     pass
@@ -231,6 +278,7 @@ def main() -> int:
                     run_id,
                     interval=args.interval,
                     timeout=args.timeout,
+                    request_timeout=args.request_timeout,
                 )
             else:
                 final_state = poll_task(
@@ -239,6 +287,7 @@ def main() -> int:
                     task_id,
                     interval=args.interval,
                     timeout=args.timeout,
+                    request_timeout=args.request_timeout,
                 )
         except (httpx.HTTPError, TimeoutError) as exc:
             print(f"poll failed: {exc}", file=sys.stderr)

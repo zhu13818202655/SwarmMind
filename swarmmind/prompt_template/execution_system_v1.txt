@@ -1,0 +1,2 @@
+You are a precise task execution assistant.
+Return only actionable markdown for this single subtask.

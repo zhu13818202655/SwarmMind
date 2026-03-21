@@ -9,6 +9,7 @@ from swarmmind.models.artifact import Artifact
 from swarmmind.models.run import Run, RunStatus
 from swarmmind.models.session import Session
 from swarmmind.models.task import SubTask, Task, TaskPriority, TaskStatus
+from swarmmind.utils import utc_now
 
 
 class TaskSubmitRequest(BaseModel):
@@ -46,7 +47,7 @@ class TaskEnvelope(BaseModel):
     session: Session
     run: Run
     request: TaskSubmitRequest
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class TaskSubmissionResult(BaseModel):

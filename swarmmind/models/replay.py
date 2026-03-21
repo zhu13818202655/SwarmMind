@@ -5,11 +5,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from swarmmind.utils import utc_now
+
 
 class ReplayEntry(BaseModel):
     """Single replay timeline entry."""
 
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)
     event_type: str
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -22,10 +24,10 @@ class ReplayRoot(BaseModel):
     run_id: str = Field(..., description="Owning run identifier")
     entries: list[ReplayEntry] = Field(default_factory=list)
     artifact_ids: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     def append(self, entry: ReplayEntry) -> None:
         """Append a new timeline entry."""
         self.entries.append(entry)
-        self.updated_at = datetime.utcnow()
+        self.updated_at = utc_now()

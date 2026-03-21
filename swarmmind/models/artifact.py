@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from swarmmind.utils import utc_now
+
 
 class ArtifactType(str, Enum):
     """Supported artifact categories."""
@@ -31,4 +33,4 @@ class Artifact(BaseModel):
     storage_ref: str | None = Field(default=None, description="Object-store or local reference")
     content_type: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now)

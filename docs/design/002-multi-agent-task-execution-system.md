@@ -84,6 +84,21 @@ AgentScope 的 `MsgHub` 很适合两个场景：
 
 但不适合做整个系统的全局总线。
 
+这里要特别区分两类“广播”能力，避免后续实现时把边界混掉：
+
+1. `MsgHub` 是 AgentScope 运行时里的会话广播机制，解决的是“同一组 Agent 如何共享上下文”。
+2. 平台 `EventBus` 是 SwarmMind 的领域事件传播机制，解决的是“task/run/subtask/sandbox 等状态变化如何跨模块传播、审计和回放”。
+
+两者虽然都表现为 publish / subscribe，但抽象层级不同：
+
+- `MsgHub` 传递的是 Agent 对话消息。
+- `EventBus` 传递的是带 `tenant_id`、`task_id`、`run_id`、`subtask_id`、`sandbox_id` 的领域事件 envelope。
+
+因此，SwarmMind 不应该尝试用 `MsgHub` 替代全局事件总线。更合理的边界是：
+
+- Agent 内部协作、有限轮讨论，用 `MsgHub`。
+- 平台级状态推进、异步解耦、重试、审计、回放，用 `EventBus`。
+
 SwarmMind 的正确使用方式应该是：
 
 - 全局上用 Orchestrator 控制状态机和阶段流转。

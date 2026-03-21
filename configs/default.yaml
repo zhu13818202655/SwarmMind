@@ -7,11 +7,33 @@ sandbox:
   default_profile: py-basic
   create_retries: 3
   create_backoff: 1.0
+  request_timeout_seconds: 600
+
+postgres:
+  enabled: false
+  dsn: postgresql://swarmmind:swarmmind@127.0.0.1:5432/swarmmind
+  auto_init_schema: true
+
+redis:
+  enabled: false
+  url: redis://127.0.0.1:6379/0
+  event_stream: swarmmind:events
+  channel_prefix: swarmmind
+  cache_prefix: swarmmind:cache
+  lock_prefix: swarmmind:lock
+  default_lock_ttl: 30
+
+vector_store:
+  provider: memory
+  enabled: false
+  qdrant_url: http://127.0.0.1:6333
+  collection: swarmmind
+  embedding_dimension: 256
 
 agent:
   model:
-    provider: openai
-    name: gpt-4o
+    provider: litellm
+    name: gpt-5.2-chat
     api_key: ${OPENAI_API_KEY}
     temperature: 0.7
     max_tokens: 4096
@@ -23,6 +45,25 @@ agent:
 
   max_steps: 100
   timeout: 300
+
+api:
+  title: SwarmMind API
+  description: A general-purpose AI task assistant API
+  version: 0.1.0
+  host: 127.0.0.1
+  port: 8000
+  reload: false
+
+identity:
+  default_tenant_id: local
+  default_principal_id: developer
+  default_scopes:
+    - tasks:submit
+    - tasks:read
+    - runs:read
+  default_roles:
+    - developer
+  auth_method: static
 
 rate_limit:
   enabled: false
