@@ -1,13 +1,20 @@
 """AgentFactory - Create agents using AgentScope."""
 
 from typing import Any
+
 from agentscope.agent import ReActAgent
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.model import OpenAIChatModel
 from agentscope.tool import Toolkit
 
+from swarmmind.agents.agent_skill import (
+    build_agent_skill_catalog,
+    build_agent_skill_details,
+    resolve_agent_skill_entries,
+)
 from swarmmind.agents.config import AgentConfig
+from swarmmind.tools.builtin.file import file_exists, list_files, read_file
 
 
 class AgentFactory:
@@ -43,8 +50,31 @@ class AgentFactory:
         """Create toolkit and register plain tool functions."""
         toolkit = Toolkit()
 
-        for tool in tools or []:
+        registered_tools: list[Any] = list(tools or [])
+        if self.config.skill_profiles:
+            registered_tools.extend([read_file, list_files, file_exists])
+
+        seen_names: set[str] = set()
+        for tool in registered_tools:
+            tool_name = getattr(tool, "__name__", repr(tool))
+            if tool_name in seen_names:
+                continue
             toolkit.register_tool_function(tool)
+            seen_names.add(tool_name)
+
+        skill_entries = resolve_agent_skill_entries(self.config.skill_profiles, seen_names)
+        for entry in skill_entries:
+            toolkit.register_agent_skill(str(entry.root_dir))
+
+        # Keep a structured catalog on the toolkit instance for future profile-driven selection.
+        toolkit._swarmmind_skill_catalog = build_agent_skill_catalog(  # type: ignore[attr-defined]
+            self.config.skill_profiles,
+            seen_names,
+        )
+        toolkit._swarmmind_skill_details = build_agent_skill_details(  # type: ignore[attr-defined]
+            self.config.skill_profiles,
+            seen_names,
+        )
 
         return toolkit
 

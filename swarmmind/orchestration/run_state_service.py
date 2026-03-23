@@ -6,8 +6,9 @@ import uuid
 
 from swarmmind.events import EventBus
 from swarmmind.models.event import DomainEvent
+from swarmmind.models.execution import ReviewDecisionType
 from swarmmind.models.run import RunPhase, RunStatus
-from swarmmind.models.task import TaskStatus
+from swarmmind.models.task import SubTaskStatus, TaskStatus
 from swarmmind.repositories import ArtifactRepository, RunRepository, SubTaskRepository, TaskRepository
 
 
@@ -43,12 +44,27 @@ class RunStateService:
 
         previous = (run.status, run.phase, task.status, task.error)
 
-        failed = [subtask for subtask in subtasks if subtask.status == TaskStatus.FAILED]
-        succeeded = [subtask for subtask in subtasks if subtask.status == TaskStatus.SUCCEEDED]
+        covered_failure_ids = {
+            str(subtask.metadata.get("repair_source_subtask_id"))
+            for subtask in subtasks
+            if subtask.metadata.get("repair_source_subtask_id")
+        }
+        failed = [
+            subtask
+            for subtask in subtasks
+            if subtask.status == SubTaskStatus.FAILED and subtask.id not in covered_failure_ids
+        ]
+        succeeded = [subtask for subtask in subtasks if subtask.status == SubTaskStatus.SUCCEEDED]
         pending = [
             subtask
             for subtask in subtasks
-            if subtask.status not in {TaskStatus.SUCCEEDED, TaskStatus.FAILED}
+            if subtask.status not in {SubTaskStatus.SUCCEEDED, SubTaskStatus.FAILED, SubTaskStatus.CANCELLED}
+        ]
+        unresolved_rework = [
+            subtask
+            for subtask in succeeded
+            if str((subtask.result or {}).get("decision") or "").lower() == ReviewDecisionType.REWORK.value
+            and not subtask.metadata.get("rework_generated")
         ]
 
         if failed:
@@ -63,6 +79,20 @@ class RunStateService:
                     "run_id": run.id,
                     "succeeded_subtasks": len(succeeded),
                     "failed_subtasks": [subtask.name for subtask in failed],
+                    "artifact_count": len(artifacts),
+                }
+        elif unresolved_rework and not pending:
+            first_rework = unresolved_rework[0]
+            run.set_phase(RunPhase.REVIEWING)
+            if run.status != RunStatus.FAILED:
+                run.fail(f"Review requested rework but no repair chain was created: {first_rework.name}")
+
+            if task.status != TaskStatus.FAILED:
+                task.fail(f"Review requested rework but repair budget was exhausted: {first_rework.name}")
+                task.result = {
+                    "run_id": run.id,
+                    "succeeded_subtasks": len(succeeded),
+                    "pending_subtasks": [subtask.name for subtask in pending],
                     "artifact_count": len(artifacts),
                 }
         elif subtasks and not pending:

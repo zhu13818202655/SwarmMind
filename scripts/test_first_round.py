@@ -29,7 +29,7 @@ async def main() -> None:
         TaskSubmitRequest(
             goal="实现一个导出 Excel 功能并补测试",
             profile="py-basic",
-            preferred_skill="build_app",
+            preferred_strategy="build_app",
             metadata={"source": "smoke-test"},
         ),
         identity=identity,

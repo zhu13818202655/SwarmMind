@@ -1,6 +1,6 @@
 """Subtask scheduling helpers."""
 
-from swarmmind.models.task import SubTask, TaskStatus
+from swarmmind.models.task import SubTask, SubTaskStatus
 
 
 class Scheduler:
@@ -14,8 +14,14 @@ class Scheduler:
         subtask_map = {subtask.id: subtask for subtask in subtasks}
         ready: list[SubTask] = []
         for subtask in subtasks:
-            if subtask.status != TaskStatus.PENDING:
+            if subtask.status not in {SubTaskStatus.QUEUED, SubTaskStatus.READY}:
                 continue
-            if all(subtask_map[dependency].status == TaskStatus.SUCCEEDED for dependency in subtask.dependencies if dependency in subtask_map):
+            if all(
+                subtask_map[dependency].status == SubTaskStatus.SUCCEEDED
+                for dependency in subtask.dependencies
+                if dependency in subtask_map
+            ):
+                if subtask.status == SubTaskStatus.QUEUED:
+                    subtask.mark_ready()
                 ready.append(subtask)
         return ready

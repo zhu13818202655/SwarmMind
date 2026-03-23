@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from swarmmind.models.capability import AgentRole, ToolGroup
 from swarmmind.utils import utc_now
@@ -16,6 +16,20 @@ class TaskStatus(str, Enum):
     PLANNING = "planning"
     RUNNING = "running"
     REVIEWING = "reviewing"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class SubTaskStatus(str, Enum):
+    """Detailed lifecycle states for subtask execution."""
+
+    QUEUED = "queued"
+    READY = "ready"
+    ASSIGNED = "assigned"
+    SANDBOX_CREATING = "sandbox_creating"
+    EXECUTING = "executing"
+    VERIFYING = "verifying"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -70,14 +84,16 @@ class Task(BaseModel):
 class SubTask(BaseModel):
     """Sub-task model."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     id: str = Field(..., description="Unique sub-task identifier")
     task_id: str = Field(..., description="Parent task ID")
     name: str = Field(..., description="Sub-task name")
     description: str = Field(..., description="Sub-task description")
-    status: TaskStatus = Field(default=TaskStatus.PENDING)
+    status: SubTaskStatus = Field(default=SubTaskStatus.QUEUED)
     agent_id: str | None = Field(default=None, description="Agent assigned to this sub-task")
     role: AgentRole = Field(default=AgentRole.EXECUTOR, description="Logical executor role")
-    preferred_skill: str | None = Field(default=None, description="Preferred skill profile")
+    preferred_strategy: str | None = Field(default=None, description="Preferred runtime strategy profile")
     required_tool_groups: list[ToolGroup] = Field(
         default_factory=list,
         description="Tool groups required by this sub-task",
@@ -91,31 +107,73 @@ class SubTask(BaseModel):
     error: str | None = Field(default=None)
     dependencies: list[str] = Field(default_factory=list, description="Sub-task IDs this depends on")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional execution metadata")
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    started_at: datetime | None = Field(default=None)
+    finished_at: datetime | None = Field(default=None)
+
+    def mark_ready(self) -> None:
+        """Mark sub-task as ready for assignment."""
+        self.status = SubTaskStatus.READY
+        self.updated_at = utc_now()
+
+    def assign(self, execution_profile: dict[str, Any], run_id: str) -> None:
+        """Assign execution metadata and transition to assigned state."""
+        self.status = SubTaskStatus.ASSIGNED
+        self.metadata["execution_profile"] = execution_profile
+        self.metadata["assigned_run_id"] = run_id
+        self.metadata["assigned_at"] = utc_now().isoformat()
+        self.updated_at = utc_now()
+
+    def mark_sandbox_creating(self) -> None:
+        """Mark sub-task as waiting for sandbox creation."""
+        self.status = SubTaskStatus.SANDBOX_CREATING
+        self.updated_at = utc_now()
+
+    def start_execution(self) -> None:
+        """Mark sub-task as executing."""
+        self.status = SubTaskStatus.EXECUTING
+        self.started_at = self.started_at or utc_now()
+        self.updated_at = utc_now()
+
+    def start_verification(self) -> None:
+        """Mark sub-task as running verification/review logic."""
+        self.status = SubTaskStatus.VERIFYING
+        self.started_at = self.started_at or utc_now()
+        self.updated_at = utc_now()
 
     def complete(self, result: dict[str, Any]) -> None:
         """Mark sub-task as completed."""
-        self.status = TaskStatus.SUCCEEDED
+        self.status = SubTaskStatus.SUCCEEDED
         self.result = result
+        self.error = None
+        self.finished_at = utc_now()
+        self.updated_at = utc_now()
 
     def fail(self, error: str) -> None:
         """Mark sub-task as failed."""
-        self.status = TaskStatus.FAILED
+        self.status = SubTaskStatus.FAILED
         self.error = error
+        self.finished_at = utc_now()
+        self.updated_at = utc_now()
 
 
 class TaskRequest(BaseModel):
     """Task request model for API/CLI."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     goal: str = Field(..., description="Task goal")
     constraints: dict[str, Any] = Field(default_factory=dict)
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
     profile: str = Field(default="py-basic", description="Sandbox profile")
-    preferred_skill: str | None = Field(default=None, description="Preferred top-level skill")
+    preferred_strategy: str | None = Field(default=None, description="Preferred top-level runtime strategy")
     required_tool_groups: list[ToolGroup] = Field(
         default_factory=list,
         description="Tool groups required for the task by policy or user request",
     )
     metadata: dict[str, Any] = Field(default_factory=dict)
+
 
 
 class TaskResponse(BaseModel):

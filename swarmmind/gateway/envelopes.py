@@ -3,10 +3,10 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from swarmmind.models.artifact import Artifact
-from swarmmind.models.run import Run, RunStatus
+from swarmmind.models.run import Run
 from swarmmind.models.session import Session
 from swarmmind.models.task import SubTask, Task, TaskPriority, TaskStatus
 from swarmmind.utils import utc_now
@@ -15,12 +15,14 @@ from swarmmind.utils import utc_now
 class TaskSubmitRequest(BaseModel):
     """External task submission request."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     goal: str = Field(..., description="Task goal")
     constraints: dict[str, Any] = Field(default_factory=dict)
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
     profile: str = Field(default="py-basic")
     session_id: str | None = None
-    preferred_skill: str | None = None
+    preferred_strategy: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

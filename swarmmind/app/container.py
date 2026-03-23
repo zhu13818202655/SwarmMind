@@ -37,8 +37,11 @@ from swarmmind.repositories import (
     SubTaskRepository,
     TaskRepository,
 )
+from swarmmind.execution_strategies import ExecutionStrategyRegistry
+from swarmmind.skill_system import SkillExecutionService, SkillScriptExecutor
 from swarmmind.sandbox import ArtifactCollector, LocalSandboxAdapter, ReplayRecorder, SandboxManager
 from swarmmind.sandbox.opensandbox_adapter import OpenSandboxAdapter
+from swarmmind.tools import ToolRegistry
 
 
 class AppContainer:
@@ -60,8 +63,11 @@ class AppContainer:
     sandbox_manager: SandboxManager
     artifact_collector: ArtifactCollector
     replay_recorder: ReplayRecorder
+    skill_execution_service: SkillExecutionService
     run_state_service: RunStateService
     execution_runner: ExecutionRunner
+    execution_strategy_registry: ExecutionStrategyRegistry
+    tool_registry: ToolRegistry
     gateway: Gateway
     orchestrator: TaskOrchestrator
     query_service: QueryService
@@ -83,8 +89,11 @@ class AppContainer:
         "sandbox_manager",
         "artifact_collector",
         "replay_recorder",
+        "skill_execution_service",
         "run_state_service",
         "execution_runner",
+        "execution_strategy_registry",
+        "tool_registry",
         "gateway",
         "orchestrator",
         "query_service",
@@ -108,8 +117,11 @@ class AppContainer:
         sandbox_manager: SandboxManager,
         artifact_collector: ArtifactCollector,
         replay_recorder: ReplayRecorder,
+        skill_execution_service: SkillExecutionService,
         run_state_service: RunStateService,
         execution_runner: ExecutionRunner,
+        execution_strategy_registry: ExecutionStrategyRegistry,
+        tool_registry: ToolRegistry,
         gateway: Gateway,
         orchestrator: TaskOrchestrator,
         query_service: QueryService,
@@ -130,8 +142,11 @@ class AppContainer:
         self.sandbox_manager = sandbox_manager
         self.artifact_collector = artifact_collector
         self.replay_recorder = replay_recorder
+        self.skill_execution_service = skill_execution_service
         self.run_state_service = run_state_service
         self.execution_runner = execution_runner
+        self.execution_strategy_registry = execution_strategy_registry
+        self.tool_registry = tool_registry
         self.gateway = gateway
         self.orchestrator = orchestrator
         self.query_service = query_service
@@ -165,6 +180,13 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
     sandbox_manager = SandboxManager(_build_sandbox_provider(settings))
     artifact_collector = ArtifactCollector()
     replay_recorder = ReplayRecorder(replay_repository)
+    execution_strategy_registry = ExecutionStrategyRegistry()
+    tool_registry = ToolRegistry()
+    skill_execution_service = SkillExecutionService(
+        executor=SkillScriptExecutor(sandbox_manager),
+        event_bus=event_bus,
+        artifact_repository=artifact_repository,
+    )
 
     planner = Planner(
         model_name=settings.agent.model.name,
@@ -172,6 +194,7 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         model_base_url=settings.agent.model.base_url,
         model_temperature=settings.agent.model.temperature,
         model_max_tokens=settings.agent.model.max_tokens,
+        long_term_memory=long_term_memory,
     )
     coordinator = Coordinator()
     scheduler = Scheduler()
@@ -203,11 +226,15 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         sandbox_manager=sandbox_manager,
         artifact_collector=artifact_collector,
         run_state_service=run_state_service,
+        execution_strategy_registry=execution_strategy_registry,
+        tool_registry=tool_registry,
+        skill_execution_service=skill_execution_service,
         model_name=settings.agent.model.name,
         model_api_key=settings.agent.model.api_key,
         model_base_url=settings.agent.model.base_url,
         model_temperature=settings.agent.model.temperature,
         model_max_tokens=settings.agent.model.max_tokens,
+        long_term_memory=long_term_memory,
     )
 
     query_service = QueryService(
@@ -234,6 +261,8 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
 
     await event_bus.subscribe("*", replay_recorder.handle_event)
     await event_bus.subscribe("task.created", orchestrator.handle_task_created)
+    await event_bus.subscribe("subtask.completed", orchestrator.handle_subtask_terminal)
+    await event_bus.subscribe("subtask.failed", orchestrator.handle_subtask_terminal)
     await event_bus.subscribe("subtask.assigned", execution_runner.handle_subtask_assigned)
 
     return AppContainer(
@@ -253,8 +282,11 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         sandbox_manager=sandbox_manager,
         artifact_collector=artifact_collector,
         replay_recorder=replay_recorder,
+        skill_execution_service=skill_execution_service,
         run_state_service=run_state_service,
         execution_runner=execution_runner,
+        execution_strategy_registry=execution_strategy_registry,
+        tool_registry=tool_registry,
         gateway=gateway,
         orchestrator=orchestrator,
         query_service=query_service,

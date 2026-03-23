@@ -141,7 +141,7 @@
 8. `ExecutionProfile`
 9. `AgentRole`
 10. `ToolGroup`
-11. `SkillProfile`
+11. `StrategyProfile`
 
 对应目录：
 
@@ -361,24 +361,24 @@ Sandbox 层已经具备较明确的接口和一版 OpenSandbox 适配器。
 3. 按 `ToolGroup` 查询可用工具 schema。
 4. 直接执行指定工具函数。
 
-### SkillRegistry
+### ExecutionStrategyRegistry
 
 对应代码：
 
-- `swarmmind/skills/base.py`
-- `swarmmind/skills/registry.py`
-- `swarmmind/skills/*.py`
+- `swarmmind/skills/strategy.py`
+- `swarmmind/skills/execution_strategy_registry.py`
+- `swarmmind/skills/callback_strategy.py`
 
 当前已实现：
 
-1. `Skill`/`SkillResult` 基础抽象。
-2. skill 注册与执行。
-3. 默认 `SkillProfile` 与 role 推荐关系。
+1. `ExecutionStrategy`/`StrategyResult` 运行时基础抽象。
+2. execution strategy 注册与执行。
+3. 默认 `StrategyProfile` 与 role 推荐关系。
 
 当前限制：
 
-1. role -> skill -> tool group 的装配还没有进入 orchestrator 执行主链。
-2. subtask 被 assigned 后，没有真实的 skill runner 去消费。
+1. role -> strategy -> tool group 的装配说明仍有一部分历史文档未完全同步。
+2. 运行时主链统一使用 `preferred_strategy` / `StrategyProfile`，不再兼容旧的 `preferred_skill` / `SkillProfile` 输入。
 
 ---
 

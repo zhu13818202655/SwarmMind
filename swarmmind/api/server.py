@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.responses import StreamingResponse
 
 from swarmmind.app import get_container
@@ -28,11 +28,13 @@ async def lifespan(app: FastAPI):
 class TaskCreateRequest(BaseModel):
     """HTTP request model for creating a task."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     goal: str = Field(..., description="Task goal description")
     constraints: dict[str, Any] = Field(default_factory=dict)
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
     profile: str = Field(default="py-basic")
-    preferred_skill: str | None = Field(default=None)
+    preferred_strategy: str | None = Field(default=None)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -207,7 +209,7 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
                 constraints=request.constraints,
                 priority=request.priority,
                 profile=request.profile,
-                preferred_skill=request.preferred_skill,
+                preferred_strategy=request.preferred_strategy,
                 metadata=request.metadata,
             ),
             identity=identity,

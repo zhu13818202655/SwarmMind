@@ -1,4 +1,4 @@
-"""Capability models for agent roles, skills, and tool groups."""
+"""Capability models for agent roles, strategy profiles, and tool groups."""
 
 from enum import Enum
 
@@ -33,8 +33,8 @@ class ToolGroup(str, Enum):
     PRESENTATION = "presentation"
 
 
-class SkillProfile(BaseModel):
-    """Structured skill profile used to equip an agent for a subtask."""
+class StrategyProfile(BaseModel):
+    """Structured runtime strategy profile used to equip a subtask."""
 
     name: str = Field(..., description="Unique skill profile name")
     description: str = Field(..., description="What this profile is for")
@@ -52,21 +52,21 @@ class SkillProfile(BaseModel):
     )
 
 
-DEFAULT_SKILL_PROFILES: dict[str, SkillProfile] = {
-    "task_planning": SkillProfile(
+DEFAULT_STRATEGY_PROFILES: dict[str, StrategyProfile] = {
+    "task_planning": StrategyProfile(
         name="task_planning",
         description="Decompose user goals into executable task graphs.",
         tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
         recommended_roles=[AgentRole.PLANNER, AgentRole.COORDINATOR],
     ),
-    "research": SkillProfile(
+    "research": StrategyProfile(
         name="research",
         description="Research external information and summarize findings.",
         tool_groups=[ToolGroup.WEB_SEARCH, ToolGroup.BROWSER_READ, ToolGroup.PROJECT_READ],
         recommended_roles=[AgentRole.RESEARCHER, AgentRole.WRITER],
         sandbox_profile="research-net",
     ),
-    "build_app": SkillProfile(
+    "build_app": StrategyProfile(
         name="build_app",
         description="Implement application code, write files, and run local validation.",
         tool_groups=[
@@ -78,7 +78,7 @@ DEFAULT_SKILL_PROFILES: dict[str, SkillProfile] = {
         recommended_roles=[AgentRole.CODER, AgentRole.EXECUTOR],
         sandbox_profile="py-basic",
     ),
-    "verification": SkillProfile(
+    "verification": StrategyProfile(
         name="verification",
         description="Run tests and verify outputs against acceptance criteria.",
         tool_groups=[
@@ -89,13 +89,13 @@ DEFAULT_SKILL_PROFILES: dict[str, SkillProfile] = {
         recommended_roles=[AgentRole.TESTER, AgentRole.REVIEWER],
         sandbox_profile="py-basic",
     ),
-    "review": SkillProfile(
+    "review": StrategyProfile(
         name="review",
         description="Review results and decide whether to accept or rework.",
         tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
         recommended_roles=[AgentRole.REVIEWER, AgentRole.COORDINATOR],
     ),
-    "write_report": SkillProfile(
+    "write_report": StrategyProfile(
         name="write_report",
         description="Research, draft, and save a structured report.",
         tool_groups=[
@@ -106,6 +106,7 @@ DEFAULT_SKILL_PROFILES: dict[str, SkillProfile] = {
         recommended_roles=[AgentRole.WRITER, AgentRole.RESEARCHER],
     ),
 }
+
 
 
 DEFAULT_ROLE_TOOL_GROUPS: dict[AgentRole, list[ToolGroup]] = {

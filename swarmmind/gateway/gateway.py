@@ -96,7 +96,7 @@ class Gateway:
                 "principal_id": identity.principal_id,
                 "session_id": session.id,
                 "profile": normalized_request.profile,
-                "preferred_skill": normalized_request.preferred_skill,
+                "preferred_strategy": normalized_request.preferred_strategy,
             },
         )
         await self._task_repository.create(task)
@@ -138,7 +138,7 @@ class Gateway:
                 constraints=request.constraints,
                 priority=request.priority,
                 profile=request.profile,
-                preferred_skill=request.preferred_skill,
+                preferred_strategy=request.preferred_strategy,
                 metadata=request.metadata,
             ),
             identity=identity,

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from swarmmind.agents.agent_skill import resolve_agent_skill_dirs
+from swarmmind.agents.config import AgentConfig, AgentScopeConfig
+from swarmmind.agents.factory import AgentFactory
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
 from swarmmind.orchestration.planner import Planner
@@ -49,4 +52,27 @@ async def test_planner_falls_back_to_rules_when_llm_unavailable(monkeypatch: pyt
     assert any(subtask.name == "analyze-requirement" for subtask in subtasks)
     assert any(subtask.name == "prepare-implementation" for subtask in subtasks)
     assert any(subtask.name == "verify-result" for subtask in subtasks)
+    assert any(subtask.name == "review-result" for subtask in subtasks)
     assert all(subtask.metadata.get("plan_source") == "rules" for subtask in subtasks)
+
+    subtask_map = {subtask.name: subtask for subtask in subtasks}
+    assert subtask_map["prepare-implementation"].dependencies == [subtask_map["analyze-requirement"].id]
+    assert subtask_map["verify-result"].dependencies == [subtask_map["prepare-implementation"].id]
+    assert subtask_map["review-result"].dependencies == [subtask_map["verify-result"].id]
+
+
+def test_agent_factory_registers_native_agentscope_skills() -> None:
+    factory = AgentFactory(
+        AgentConfig(
+            name="skill-agent",
+            scope_config=AgentScopeConfig(model_name="gpt-4o"),
+            skill_profiles=["task_planning", "build_app"],
+        )
+    )
+
+    toolkit = factory.create_toolkit([])
+    prompt = toolkit.get_agent_skill_prompt()
+
+    assert resolve_agent_skill_dirs(["task_planning", "build_app"])
+    assert "task_planning" in prompt
+    assert "build_app" in prompt

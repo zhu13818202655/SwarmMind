@@ -5,9 +5,12 @@ from __future__ import annotations
 import uuid
 
 from swarmmind.events.bus import EventBus
+from swarmmind.models.capability import AgentRole, ToolGroup
 from swarmmind.models.event import DomainEvent
 from swarmmind.models.run import RunPhase
-from swarmmind.models.task import TaskStatus
+from swarmmind.models.execution import ReviewDecisionType
+from swarmmind.models.task import SubTask, SubTaskStatus, TaskStatus
+from swarmmind.utils import utc_now
 from swarmmind.orchestration.coordinator import Coordinator
 from swarmmind.orchestration.planner import Planner
 from swarmmind.orchestration.scheduler import Scheduler
@@ -68,8 +71,33 @@ class TaskOrchestrator:
             )
         )
 
+        await self._dispatch_ready_subtasks(task, run, event)
+
+    async def handle_subtask_terminal(self, event: DomainEvent) -> None:
+        """Continue scheduling when subtasks complete, and create rework chains if required."""
+        if not event.task_id or not event.run_id or not event.subtask_id:
+            return
+
+        task = await self._task_repository.get(event.task_id)
+        run = await self._run_repository.get(event.run_id)
+        subtask = await self._subtask_repository.get(event.subtask_id)
+        if task is None or run is None or subtask is None:
+            return
+
+        if event.topic == "subtask.completed":
+            await self._maybe_generate_rework_chain(task, run, subtask, event)
+        elif event.topic == "subtask.failed":
+            await self._maybe_generate_failure_repair_chain(task, run, subtask, event)
+
+        await self._dispatch_ready_subtasks(task, run, event)
+
+    async def _dispatch_ready_subtasks(self, task, run, event: DomainEvent) -> None:
+        subtasks = await self._subtask_repository.list_for_run(run.id)
         ready_subtasks = self._scheduler.get_ready_subtasks(subtasks)
         assigned_subtasks = await self._coordinator.assign(task, run, ready_subtasks)
+
+        if not assigned_subtasks:
+            return
 
         task.start()
         await self._task_repository.save(task)
@@ -91,8 +119,252 @@ class TaskOrchestrator:
                     payload={
                         "name": subtask.name,
                         "role": subtask.role,
-                        "preferred_skill": subtask.preferred_skill,
+                        "preferred_strategy": subtask.preferred_strategy,
                     },
                 )
             )
+
+    async def _maybe_generate_rework_chain(self, task, run, subtask: SubTask, event: DomainEvent) -> None:
+        if subtask.role != AgentRole.REVIEWER:
+            return
+        decision = str((subtask.result or {}).get("decision") or "").lower()
+        if decision != ReviewDecisionType.REWORK.value:
+            return
+
+        current_attempt = int(subtask.metadata.get("repair_attempt") or 0)
+        max_attempts = int(task.constraints.get("max_repair_attempts", 1))
+        if current_attempt >= max_attempts:
+            return
+
+        all_subtasks = await self._subtask_repository.list_for_run(run.id)
+        subtask_map = {item.id: item for item in all_subtasks}
+        target = self._find_rework_target(subtask, subtask_map)
+        if target is None:
+            return
+
+        attempt = current_attempt + 1
+        repair_subtask = SubTask(
+            id=str(uuid.uuid4()),
+            task_id=task.id,
+            name=f"repair-{target.name}-attempt-{attempt}",
+            description=f"Repair issues identified during review for {target.name}.",
+            role=target.role,
+            preferred_strategy=target.preferred_strategy,
+            required_tool_groups=target.required_tool_groups or [
+                ToolGroup.PROJECT_READ,
+                ToolGroup.PROJECT_WRITE,
+                ToolGroup.SANDBOX_EXEC,
+            ],
+            sandbox_profile=target.sandbox_profile or task.metadata.get("profile", "py-basic"),
+            acceptance_criteria=target.acceptance_criteria,
+            dependencies=[subtask.id],
+            metadata={
+                "run_id": run.id,
+                "plan_source": "rework",
+                "repair_attempt": attempt,
+                "rework_source_subtask_id": subtask.id,
+                "repair_target_subtask_id": target.id,
+            },
+        )
+        verify_subtask = SubTask(
+            id=str(uuid.uuid4()),
+            task_id=task.id,
+            name=f"verify-repair-{target.name}-attempt-{attempt}",
+            description=f"Verify the repair result for {target.name}.",
+            role=AgentRole.TESTER,
+            preferred_strategy="verification",
+            required_tool_groups=[ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
+            sandbox_profile=task.metadata.get("profile", "py-basic"),
+            acceptance_criteria=["Repair evidence is attached and satisfies the review feedback."],
+            dependencies=[repair_subtask.id],
+            metadata={
+                "run_id": run.id,
+                "plan_source": "rework",
+                "repair_attempt": attempt,
+                "rework_source_subtask_id": subtask.id,
+                "repair_source_subtask_id": target.id,
+            },
+        )
+        review_subtask = SubTask(
+            id=str(uuid.uuid4()),
+            task_id=task.id,
+            name=f"review-repair-{target.name}-attempt-{attempt}",
+            description=f"Review the repaired result for {target.name}.",
+            role=AgentRole.REVIEWER,
+            preferred_strategy="review",
+            required_tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
+            acceptance_criteria=["A final accept or escalate decision is recorded."],
+            dependencies=[verify_subtask.id],
+            metadata={
+                "run_id": run.id,
+                "plan_source": "rework",
+                "repair_attempt": attempt,
+                "rework_source_subtask_id": subtask.id,
+            },
+        )
+
+        subtask.metadata["rework_generated"] = True
+        subtask.metadata["rework_generated_at"] = event.event_id
+        await self._subtask_repository.save(subtask)
+        await self._subtask_repository.create_many([repair_subtask, verify_subtask, review_subtask])
+
+        run.attach_subtasks([*run.subtask_ids, repair_subtask.id, verify_subtask.id, review_subtask.id])
+        await self._run_repository.save(run)
+
+        await self._event_bus.publish(
+            DomainEvent(
+                event_id=str(uuid.uuid4()),
+                topic="subtask.rework_requested",
+                tenant_id=event.tenant_id,
+                session_id=event.session_id,
+                task_id=task.id,
+                run_id=run.id,
+                subtask_id=subtask.id,
+                payload={
+                    "repair_attempt": attempt,
+                    "target_subtask_id": target.id,
+                    "generated_subtask_ids": [repair_subtask.id, verify_subtask.id, review_subtask.id],
+                },
+            )
+        )
+
+    async def _maybe_generate_failure_repair_chain(self, task, run, subtask: SubTask, event: DomainEvent) -> None:
+        if not task.constraints.get("enable_failure_repair"):
+            return
+        if subtask.role not in {AgentRole.CODER, AgentRole.EXECUTOR, AgentRole.WRITER, AgentRole.RESEARCHER, AgentRole.PLANNER}:
+            return
+        if subtask.metadata.get("repair_generated"):
+            return
+
+        attempt = int(subtask.metadata.get("repair_attempt") or 0) + 1
+        max_attempts = int(task.constraints.get("max_repair_attempts", 1))
+        if attempt > max_attempts:
+            return
+
+        repair_subtask = SubTask(
+            id=str(uuid.uuid4()),
+            task_id=task.id,
+            name=f"repair-{subtask.name}-failure-attempt-{attempt}",
+            description=f"Retry and repair failed subtask {subtask.name} using failure evidence.",
+            role=subtask.role,
+            preferred_strategy=subtask.preferred_strategy,
+            required_tool_groups=subtask.required_tool_groups or [
+                ToolGroup.PROJECT_READ,
+                ToolGroup.PROJECT_WRITE,
+                ToolGroup.SANDBOX_EXEC,
+            ],
+            sandbox_profile=subtask.sandbox_profile or task.metadata.get("profile", "py-basic"),
+            acceptance_criteria=subtask.acceptance_criteria,
+            dependencies=list(subtask.dependencies),
+            metadata={
+                "run_id": run.id,
+                "plan_source": "repair_failure",
+                "repair_attempt": attempt,
+                "repair_source_subtask_id": subtask.id,
+                "failure_reason": subtask.error,
+            },
+        )
+        verify_subtask = SubTask(
+            id=str(uuid.uuid4()),
+            task_id=task.id,
+            name=f"verify-repair-{subtask.name}-failure-attempt-{attempt}",
+            description=f"Verify the repaired execution result for failed subtask {subtask.name}.",
+            role=AgentRole.TESTER,
+            preferred_strategy="verification",
+            required_tool_groups=[ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
+            sandbox_profile=task.metadata.get("profile", "py-basic"),
+            acceptance_criteria=["Failure repair evidence is attached to the run."],
+            dependencies=[repair_subtask.id],
+            metadata={
+                "run_id": run.id,
+                "plan_source": "repair_failure",
+                "repair_attempt": attempt,
+                "repair_source_subtask_id": subtask.id,
+            },
+        )
+        review_subtask = SubTask(
+            id=str(uuid.uuid4()),
+            task_id=task.id,
+            name=f"review-repair-{subtask.name}-failure-attempt-{attempt}",
+            description=f"Review the failure repair result for {subtask.name}.",
+            role=AgentRole.REVIEWER,
+            preferred_strategy="review",
+            required_tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
+            acceptance_criteria=["A final review decision is recorded for the failure repair."],
+            dependencies=[verify_subtask.id],
+            metadata={
+                "run_id": run.id,
+                "plan_source": "repair_failure",
+                "repair_attempt": attempt,
+                "repair_source_subtask_id": subtask.id,
+            },
+        )
+
+        subtask.metadata["repair_generated"] = True
+        subtask.metadata["repair_generated_at"] = event.event_id
+        await self._subtask_repository.save(subtask)
+        await self._cancel_descendant_subtasks(run.id, subtask.id, preserve_ids={repair_subtask.id, verify_subtask.id, review_subtask.id})
+        await self._subtask_repository.create_many([repair_subtask, verify_subtask, review_subtask])
+
+        run.attach_subtasks([*run.subtask_ids, repair_subtask.id, verify_subtask.id, review_subtask.id])
+        await self._run_repository.save(run)
+
+        await self._event_bus.publish(
+            DomainEvent(
+                event_id=str(uuid.uuid4()),
+                topic="subtask.repair_requested",
+                tenant_id=event.tenant_id,
+                session_id=event.session_id,
+                task_id=task.id,
+                run_id=run.id,
+                subtask_id=subtask.id,
+                payload={
+                    "repair_attempt": attempt,
+                    "generated_subtask_ids": [repair_subtask.id, verify_subtask.id, review_subtask.id],
+                },
+            )
+        )
+
+    async def _cancel_descendant_subtasks(self, run_id: str, source_subtask_id: str, preserve_ids: set[str]) -> None:
+        subtasks = await self._subtask_repository.list_for_run(run_id)
+        descendants = self._collect_descendant_subtask_ids(subtasks, source_subtask_id)
+        for candidate in subtasks:
+            if candidate.id not in descendants or candidate.id in preserve_ids:
+                continue
+            if candidate.status in {SubTaskStatus.SUCCEEDED, SubTaskStatus.FAILED, SubTaskStatus.CANCELLED}:
+                continue
+            candidate.status = SubTaskStatus.CANCELLED
+            candidate.metadata["cancelled_reason"] = f"Superseded by repair chain for {source_subtask_id}"
+            candidate.metadata["cancelled_at"] = utc_now().isoformat()
+            await self._subtask_repository.save(candidate)
+
+    @staticmethod
+    def _collect_descendant_subtask_ids(subtasks: list[SubTask], source_subtask_id: str) -> set[str]:
+        descendants: set[str] = set()
+        pending = [source_subtask_id]
+        while pending:
+            current_id = pending.pop(0)
+            for candidate in subtasks:
+                if current_id not in candidate.dependencies or candidate.id in descendants:
+                    continue
+                descendants.add(candidate.id)
+                pending.append(candidate.id)
+        return descendants
+
+    @staticmethod
+    def _find_rework_target(subtask: SubTask, subtask_map: dict[str, SubTask]) -> SubTask | None:
+        pending_ids = list(subtask.dependencies)
+        visited: set[str] = set()
+        while pending_ids:
+            dependency_id = pending_ids.pop(0)
+            if dependency_id in visited:
+                continue
+            visited.add(dependency_id)
+            dependency = subtask_map.get(dependency_id)
+            if dependency is None:
+                continue
+            if dependency.role in {AgentRole.CODER, AgentRole.EXECUTOR, AgentRole.WRITER, AgentRole.RESEARCHER}:
+                return dependency
+            pending_ids.extend(dependency.dependencies)
+        return None
 

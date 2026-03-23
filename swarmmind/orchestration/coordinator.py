@@ -16,11 +16,10 @@ class Coordinator:
         for subtask in subtasks:
             profile = ExecutionProfile(
                 role=subtask.role,
-                preferred_skill=subtask.preferred_skill,
+                preferred_strategy=subtask.preferred_strategy,
                 required_tool_groups=subtask.required_tool_groups,
                 sandbox_profile=subtask.sandbox_profile or task.metadata.get("profile"),
             )
-            subtask.metadata["execution_profile"] = profile.model_dump(mode="json")
-            subtask.metadata["assigned_run_id"] = run.id
+            subtask.assign(profile.model_dump(mode="json"), run.id)
             assigned.append(subtask)
         return assigned

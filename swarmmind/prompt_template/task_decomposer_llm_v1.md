@@ -14,8 +14,8 @@ Respond with a JSON array of subtasks, each with:
 
 Example output format:
 [
-    {"name": "research", "description": "Search for information about...", "role": "researcher", "preferred_skill": "research", "required_tool_groups": ["web_search", "browser_read"], "sandbox_profile": "py-basic"},
-    {"name": "write", "description": "Write the report based on research", "role": "writer", "preferred_skill": "write_report", "required_tool_groups": ["project_write"], "sandbox_profile": "py-basic"}
+    {"name": "research", "description": "Search for information about...", "role": "researcher", "preferred_strategy": "research", "required_tool_groups": ["web_search", "browser_read"], "sandbox_profile": "py-basic"},
+    {"name": "write", "description": "Write the report based on research", "role": "writer", "preferred_strategy": "write_report", "required_tool_groups": ["project_write"], "sandbox_profile": "py-basic"}
 ]
 
 Respond ONLY with the JSON array, no other text.

@@ -4,8 +4,8 @@ from swarmmind.models.artifact import Artifact, ArtifactType
 from swarmmind.models.capability import (
 	AgentRole,
 	DEFAULT_ROLE_TOOL_GROUPS,
-	DEFAULT_SKILL_PROFILES,
-	SkillProfile,
+	DEFAULT_STRATEGY_PROFILES,
+	StrategyProfile,
 	ToolGroup,
 )
 from swarmmind.models.event import DomainEvent
@@ -20,7 +20,7 @@ __all__ = [
 	"Artifact",
 	"ArtifactType",
 	"DEFAULT_ROLE_TOOL_GROUPS",
-	"DEFAULT_SKILL_PROFILES",
+	"DEFAULT_STRATEGY_PROFILES",
 	"DomainEvent",
 	"ExecutionProfile",
 	"ReplayEntry",
@@ -30,7 +30,7 @@ __all__ = [
 	"RunStatus",
 	"Session",
 	"SessionStatus",
-	"SkillProfile",
+	"StrategyProfile",
 	"SubTask",
 	"Task",
 	"TaskPriority",

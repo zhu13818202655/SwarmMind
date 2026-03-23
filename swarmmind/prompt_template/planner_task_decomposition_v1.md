@@ -5,7 +5,7 @@ Given the input, produce a plan JSON with schema:
       "name": "string-kebab-case",
       "description": "string",
       "role": "planner|coder|tester|reviewer|researcher",
-      "preferred_skill": "string",
+      "preferred_strategy": "string",
       "required_tool_groups": ["project_read|project_write|sandbox_exec|artifact_read|http"],
       "sandbox_profile": "string",
       "acceptance_criteria": ["string"],
@@ -25,4 +25,4 @@ Input:
 - Goal: {{task_goal}}
 - Constraints JSON: {{constraints_json}}
 - Preferred Profile: {{profile}}
-- Preferred Skill: {{preferred_skill}}
+- Preferred Strategy: {{preferred_strategy}}
