@@ -1,19 +1,19 @@
 # SwarmMind Prompt Templates
 
-统一存放所有提示词模板（平铺结构，不按功能再建子目录）。
+统一存放所有提示词模板的 Python 模块定义，运行时通过 Jinja2 渲染。
 
 ## 规则
 
-1. 所有模板文件都放在 `swarmmind/prompt_template/` 根目录。
-2. 代码中不得内联业务 prompt，统一通过模板加载。
-3. 使用 `{{placeholder}}` 作为变量占位符。
+1. 所有模板定义都位于 `swarmmind/prompt_template/*.py`。
+2. 调用方直接 import `PromptTemplate` 常量，不再通过文件名字符串加载。
+3. 使用 Jinja2 语法渲染模板，并通过 `StrictUndefined` 对缺失变量 fail fast。
 
 ## 当前模板
 
-- `planner_system_v1.txt`
-- `planner_task_decomposition_v1.md`
-- `execution_system_v1.txt`
-- `execution_subtask_markdown_v1.md`
-- `execution_fallback_content_v1.md`
-- `task_decomposer_llm_v1.md`
-- `review_subtask_verification_v1.md`
+- `PLANNER_SYSTEM_PROMPT`
+- `PLANNER_TASK_DECOMPOSITION_PROMPT`
+- `TASK_DECOMPOSER_LLM_PROMPT`
+- `EXECUTION_SYSTEM_PROMPT`
+- `EXECUTION_SUBTASK_MARKDOWN_PROMPT`
+- `EXECUTION_FALLBACK_CONTENT_PROMPT`
+- `REVIEW_SUBTASK_VERIFICATION_PROMPT`

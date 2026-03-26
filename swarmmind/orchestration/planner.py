@@ -16,7 +16,12 @@ from swarmmind.memory import LongTermMemoryBase
 from swarmmind.models.capability import AgentRole, ToolGroup
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
-from swarmmind.prompt_template import load_prompt_template, render_prompt_template
+from swarmmind.prompt_template import (
+    PLANNER_SYSTEM_PROMPT,
+    PLANNER_TASK_DECOMPOSITION_PROMPT,
+    PromptTemplate,
+    render_prompt,
+)
 
 
 class Planner:
@@ -29,8 +34,8 @@ class Planner:
         model_base_url: str | None = None,
         model_temperature: float = 0.2,
         model_max_tokens: int = 2048,
-        system_prompt_template_name: str = "planner_system_v1.txt",
-        user_prompt_template_name: str = "planner_task_decomposition_v1.md",
+        system_prompt_template: PromptTemplate = PLANNER_SYSTEM_PROMPT,
+        user_prompt_template: PromptTemplate = PLANNER_TASK_DECOMPOSITION_PROMPT,
         agent_profile_store: AgentProfileStore | None = None,
         long_term_memory: LongTermMemoryBase | None = None,
     ) -> None:
@@ -39,8 +44,8 @@ class Planner:
         self._model_base_url = model_base_url
         self._model_temperature = model_temperature
         self._model_max_tokens = model_max_tokens
-        self._system_prompt_template_name = system_prompt_template_name
-        self._user_prompt_template_name = user_prompt_template_name
+        self._system_prompt_template = system_prompt_template
+        self._user_prompt_template = user_prompt_template
         self._agent_profile_store = agent_profile_store
         self._long_term_memory = long_term_memory
 
@@ -69,7 +74,7 @@ class Planner:
                         max_tokens=self._model_max_tokens,
                     ),
                     max_steps=6,
-                    system_prompt=load_prompt_template(self._system_prompt_template_name),
+                    system_prompt=render_prompt(self._system_prompt_template),
                     skill_profiles=["task_planning"],
                 )
             )
@@ -87,8 +92,8 @@ class Planner:
             return None
 
     async def _compose_planning_prompt(self, task: Task) -> str:
-        prompt = render_prompt_template(
-            self._user_prompt_template_name,
+        prompt = render_prompt(
+            self._user_prompt_template,
             {
                 "task_goal": task.goal,
                 "constraints_json": json.dumps(task.constraints, ensure_ascii=False),
@@ -182,7 +187,7 @@ class Planner:
                     metadata={
                         "run_id": run.id,
                         "plan_source": "llm",
-                        "planning_prompt": self._user_prompt_template_name,
+                        "planning_prompt": self._user_prompt_template.name,
                     },
                 )
             )

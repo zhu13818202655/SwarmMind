@@ -3,9 +3,10 @@
 import json
 import uuid
 from typing import Any
+
 from swarmmind.models.capability import AgentRole, ToolGroup
 from swarmmind.models.task import SubTask
-from swarmmind.prompt_template import render_prompt_template
+from swarmmind.prompt_template import TASK_DECOMPOSER_LLM_PROMPT, render_prompt
 
 
 class TaskDecomposer:
@@ -187,7 +188,7 @@ class TaskDecomposer:
 
     async def _decompose_with_llm(self, goal: str, task_id: str) -> list[SubTask] | None:
         """Decompose using LLM."""
-        prompt = render_prompt_template("task_decomposer_llm_v1.md", {"goal": goal})
+        prompt = render_prompt(TASK_DECOMPOSER_LLM_PROMPT, {"goal": goal})
 
         # Call LLM (simplified - actual implementation depends on model client)
         response = await self._model_client.chat(

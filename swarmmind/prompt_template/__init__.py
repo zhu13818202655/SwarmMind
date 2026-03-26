@@ -1,5 +1,27 @@
-"""Prompt template loading utilities."""
+"""Prompt template constants and rendering helpers."""
 
-from swarmmind.prompt_template.loader import load_prompt_template, render_prompt_template
+from swarmmind.prompt_template.renderer import render_prompt
+from swarmmind.prompt_template.templates import (
+	EXECUTION_FALLBACK_CONTENT_PROMPT,
+	EXECUTION_SUBTASK_MARKDOWN_PROMPT,
+	EXECUTION_SYSTEM_PROMPT,
+	PLANNER_SYSTEM_PROMPT,
+	PLANNER_TASK_DECOMPOSITION_PROMPT,
+	PROMPT_TEMPLATES,
+	PromptTemplate,
+	REVIEW_SUBTASK_VERIFICATION_PROMPT,
+	TASK_DECOMPOSER_LLM_PROMPT,
+)
 
-__all__ = ["load_prompt_template", "render_prompt_template"]
+__all__ = [
+	"EXECUTION_FALLBACK_CONTENT_PROMPT",
+	"EXECUTION_SUBTASK_MARKDOWN_PROMPT",
+	"EXECUTION_SYSTEM_PROMPT",
+	"PLANNER_SYSTEM_PROMPT",
+	"PLANNER_TASK_DECOMPOSITION_PROMPT",
+	"PROMPT_TEMPLATES",
+	"PromptTemplate",
+	"REVIEW_SUBTASK_VERIFICATION_PROMPT",
+	"TASK_DECOMPOSER_LLM_PROMPT",
+	"render_prompt",
+]
