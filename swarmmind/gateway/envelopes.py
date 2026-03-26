@@ -22,6 +22,7 @@ class TaskSubmitRequest(BaseModel):
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
     profile: str = Field(default="py-basic")
     session_id: str | None = None
+    agent_profile_id: str | None = None
     preferred_strategy: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

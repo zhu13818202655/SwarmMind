@@ -31,15 +31,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--goal", help="Task goal text. If omitted, the script will prompt for input.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="SwarmMind API base URL")
     parser.add_argument("--profile", default="py-basic", help="Sandbox profile")
+    parser.add_argument("--agent-profile-id", help="Optional default agent profile id for the task")
+    parser.add_argument("--preferred-strategy", help="Optional preferred top-level execution strategy")
     parser.add_argument("--priority", default="normal", help="Task priority")
     parser.add_argument(
         "--constraints-json",
         default="{}",
         help="JSON object string for task constraints, for example '{\"language\": \"python\"}'",
     )
+    parser.add_argument(
+        "--handoff-request",
+        action="append",
+        default=[],
+        help="Optional handoff mapping in the form subtask_name=target_profile_id. Can be passed multiple times.",
+    )
+    parser.add_argument(
+        "--handoff-target-profile-id",
+        help="Optional default handoff target profile id used when no subtask-specific mapping is provided.",
+    )
     parser.add_argument("--poll", action="store_true", help="Poll task status until it reaches a terminal state")
     parser.add_argument("--interval", type=float, default=2.0, help="Polling interval in seconds")
-    parser.add_argument("--timeout", type=float, default=300.0, help="Polling timeout in seconds")
+    parser.add_argument("--timeout", type=float, default=3000.0, help="Polling timeout in seconds")
     parser.add_argument(
         "--wait-for-service",
         type=float,
@@ -49,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--request-timeout",
         type=float,
-        default=180.0,
+        default=1800.0,
         help="HTTP request timeout in seconds for submit/query calls",
     )
     return parser
@@ -77,6 +89,41 @@ def parse_constraints(raw: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("constraints JSON must decode to an object")
     return value
+
+
+def merge_cli_constraints(
+    constraints: dict[str, object],
+    *,
+    handoff_requests: list[str],
+    handoff_target_profile_id: str | None,
+) -> dict[str, object]:
+    """Merge convenience CLI flags into the task constraints object."""
+    merged = dict(constraints)
+
+    parsed_handoff_requests: dict[str, str] = {}
+    for entry in handoff_requests:
+        key, separator, value = entry.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if separator != "=" or not key or not value:
+            raise ValueError(
+                f"handoff request must be in the form subtask_name=target_profile_id, got: {entry!r}"
+            )
+        parsed_handoff_requests[key] = value
+
+    if parsed_handoff_requests:
+        existing = merged.get("handoff_requests")
+        if existing is not None and not isinstance(existing, dict):
+            raise ValueError("constraints.handoff_requests must be an object when provided")
+        merged["handoff_requests"] = {
+            **(existing if isinstance(existing, dict) else {}),
+            **parsed_handoff_requests,
+        }
+
+    if handoff_target_profile_id:
+        merged["handoff_target_profile_id"] = handoff_target_profile_id.strip()
+
+    return merged
 
 
 def submit_task(
@@ -221,7 +268,11 @@ def main() -> int:
 
     try:
         goal = read_goal(args.goal)
-        constraints = parse_constraints(args.constraints_json)
+        constraints = merge_cli_constraints(
+            parse_constraints(args.constraints_json),
+            handoff_requests=args.handoff_request,
+            handoff_target_profile_id=args.handoff_target_profile_id,
+        )
     except ValueError as exc:
         print(f"input error: {exc}", file=sys.stderr)
         return 2
@@ -232,6 +283,10 @@ def main() -> int:
         "priority": args.priority,
         "profile": args.profile,
     }
+    if args.agent_profile_id:
+        payload["agent_profile_id"] = args.agent_profile_id
+    if args.preferred_strategy:
+        payload["preferred_strategy"] = args.preferred_strategy
 
     with httpx.Client() as client:
         try:

@@ -64,6 +64,11 @@
 - [ ] E2. 将真实 repo 修改 / pytest / lint / build 引入默认 `build_app` 执行链。
 - [ ] E3. 将 verify / review 独立成更明确的阶段执行器，而不是仍由 `ExecutionRunner` 统一承载。
 - [ ] E4. 引入 durable worker / consumer group / ack / dead-letter 异步消费模型。
+- [ ] E5. 将 handoff 从 `task.constraints.handoff_requests` 演进为 orchestrator 审批式 delegation tree：
+  - 定义 delegation request / approval / execution / completion 的领域对象与事件
+  - 由 orchestrator 而不是单个 strategy 决定 delegation 是否生效
+  - 为 delegation tree 增加 lineage、depth、target-profile、context-mode、audit 查询能力
+  - 保持与现有 `agent_backed` 和 `HandoffPolicy` 兼容，作为下一阶段平台化演进路径
 
 ---
 

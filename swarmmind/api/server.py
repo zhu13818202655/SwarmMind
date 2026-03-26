@@ -34,6 +34,7 @@ class TaskCreateRequest(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
     profile: str = Field(default="py-basic")
+    agent_profile_id: str | None = Field(default=None)
     preferred_strategy: str | None = Field(default=None)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -209,6 +210,7 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
                 constraints=request.constraints,
                 priority=request.priority,
                 profile=request.profile,
+                agent_profile_id=request.agent_profile_id,
                 preferred_strategy=request.preferred_strategy,
                 metadata=request.metadata,
             ),

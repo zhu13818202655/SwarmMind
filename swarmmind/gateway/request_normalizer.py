@@ -14,6 +14,7 @@ class RequestNormalizer:
             constraints=request.constraints,
             priority=request.priority,
             profile=request.profile,
+            agent_profile_id=request.agent_profile_id,
             preferred_strategy=request.preferred_strategy,
             metadata=request.metadata,
         )

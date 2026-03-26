@@ -4,12 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from swarmmind.config.env import resolve_env_value
 
 
-class ModelConfig(BaseModel):
+class ValidatedDefaultsModel(BaseModel):
+    """Base config model that validates defaulted fields."""
+
+    model_config = ConfigDict(validate_default=True)
+
+
+class ModelConfig(ValidatedDefaultsModel):
     """LLM model configuration."""
 
     provider: str = Field(default="openai", description="Model provider")
@@ -30,7 +36,7 @@ class ModelConfig(BaseModel):
         return resolve_env_value(value, "OPENAI_BASE_URL")
 
 
-class SandboxConfig(BaseModel):
+class SandboxConfig(ValidatedDefaultsModel):
     """Sandbox configuration."""
 
     provider: str = Field(default="opensandbox", description="Sandbox provider")
@@ -70,7 +76,7 @@ class SandboxConfig(BaseModel):
         return resolve_env_value(value, "OPEN_SANDBOX_REQUEST_TIMEOUT_SECONDS", cast_type=int)
 
 
-class PostgresConfig(BaseModel):
+class PostgresConfig(ValidatedDefaultsModel):
     """PostgreSQL infrastructure configuration."""
 
     enabled: bool = Field(default=False, description="Enable PostgreSQL-backed repositories")
@@ -91,7 +97,7 @@ class PostgresConfig(BaseModel):
         return resolve_env_value(value, "POSTGRES_DSN", "DATABASE_URL")
 
 
-class RedisConfig(BaseModel):
+class RedisConfig(ValidatedDefaultsModel):
     """Redis infrastructure configuration."""
 
     enabled: bool = Field(default=False, description="Enable Redis-backed cache, locks, and event buffering")
@@ -113,7 +119,7 @@ class RedisConfig(BaseModel):
         return resolve_env_value(value, "REDIS_URL")
 
 
-class VectorStoreConfig(BaseModel):
+class VectorStoreConfig(ValidatedDefaultsModel):
     """Vector store and long-term memory configuration."""
 
     provider: str = Field(default="memory", description="Vector provider: memory or qdrant")

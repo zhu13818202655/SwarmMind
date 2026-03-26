@@ -9,6 +9,7 @@ import uuid
 from agentscope.message import Msg
 from pydantic import BaseModel, ConfigDict, Field
 
+from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
 from swarmmind.memory import LongTermMemoryBase
@@ -30,6 +31,7 @@ class Planner:
         model_max_tokens: int = 2048,
         system_prompt_template_name: str = "planner_system_v1.txt",
         user_prompt_template_name: str = "planner_task_decomposition_v1.md",
+        agent_profile_store: AgentProfileStore | None = None,
         long_term_memory: LongTermMemoryBase | None = None,
     ) -> None:
         self._model_name = model_name
@@ -39,6 +41,7 @@ class Planner:
         self._model_max_tokens = model_max_tokens
         self._system_prompt_template_name = system_prompt_template_name
         self._user_prompt_template_name = user_prompt_template_name
+        self._agent_profile_store = agent_profile_store
         self._long_term_memory = long_term_memory
 
     async def plan(self, task: Task, run: Run) -> list[SubTask]:
@@ -91,6 +94,7 @@ class Planner:
                 "constraints_json": json.dumps(task.constraints, ensure_ascii=False),
                 "profile": str(task.metadata.get("profile", "py-basic")),
                 "preferred_strategy": str(task.metadata.get("preferred_strategy") or "build_app"),
+                "agent_profiles_json": json.dumps(self._render_agent_profile_options(), ensure_ascii=False),
             },
         )
         memory_context = await self._render_memory_context(task.goal)
@@ -155,6 +159,12 @@ class Planner:
             acceptance_criteria = [item.strip() for item in spec.acceptance_criteria if item.strip()]
             if not acceptance_criteria:
                 acceptance_criteria = ["Subtask output is complete and verifiable."]
+            resolved_strategy = spec.preferred_strategy or task.metadata.get("preferred_strategy") or "build_app"
+            resolved_agent_profile_id = self._resolve_agent_profile_id(
+                role=role,
+                requested_profile_id=spec.agent_profile_id or task.metadata.get("agent_profile_id"),
+                preferred_strategy=resolved_strategy,
+            )
 
             subtasks.append(
                 SubTask(
@@ -162,8 +172,9 @@ class Planner:
                     task_id=task.id,
                     name=name,
                     description=spec.description.strip() or f"Execute {name}",
+                    agent_profile_id=resolved_agent_profile_id,
                     role=role,
-                    preferred_strategy=(spec.preferred_strategy or task.metadata.get("preferred_strategy") or "build_app"),
+                    preferred_strategy=resolved_strategy,
                     required_tool_groups=tool_groups,
                     sandbox_profile=spec.sandbox_profile or task.metadata.get("profile", "py-basic"),
                     acceptance_criteria=acceptance_criteria,
@@ -218,6 +229,35 @@ class Planner:
         token = token.strip("-")
         return token
 
+    def _render_agent_profile_options(self) -> list[dict[str, str | bool | None]]:
+        if self._agent_profile_store is None:
+            return []
+        return [
+            {
+                "id": profile.id,
+                "role": profile.role.value,
+                "default_strategy": profile.default_strategy,
+                "allow_handoff": profile.handoff_policy.allow_handoff,
+            }
+            for profile in self._agent_profile_store.list_all()
+        ]
+
+    def _resolve_agent_profile_id(
+        self,
+        *,
+        role: AgentRole,
+        requested_profile_id: str | None,
+        preferred_strategy: str | None,
+    ) -> str | None:
+        if self._agent_profile_store is None:
+            return requested_profile_id
+        profile = self._agent_profile_store.resolve_for_subtask(
+            profile_id=requested_profile_id,
+            role=role,
+            preferred_strategy=preferred_strategy,
+        )
+        return profile.id
+
     def _plan_with_rules(self, task: Task, run: Run) -> list[SubTask]:
         goal = task.goal.lower()
         needs_verification = "test" in goal or any(token in task.goal for token in ("测试", "验证"))
@@ -228,6 +268,11 @@ class Planner:
             task_id=task.id,
             name="analyze-requirement",
             description="Analyze the goal and identify the implementation scope.",
+            agent_profile_id=self._resolve_agent_profile_id(
+                role=AgentRole.PLANNER,
+                requested_profile_id=task.metadata.get("agent_profile_id"),
+                preferred_strategy="task_planning",
+            ),
             role=AgentRole.PLANNER,
             preferred_strategy="task_planning",
             required_tool_groups=[ToolGroup.PROJECT_READ],
@@ -245,6 +290,11 @@ class Planner:
             task_id=task.id,
             name="prepare-implementation",
             description=f"Prepare the implementation steps for: {task.goal}",
+            agent_profile_id=self._resolve_agent_profile_id(
+                role=AgentRole.CODER,
+                requested_profile_id=task.metadata.get("agent_profile_id"),
+                preferred_strategy=task.metadata.get("preferred_strategy") or "build_app",
+            ),
             role=AgentRole.CODER,
             preferred_strategy=task.metadata.get("preferred_strategy") or "build_app",
             required_tool_groups=build_tool_groups,
@@ -261,6 +311,11 @@ class Planner:
                 task_id=task.id,
                 name="verify-result",
                 description="Verify the implementation using the declared acceptance criteria.",
+                agent_profile_id=self._resolve_agent_profile_id(
+                    role=AgentRole.TESTER,
+                    requested_profile_id=task.metadata.get("agent_profile_id"),
+                    preferred_strategy="verification",
+                ),
                 role=AgentRole.TESTER,
                 preferred_strategy="verification",
                 required_tool_groups=[ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
@@ -274,6 +329,11 @@ class Planner:
                 task_id=task.id,
                 name="review-result",
                 description="Review verification evidence and decide whether to accept or rework.",
+                agent_profile_id=self._resolve_agent_profile_id(
+                    role=AgentRole.REVIEWER,
+                    requested_profile_id=task.metadata.get("agent_profile_id"),
+                    preferred_strategy="review",
+                ),
                 role=AgentRole.REVIEWER,
                 preferred_strategy="review",
                 required_tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
@@ -289,6 +349,7 @@ class Planner:
 class _PlanSubtaskSpec(BaseModel):
     name: str = Field(...)
     description: str = Field(default="")
+    agent_profile_id: str | None = Field(default=None)
     role: str = Field(default="coder")
     model_config = ConfigDict(populate_by_name=True)
 

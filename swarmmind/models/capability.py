@@ -105,6 +105,12 @@ DEFAULT_STRATEGY_PROFILES: dict[str, StrategyProfile] = {
         ],
         recommended_roles=[AgentRole.WRITER, AgentRole.RESEARCHER],
     ),
+    "agent_backed": StrategyProfile(
+        name="agent_backed",
+        description="Run a controlled agent runtime backend instead of the default sandbox strategy.",
+        tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
+        recommended_roles=[AgentRole.PLANNER, AgentRole.RESEARCHER, AgentRole.WRITER, AgentRole.EXECUTOR],
+    ),
 }
 
 

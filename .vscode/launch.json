@@ -2,7 +2,8 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "SwarmMind API",
+      "name": "Server",
+      "consoleName": "Server",
       "type": "debugpy",
       "request": "launch",
       "module": "uvicorn",
@@ -16,13 +17,36 @@
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "justMyCode": true,
+      "justMyCode": false,
+      "envFile": "${workspaceFolder}/.env",
       "env": {
         "PYTHONPATH": "${workspaceFolder}"
       }
     },
     {
-      "name": "Submit Task Script",
+      "name": "User Test",
+      "consoleName": "User Test",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/submit_task.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--base-url",
+        "http://127.0.0.1:8000",
+        "--wait-for-service",
+        "20",
+        "--goal",
+        "做一个基于多agent产品的研究报告",
+        "--poll"
+      ]
+    },
+    {
+      "name": "Submit Agent Backed Task",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/scripts/submit_task.py",
@@ -38,7 +62,34 @@
         "--wait-for-service",
         "20",
         "--goal",
-        "写一个python版本贪吃蛇",
+        "做一个基于多agent产品的研究报告",
+        "--preferred-strategy",
+        "agent_backed",
+        "--poll"
+      ]
+    },
+    {
+      "name": "Submit Agent Backed Handoff Task",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/submit_task.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "--base-url",
+        "http://127.0.0.1:8000",
+        "--wait-for-service",
+        "20",
+        "--goal",
+        "做一个基于多agent产品的研究报告",
+        "--preferred-strategy",
+        "agent_backed",
+        "--handoff-request",
+        "prepare-implementation=researcher-default",
         "--poll"
       ]
     }
@@ -49,6 +100,22 @@
       "configurations": [
         "SwarmMind API",
         "Submit Task Script"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "SwarmMind API + Submit Agent Backed Task",
+      "configurations": [
+        "SwarmMind API",
+        "Submit Agent Backed Task"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "SwarmMind API + Submit Agent Backed Handoff Task",
+      "configurations": [
+        "SwarmMind API",
+        "Submit Agent Backed Handoff Task"
       ],
       "stopAll": true
     }

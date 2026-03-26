@@ -3,7 +3,7 @@
 sandbox:
   provider: opensandbox
   api_key: ${OPEN_SANDBOX_API_KEY}
-  base_url: http://localhost:45698
+  base_url: ${OPEN_SANDBOX_BASE_URL}
   default_profile: py-basic
   create_retries: 3
   create_backoff: 1.0
@@ -35,7 +35,8 @@ agent:
     provider: litellm
     name: gpt-5.2-chat
     api_key: ${OPENAI_API_KEY}
-    temperature: 0.7
+    base_url: ${OPENAI_BASE_URL}
+    temperature: 1.0
     max_tokens: 4096
 
   memory:

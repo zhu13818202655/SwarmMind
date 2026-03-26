@@ -92,6 +92,7 @@ class SubTask(BaseModel):
     description: str = Field(..., description="Sub-task description")
     status: SubTaskStatus = Field(default=SubTaskStatus.QUEUED)
     agent_id: str | None = Field(default=None, description="Agent assigned to this sub-task")
+    agent_profile_id: str | None = Field(default=None, description="Preferred agent profile for this sub-task")
     role: AgentRole = Field(default=AgentRole.EXECUTOR, description="Logical executor role")
     preferred_strategy: str | None = Field(default=None, description="Preferred runtime strategy profile")
     required_tool_groups: list[ToolGroup] = Field(
@@ -167,6 +168,7 @@ class TaskRequest(BaseModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
     profile: str = Field(default="py-basic", description="Sandbox profile")
+    agent_profile_id: str | None = Field(default=None, description="Default agent profile for generated subtasks")
     preferred_strategy: str | None = Field(default=None, description="Preferred top-level runtime strategy")
     required_tool_groups: list[ToolGroup] = Field(
         default_factory=list,

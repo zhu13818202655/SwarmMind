@@ -1,6 +1,7 @@
 """Application container for first-round bootstrap."""
 
 from swarmmind.cache import CacheStore, InMemoryCacheStore, RedisCacheStore
+from swarmmind.agents import AgentProfileStore
 from swarmmind.config import SwarmMindConfig, get_settings
 from swarmmind.events import EventBus, InMemoryEventBus, RedisBufferedEventBus
 from swarmmind.gateway.gateway import Gateway
@@ -51,6 +52,7 @@ class AppContainer:
     event_bus: EventBus
     cache_store: CacheStore
     lock_manager: LockManager
+    agent_profile_store: AgentProfileStore
     long_term_memory: LongTermMemoryBase
     identity_resolver: StaticIdentityResolver
     authorization_policy: AuthorizationPolicy
@@ -77,6 +79,7 @@ class AppContainer:
         "event_bus",
         "cache_store",
         "lock_manager",
+        "agent_profile_store",
         "long_term_memory",
         "identity_resolver",
         "authorization_policy",
@@ -105,6 +108,7 @@ class AppContainer:
         event_bus: EventBus,
         cache_store: CacheStore,
         lock_manager: LockManager,
+        agent_profile_store: AgentProfileStore,
         long_term_memory: LongTermMemoryBase,
         identity_resolver: StaticIdentityResolver,
         authorization_policy: AuthorizationPolicy,
@@ -130,6 +134,7 @@ class AppContainer:
         self.event_bus = event_bus
         self.cache_store = cache_store
         self.lock_manager = lock_manager
+        self.agent_profile_store = agent_profile_store
         self.long_term_memory = long_term_memory
         self.identity_resolver = identity_resolver
         self.authorization_policy = authorization_policy
@@ -158,6 +163,7 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
     event_bus = _build_event_bus(settings)
     cache_store = _build_cache_store(settings)
     lock_manager = _build_lock_manager(settings)
+    agent_profile_store = AgentProfileStore()
     long_term_memory = _build_long_term_memory(settings)
     identity_resolver = StaticIdentityResolver(
         default_tenant_id=settings.identity.default_tenant_id,
@@ -194,9 +200,10 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         model_base_url=settings.agent.model.base_url,
         model_temperature=settings.agent.model.temperature,
         model_max_tokens=settings.agent.model.max_tokens,
+        agent_profile_store=agent_profile_store,
         long_term_memory=long_term_memory,
     )
-    coordinator = Coordinator()
+    coordinator = Coordinator(agent_profile_store=agent_profile_store)
     scheduler = Scheduler()
 
     orchestrator = TaskOrchestrator(
@@ -229,6 +236,7 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         execution_strategy_registry=execution_strategy_registry,
         tool_registry=tool_registry,
         skill_execution_service=skill_execution_service,
+        agent_profile_store=agent_profile_store,
         model_name=settings.agent.model.name,
         model_api_key=settings.agent.model.api_key,
         model_base_url=settings.agent.model.base_url,
@@ -270,6 +278,7 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         event_bus=event_bus,
         cache_store=cache_store,
         lock_manager=lock_manager,
+        agent_profile_store=agent_profile_store,
         long_term_memory=long_term_memory,
         identity_resolver=identity_resolver,
         authorization_policy=authorization_policy,

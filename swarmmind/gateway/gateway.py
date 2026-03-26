@@ -96,6 +96,7 @@ class Gateway:
                 "principal_id": identity.principal_id,
                 "session_id": session.id,
                 "profile": normalized_request.profile,
+                "agent_profile_id": normalized_request.agent_profile_id,
                 "preferred_strategy": normalized_request.preferred_strategy,
             },
         )
@@ -138,6 +139,7 @@ class Gateway:
                 constraints=request.constraints,
                 priority=request.priority,
                 profile=request.profile,
+                agent_profile_id=request.agent_profile_id,
                 preferred_strategy=request.preferred_strategy,
                 metadata=request.metadata,
             ),
