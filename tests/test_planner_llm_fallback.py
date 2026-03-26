@@ -6,8 +6,10 @@ from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.agents.agent_skill import resolve_agent_skill_dirs
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
+from swarmmind.models.capability import AgentRole, DEFAULT_ROLE_TOOL_GROUPS
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
+from swarmmind.prompt_template.planner import PLANNER_ROLE_ENUM, PLANNER_STRATEGY_ENUM, PLANNER_TOOL_GROUP_ENUM
 from swarmmind.orchestration.planner import Planner, _PlanResult, _PlanSubtaskSpec
 
 
@@ -75,6 +77,11 @@ async def test_planner_prompt_includes_available_agent_profiles() -> None:
     assert "Available Agent Profiles JSON" in prompt
     assert "coder-default" in prompt
     assert "agent-backed-default" in prompt
+    assert PLANNER_ROLE_ENUM in prompt
+    assert PLANNER_TOOL_GROUP_ENUM in prompt
+    assert PLANNER_STRATEGY_ENUM in prompt
+    assert '"preferred_strategy": "write_report"' in prompt
+    assert "http" not in prompt
 
 
 def test_build_subtasks_from_plan_resolves_role_compatible_agent_profile_ids() -> None:
@@ -98,6 +105,112 @@ def test_build_subtasks_from_plan_resolves_role_compatible_agent_profile_ids() -
 
     assert len(subtasks) == 1
     assert subtasks[0].agent_profile_id == "coder-default"
+
+
+def test_build_subtasks_from_plan_records_validation_warnings_and_fallbacks() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-5", goal="实现功能", metadata={"profile": "py-basic"})
+    run = Run(id="run-5", task_id=task.id, session_id="session-5")
+    plan_result = _PlanResult(
+        subtasks=[
+            _PlanSubtaskSpec(
+                name="prepare-implementation",
+                description="Implement the feature.",
+                role="coder",
+                agent_profile_id="missing-profile",
+                preferred_strategy="build_app",
+                required_tool_groups=["http"],
+                sandbox_profile="",
+            )
+        ]
+    )
+
+    subtasks = planner._build_subtasks_from_plan(task, run, plan_result)
+
+    assert len(subtasks) == 1
+    subtask = subtasks[0]
+    assert subtask.agent_profile_id == "coder-default"
+    assert subtask.sandbox_profile == "py-basic"
+    assert subtask.required_tool_groups == DEFAULT_ROLE_TOOL_GROUPS[AgentRole.CODER]
+    assert subtask.metadata.get("original_agent_profile_id") == "missing-profile"
+    assert subtask.metadata.get("original_sandbox_profile") == ""
+    assert subtask.metadata.get("resolved_agent_profile_id") == "coder-default"
+    assert subtask.metadata.get("normalized_tool_groups") == [group.value for group in DEFAULT_ROLE_TOOL_GROUPS[AgentRole.CODER]]
+    warnings = subtask.metadata.get("planner_validation_warnings") or []
+    assert any("unsupported tool groups" in warning for warning in warnings)
+    assert any("Fell back to default tool groups" in warning for warning in warnings)
+    assert any("does not exist" in warning for warning in warnings)
+
+
+def test_build_subtasks_from_plan_normalizes_role_to_match_strategy_and_profile() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-6", goal="整理发布说明", metadata={"profile": "py-basic"})
+    run = Run(id="run-6", task_id=task.id, session_id="session-6")
+    plan_result = _PlanResult(
+        subtasks=[
+            _PlanSubtaskSpec(
+                name="draft-release-summary",
+                description="Draft the summary.",
+                role="reviewer",
+                agent_profile_id="writer-default",
+                preferred_strategy="write_report",
+                required_tool_groups=[],
+            )
+        ]
+    )
+
+    subtasks = planner._build_subtasks_from_plan(task, run, plan_result)
+
+    assert len(subtasks) == 1
+    subtask = subtasks[0]
+    assert subtask.role == AgentRole.WRITER
+    assert subtask.agent_profile_id == "writer-default"
+    assert subtask.preferred_strategy == "write_report"
+    assert subtask.metadata.get("original_role") == "reviewer"
+    assert subtask.metadata.get("resolved_agent_profile_id") == "writer-default"
+    warnings = subtask.metadata.get("planner_validation_warnings") or []
+    assert any("Normalized role 'reviewer' to 'writer'" in warning for warning in warnings)
+
+
+@pytest.mark.parametrize(
+    ("agent_profile_id", "expected_profile_id", "expect_warning"),
+    [
+        (None, "tester-default", False),
+        ("", "tester-default", True),
+        ("writer-default", "tester-default", True),
+    ],
+)
+def test_build_subtasks_from_plan_normalizes_agent_profile_variants(
+    agent_profile_id: str | None,
+    expected_profile_id: str,
+    expect_warning: bool,
+) -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-7", goal="验证输出", metadata={"profile": "py-basic"})
+    run = Run(id="run-7", task_id=task.id, session_id="session-7")
+    plan_result = _PlanResult(
+        subtasks=[
+            _PlanSubtaskSpec(
+                name="verify-output",
+                description="Verify the output.",
+                role="tester",
+                agent_profile_id=agent_profile_id,
+                preferred_strategy="verification",
+                required_tool_groups=[],
+            )
+        ]
+    )
+
+    subtasks = planner._build_subtasks_from_plan(task, run, plan_result)
+
+    assert len(subtasks) == 1
+    subtask = subtasks[0]
+    assert subtask.agent_profile_id == expected_profile_id
+    warnings = subtask.metadata.get("planner_validation_warnings") or []
+    if expect_warning:
+        assert warnings
+    else:
+        assert all("agent profile" not in warning for warning in warnings)
 
 
 def test_agent_factory_registers_native_agentscope_skills() -> None:
