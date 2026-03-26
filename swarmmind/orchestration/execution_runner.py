@@ -28,7 +28,13 @@ from swarmmind.models.execution import (
 )
 from swarmmind.models.task import SubTaskStatus
 from swarmmind.orchestration.run_state_service import RunStateService
-from swarmmind.prompt_template import load_prompt_template, render_prompt_template
+from swarmmind.prompt_template import (
+    EXECUTION_FALLBACK_CONTENT_PROMPT,
+    EXECUTION_SUBTASK_MARKDOWN_PROMPT,
+    EXECUTION_SYSTEM_PROMPT,
+    PromptTemplate,
+    render_prompt,
+)
 from swarmmind.repositories import ArtifactRepository, RunRepository, SubTaskRepository, TaskRepository
 from swarmmind.sandbox import CommandRequest, SandboxLeaseRequest, SandboxManager
 from swarmmind.sandbox.artifact_collector import ArtifactCollector
@@ -67,9 +73,9 @@ class ExecutionRunner:
         model_base_url: str | None = None,
         model_temperature: float = 0.2,
         model_max_tokens: int = 2048,
-        system_prompt_template_name: str = "execution_system_v1.txt",
-        user_prompt_template_name: str = "execution_subtask_markdown_v1.md",
-        fallback_content_template_name: str = "execution_fallback_content_v1.md",
+        system_prompt_template: PromptTemplate = EXECUTION_SYSTEM_PROMPT,
+        user_prompt_template: PromptTemplate = EXECUTION_SUBTASK_MARKDOWN_PROMPT,
+        fallback_content_template: PromptTemplate = EXECUTION_FALLBACK_CONTENT_PROMPT,
         long_term_memory: LongTermMemoryBase | None = None,
     ):
         self._task_repository = task_repository
@@ -89,9 +95,9 @@ class ExecutionRunner:
         self._model_base_url = model_base_url
         self._model_temperature = model_temperature
         self._model_max_tokens = model_max_tokens
-        self._system_prompt_template_name = system_prompt_template_name
-        self._user_prompt_template_name = user_prompt_template_name
-        self._fallback_content_template_name = fallback_content_template_name
+        self._system_prompt_template = system_prompt_template
+        self._user_prompt_template = user_prompt_template
+        self._fallback_content_template = fallback_content_template
         self._long_term_memory = long_term_memory
         self._register_default_tools()
         self._register_default_strategies()
@@ -1210,7 +1216,7 @@ class ExecutionRunner:
                         max_tokens=self._model_max_tokens,
                     ),
                     max_steps=6,
-                    system_prompt=load_prompt_template(self._system_prompt_template_name),
+                    system_prompt=render_prompt(self._system_prompt_template),
                     skill_profiles=execution_profile.skill_profiles or [self._resolve_strategy_name(subtask)],
                 )
             )
@@ -1218,7 +1224,7 @@ class ExecutionRunner:
                 agent = agent_factory.create_profile_agent(
                     agent_profile,
                     tools=[],
-                    system_prompt=load_prompt_template(self._system_prompt_template_name),
+                    system_prompt=render_prompt(self._system_prompt_template),
                 )
             else:
                 agent = agent_factory.create_main_agent(tools=[])
@@ -1250,8 +1256,8 @@ class ExecutionRunner:
             return None
 
     async def _compose_subtask_prompt(self, task, subtask) -> str:
-        prompt = render_prompt_template(
-            self._user_prompt_template_name,
+        prompt = render_prompt(
+            self._user_prompt_template,
             {
                 "task_goal": task.goal,
                 "subtask_name": subtask.name,
@@ -1272,8 +1278,8 @@ class ExecutionRunner:
     async def _render_subtask_content_template(self, task, subtask) -> str:
         criteria = "\\n".join(f"- {item}" for item in subtask.acceptance_criteria) or "- None"
         constraints = json.dumps(task.constraints, ensure_ascii=False, indent=2)
-        prompt = render_prompt_template(
-            self._fallback_content_template_name,
+        prompt = render_prompt(
+            self._fallback_content_template,
             {
                 "subtask_name": subtask.name,
                 "subtask_description": subtask.description,
