@@ -1,0 +1,79 @@
+{
+  "subtasks": [
+    {
+      "name": "define-research-scope",
+      "description": "明确多agent产品研究报告的范围、核心问题、评价维度和目标读者。",
+      "agent_profile_id": "planner-default",
+      "role": "planner",
+      "preferred_strategy": "task_planning",
+      "required_tool_groups": ["project_write"],
+      "sandbox_profile": null,
+      "acceptance_criteria": [
+        "明确列出研究对象类型（如多agent框架、平台或产品）。",
+        "定义不少于3个评价维度（如架构、应用场景、优劣势）。",
+        "形成可供后续研究执行的书面研究大纲。"
+      ],
+      "dependencies": []
+    },
+    {
+      "name": "collect-multi-agent-products",
+      "description": "调研并收集主流的多agent产品或框架的背景资料与公开信息。",
+      "agent_profile_id": "researcher-default",
+      "role": "researcher",
+      "preferred_strategy": "research",
+      "required_tool_groups": ["web_search", "browser_read", "project_read"],
+      "sandbox_profile": null,
+      "acceptance_criteria": [
+        "至少覆盖5个具有代表性的多agent产品或框架。",
+        "每个产品包含来源链接与基本说明。",
+        "信息来源可靠且可追溯。"
+      ],
+      "dependencies": ["define-research-scope"]
+    },
+    {
+      "name": "analyze-and-compare-products",
+      "description": "基于既定评价维度，对调研到的多agent产品进行分析与对比。",
+      "agent_profile_id": "researcher-default",
+      "role": "researcher",
+      "preferred_strategy": "research",
+      "required_tool_groups": ["project_read", "project_write"],
+      "sandbox_profile": null,
+      "acceptance_criteria": [
+        "形成结构化的对比分析内容（如表格或分点论述）。",
+        "清晰总结各产品的优势、局限与适用场景。",
+        "分析结论与前序调研资料一致。"
+      ],
+      "dependencies": ["collect-multi-agent-products"]
+    },
+    {
+      "name": "draft-research-report",
+      "description": "撰写完整的多agent产品研究报告初稿。",
+      "agent_profile_id": "writer-default",
+      "role": "writer",
+      "preferred_strategy": "write_report",
+      "required_tool_groups": ["project_write", "project_read"],
+      "sandbox_profile": null,
+      "acceptance_criteria": [
+        "报告结构完整（引言、方法、分析、结论）。",
+        "内容覆盖研究范围与对比分析结果。",
+        "语言清晰、无明显占位符或缺失章节。"
+      ],
+      "dependencies": ["analyze-and-compare-products"]
+    },
+    {
+      "name": "review-and-validate-report",
+      "description": "对研究报告进行审阅与质量验证，确保逻辑、事实与表达准确。",
+      "agent_profile_id": "reviewer-default",
+      "role": "reviewer",
+      "preferred_strategy": "review",
+      "required_tool_groups": ["project_read"],
+      "sandbox_profile": null,
+      "acceptance_criteria": [
+        "指出并修正主要逻辑或事实问题。",
+        "确认结论与分析内容一致。",
+        "报告达到可交付或发布标准。"
+      ],
+      "dependencies": ["draft-research-report"]
+    }
+  ]
+}
