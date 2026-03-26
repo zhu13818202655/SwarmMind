@@ -414,3 +414,16 @@ SwarmMind/
 1. `OpenSandboxAdapter` 的 Python 代码模板；
 2. `AgentScope` 三角色（Planner/Coder/Tester）最小可运行示例；
 3. 一份 `docker-compose` 本地联调脚本（API + Worker + OpenSandbox）。
+
+---
+
+## 16. 仓库协作约定
+
+当前仓库的 Git 与本地工作区约定如下：
+
+1. `git add` 与 `git commit` 使用 `root` 账号执行。
+2. `git push` 使用 `admin2` 账号执行。
+3. `.vscode/mcp.json` 需要纳入版本控制并随仓库提交。
+4. `.github/story/` 作为本地临时工作目录，不纳入版本控制，应加入 `.gitignore`。
+
+如果后续调整了本地账号或工具链约束，应同步更新本节，避免自动化代理和人工操作出现不一致。
