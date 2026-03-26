@@ -41,5 +41,3 @@ Thumbs.db
 *.log
 agentscope_minimal/logs/
 
-# Local story scratch files
-.github/story/
