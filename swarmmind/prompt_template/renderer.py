@@ -7,7 +7,7 @@ from typing import Any
 
 from jinja2 import Environment, StrictUndefined
 
-from swarmmind.prompt_template.templates import PromptTemplate
+from swarmmind.prompt_template.base import PromptTemplate
 
 
 _JINJA_ENV = Environment(undefined=StrictUndefined, autoescape=False)

@@ -40,3 +40,6 @@ Thumbs.db
 # Logs and runtime artifacts
 *.log
 agentscope_minimal/logs/
+
+# Local story scratch files
+.github/story/
