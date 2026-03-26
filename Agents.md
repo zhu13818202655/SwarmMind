@@ -423,7 +423,5 @@ SwarmMind/
 
 1. `git add` 与 `git commit` 使用 `root` 账号执行。
 2. `git push` 使用 `admin2` 账号执行。
-3. `.vscode/mcp.json` 需要纳入版本控制并随仓库提交。
-4. `.github/story/` 作为本地临时工作目录，不纳入版本控制，应加入 `.gitignore`。
 
 如果后续调整了本地账号或工具链约束，应同步更新本节，避免自动化代理和人工操作出现不一致。
