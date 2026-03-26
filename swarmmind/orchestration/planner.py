@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from dataclasses import dataclass, field
+from typing import Any
 
 from agentscope.message import Msg
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,7 +15,7 @@ from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
 from swarmmind.memory import LongTermMemoryBase
-from swarmmind.models.capability import AgentRole, ToolGroup
+from swarmmind.models.capability import AgentRole, DEFAULT_ROLE_TOOL_GROUPS, DEFAULT_STRATEGY_PROFILES, ToolGroup
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
 from swarmmind.prompt_template import (
@@ -22,6 +24,31 @@ from swarmmind.prompt_template import (
     PromptTemplate,
     render_prompt,
 )
+
+
+PLANNER_ALLOWED_ROLES: set[AgentRole] = {
+    AgentRole.PLANNER,
+    AgentRole.CODER,
+    AgentRole.TESTER,
+    AgentRole.REVIEWER,
+    AgentRole.RESEARCHER,
+    AgentRole.WRITER,
+    AgentRole.EXECUTOR,
+}
+
+
+@dataclass(slots=True)
+class _NormalizedPlanSubtaskSpec:
+    name: str
+    description: str
+    agent_profile_id: str | None
+    role: AgentRole
+    preferred_strategy: str | None
+    required_tool_groups: list[ToolGroup]
+    sandbox_profile: str | None
+    acceptance_criteria: list[str]
+    dependencies: list[str]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class Planner:
@@ -87,7 +114,8 @@ class Planner:
                 return None
 
             plan_result = _PlanResult.model_validate(payload)
-            return self._build_subtasks_from_plan(task, run, plan_result)
+            normalized_plan = self._validate_and_normalize_plan(task, plan_result)
+            return self._build_subtasks_from_plan(task, run, normalized_plan)
         except Exception:
             return None
 
@@ -135,11 +163,25 @@ class Planner:
             return value
         return None
 
-    def _build_subtasks_from_plan(self, task: Task, run: Run, plan_result: "_PlanResult") -> list[SubTask]:
-        normalized: list[tuple[str, _PlanSubtaskSpec]] = []
+    def _validate_and_normalize_plan(self, task: Task, plan_result: "_PlanResult") -> list[_NormalizedPlanSubtaskSpec]:
+        return [self._normalize_plan_subtask(task, spec) for spec in plan_result.subtasks]
+
+    def _build_subtasks_from_plan(
+        self,
+        task: Task,
+        run: Run,
+        plan_result: "_PlanResult | list[_NormalizedPlanSubtaskSpec]",
+    ) -> list[SubTask]:
+        normalized_specs = (
+            self._validate_and_normalize_plan(task, plan_result)
+            if isinstance(plan_result, _PlanResult)
+            else plan_result
+        )
+
+        normalized: list[tuple[str, _NormalizedPlanSubtaskSpec]] = []
         used_names: set[str] = set()
 
-        for spec in plan_result.subtasks:
+        for spec in normalized_specs:
             normalized_name = self._normalize_name(spec.name)
             if not normalized_name:
                 normalized_name = "subtask"
@@ -155,21 +197,30 @@ class Planner:
         subtasks: list[SubTask] = []
 
         for name, spec in normalized:
-            role = self._parse_role(spec.role)
-            tool_groups = self._parse_tool_groups(spec.required_tool_groups)
-            if not tool_groups:
-                tool_groups = self._default_tool_groups_for_role(role)
-
             dependencies = [name_to_id[d] for d in spec.dependencies if d in name_to_id and d != name]
             acceptance_criteria = [item.strip() for item in spec.acceptance_criteria if item.strip()]
             if not acceptance_criteria:
                 acceptance_criteria = ["Subtask output is complete and verifiable."]
-            resolved_strategy = spec.preferred_strategy or task.metadata.get("preferred_strategy") or "build_app"
-            resolved_agent_profile_id = self._resolve_agent_profile_id(
-                role=role,
-                requested_profile_id=spec.agent_profile_id or task.metadata.get("agent_profile_id"),
+            resolved_strategy = spec.preferred_strategy or self._default_strategy_for_role(spec.role)
+            resolved_agent_profile_id, resolution_warnings = self._resolve_agent_profile_id(
+                role=spec.role,
+                requested_profile_id=spec.agent_profile_id,
                 preferred_strategy=resolved_strategy,
             )
+            metadata = {
+                "run_id": run.id,
+                "plan_source": "llm",
+                "planning_prompt": self._user_prompt_template.name,
+                **spec.metadata,
+            }
+            warnings = list(metadata.get("planner_validation_warnings") or [])
+            warnings.extend(resolution_warnings)
+            if warnings:
+                metadata["planner_validation_warnings"] = warnings
+            if metadata.get("original_agent_profile_id") is None and spec.agent_profile_id != resolved_agent_profile_id:
+                metadata["original_agent_profile_id"] = spec.agent_profile_id
+            metadata["resolved_agent_profile_id"] = resolved_agent_profile_id
+            metadata["normalized_tool_groups"] = [tool_group.value for tool_group in spec.required_tool_groups]
 
             subtasks.append(
                 SubTask(
@@ -178,30 +229,96 @@ class Planner:
                     name=name,
                     description=spec.description.strip() or f"Execute {name}",
                     agent_profile_id=resolved_agent_profile_id,
-                    role=role,
+                    role=spec.role,
                     preferred_strategy=resolved_strategy,
-                    required_tool_groups=tool_groups,
+                    required_tool_groups=spec.required_tool_groups,
                     sandbox_profile=spec.sandbox_profile or task.metadata.get("profile", "py-basic"),
                     acceptance_criteria=acceptance_criteria,
                     dependencies=dependencies,
-                    metadata={
-                        "run_id": run.id,
-                        "plan_source": "llm",
-                        "planning_prompt": self._user_prompt_template.name,
-                    },
+                    metadata=metadata,
                 )
             )
 
         return subtasks
+
+    def _normalize_plan_subtask(self, task: Task, spec: "_PlanSubtaskSpec") -> _NormalizedPlanSubtaskSpec:
+        warnings: list[str] = []
+        metadata: dict[str, Any] = {}
+
+        original_role = spec.role
+        original_strategy = spec.preferred_strategy
+        original_agent_profile_id = spec.agent_profile_id
+        original_sandbox_profile = spec.sandbox_profile
+
+        requested_profile_id = self._normalize_optional_string(spec.agent_profile_id)
+        if requested_profile_id != spec.agent_profile_id:
+            warnings.append("Normalized empty agent_profile_id to null.")
+            metadata["original_agent_profile_id"] = spec.agent_profile_id
+
+        sandbox_profile = self._normalize_optional_string(spec.sandbox_profile)
+        if sandbox_profile != spec.sandbox_profile:
+            warnings.append("Normalized empty sandbox_profile to null.")
+            metadata["original_sandbox_profile"] = spec.sandbox_profile
+
+        role = self._parse_role(spec.role)
+        if spec.role and (spec.role.strip().lower() != role.value or role not in PLANNER_ALLOWED_ROLES):
+            warnings.append(f"Normalized invalid planner role '{spec.role}' to '{role.value}'.")
+            metadata["original_role"] = original_role
+        elif role not in PLANNER_ALLOWED_ROLES:
+            warnings.append(f"Planner role '{role.value}' is not supported for subtasks; using 'coder'.")
+            metadata["original_role"] = original_role
+            role = AgentRole.CODER
+
+        preferred_strategy = self._normalize_preferred_strategy(spec.preferred_strategy, role, task, warnings, metadata)
+        role = self._align_role_with_strategy(role, preferred_strategy, requested_profile_id, warnings, metadata)
+
+        tool_groups = self._parse_tool_groups(spec.required_tool_groups)
+        invalid_tool_groups = [
+            str(value).strip() for value in spec.required_tool_groups if str(value).strip().lower() not in {group.value for group in ToolGroup}
+        ]
+        if invalid_tool_groups:
+            warnings.append(
+                f"Removed unsupported tool groups: {', '.join(invalid_tool_groups)}."
+            )
+        if not tool_groups:
+            tool_groups = self._default_tool_groups_for_role(role)
+            warnings.append(f"Fell back to default tool groups for role '{role.value}'.")
+
+        if original_strategy != preferred_strategy and original_strategy is not None:
+            metadata.setdefault("original_preferred_strategy", original_strategy)
+        if original_role != role.value:
+            metadata.setdefault("original_role", original_role)
+        if original_agent_profile_id != requested_profile_id and original_agent_profile_id is not None:
+            metadata.setdefault("original_agent_profile_id", original_agent_profile_id)
+        if original_sandbox_profile != sandbox_profile and original_sandbox_profile is not None:
+            metadata.setdefault("original_sandbox_profile", original_sandbox_profile)
+        if warnings:
+            metadata["planner_validation_warnings"] = warnings
+
+        return _NormalizedPlanSubtaskSpec(
+            name=spec.name,
+            description=spec.description,
+            agent_profile_id=requested_profile_id,
+            role=role,
+            preferred_strategy=preferred_strategy,
+            required_tool_groups=tool_groups,
+            sandbox_profile=sandbox_profile,
+            acceptance_criteria=spec.acceptance_criteria,
+            dependencies=spec.dependencies,
+            metadata=metadata,
+        )
 
     @staticmethod
     def _parse_role(value: str | None) -> AgentRole:
         if not value:
             return AgentRole.CODER
         try:
-            return AgentRole(str(value).strip().lower())
+            role = AgentRole(str(value).strip().lower())
         except ValueError:
             return AgentRole.CODER
+        if role not in PLANNER_ALLOWED_ROLES:
+            return AgentRole.CODER
+        return role
 
     @staticmethod
     def _parse_tool_groups(values: list[str]) -> list[ToolGroup]:
@@ -218,14 +335,7 @@ class Planner:
 
     @staticmethod
     def _default_tool_groups_for_role(role: AgentRole) -> list[ToolGroup]:
-        defaults = {
-            AgentRole.PLANNER: [ToolGroup.PROJECT_READ],
-            AgentRole.CODER: [ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC],
-            AgentRole.TESTER: [ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
-            AgentRole.REVIEWER: [ToolGroup.ARTIFACT_READ],
-            AgentRole.RESEARCHER: [ToolGroup.WEB_SEARCH, ToolGroup.BROWSER_READ],
-        }
-        return defaults.get(role, [ToolGroup.PROJECT_READ])
+        return list(DEFAULT_ROLE_TOOL_GROUPS.get(role, [ToolGroup.PROJECT_READ]))
 
     @staticmethod
     def _normalize_name(name: str) -> str:
@@ -253,31 +363,114 @@ class Planner:
         role: AgentRole,
         requested_profile_id: str | None,
         preferred_strategy: str | None,
-    ) -> str | None:
+    ) -> tuple[str | None, list[str]]:
+        warnings: list[str] = []
         if self._agent_profile_store is None:
-            return requested_profile_id
+            return requested_profile_id, warnings
+        if requested_profile_id:
+            requested_profile = self._agent_profile_store.get(requested_profile_id)
+            if requested_profile is None:
+                warnings.append(f"Requested agent profile '{requested_profile_id}' does not exist; using role default.")
+            elif requested_profile.role not in {role, AgentRole.EXECUTOR}:
+                warnings.append(
+                    f"Requested agent profile '{requested_profile_id}' is incompatible with role '{role.value}'; using a compatible profile."
+                )
+            else:
+                return requested_profile.id, warnings
+
         profile = self._agent_profile_store.resolve_for_subtask(
-            profile_id=requested_profile_id,
+            profile_id=None,
             role=role,
             preferred_strategy=preferred_strategy,
         )
-        return profile.id
+        return profile.id, warnings
+
+    @staticmethod
+    def _normalize_optional_string(value: str | None) -> str | None:
+        if value is None:
+            return None
+        token = str(value).strip()
+        return token or None
+
+    def _normalize_preferred_strategy(
+        self,
+        value: str | None,
+        role: AgentRole,
+        task: Task,
+        warnings: list[str],
+        metadata: dict[str, Any],
+    ) -> str | None:
+        normalized = self._normalize_optional_string(value)
+        if normalized != value:
+            warnings.append("Normalized empty preferred_strategy to null.")
+            metadata["original_preferred_strategy"] = value
+        if normalized and normalized in DEFAULT_STRATEGY_PROFILES:
+            return normalized
+        if normalized:
+            warnings.append(f"Normalized unsupported preferred_strategy '{normalized}' to a compatible default.")
+            metadata["original_preferred_strategy"] = value
+        task_strategy = self._normalize_optional_string(task.metadata.get("preferred_strategy"))
+        if task_strategy and task_strategy in DEFAULT_STRATEGY_PROFILES:
+            return task_strategy
+        return self._default_strategy_for_role(role)
+
+    def _align_role_with_strategy(
+        self,
+        role: AgentRole,
+        preferred_strategy: str | None,
+        requested_profile_id: str | None,
+        warnings: list[str],
+        metadata: dict[str, Any],
+    ) -> AgentRole:
+        if not preferred_strategy:
+            return role
+        strategy_profile = DEFAULT_STRATEGY_PROFILES.get(preferred_strategy)
+        if strategy_profile is None or not strategy_profile.recommended_roles:
+            return role
+        if role in strategy_profile.recommended_roles:
+            return role
+
+        candidate_role = strategy_profile.recommended_roles[0]
+        if requested_profile_id and self._agent_profile_store is not None:
+            profile = self._agent_profile_store.get(requested_profile_id)
+            if profile is not None and profile.role in strategy_profile.recommended_roles:
+                candidate_role = profile.role
+
+        warnings.append(
+            f"Normalized role '{role.value}' to '{candidate_role.value}' for preferred_strategy '{preferred_strategy}'."
+        )
+        metadata.setdefault("original_role", role.value)
+        return candidate_role
+
+    @staticmethod
+    def _default_strategy_for_role(role: AgentRole) -> str:
+        role_defaults = {
+            AgentRole.PLANNER: "task_planning",
+            AgentRole.CODER: "build_app",
+            AgentRole.TESTER: "verification",
+            AgentRole.REVIEWER: "review",
+            AgentRole.RESEARCHER: "research",
+            AgentRole.WRITER: "write_report",
+            AgentRole.EXECUTOR: "build_app",
+        }
+        return role_defaults.get(role, "build_app")
 
     def _plan_with_rules(self, task: Task, run: Run) -> list[SubTask]:
         goal = task.goal.lower()
         needs_verification = "test" in goal or any(token in task.goal for token in ("测试", "验证"))
         subtasks: list[SubTask] = []
+        planner_profile_id, _ = self._resolve_agent_profile_id(
+            role=AgentRole.PLANNER,
+            requested_profile_id=task.metadata.get("agent_profile_id"),
+            preferred_strategy="task_planning",
+        )
 
         analyze_subtask = SubTask(
             id=str(uuid.uuid4()),
             task_id=task.id,
             name="analyze-requirement",
             description="Analyze the goal and identify the implementation scope.",
-            agent_profile_id=self._resolve_agent_profile_id(
-                role=AgentRole.PLANNER,
-                requested_profile_id=task.metadata.get("agent_profile_id"),
-                preferred_strategy="task_planning",
-            ),
+            agent_profile_id=planner_profile_id,
             role=AgentRole.PLANNER,
             preferred_strategy="task_planning",
             required_tool_groups=[ToolGroup.PROJECT_READ],
@@ -289,17 +482,18 @@ class Planner:
         build_tool_groups = [ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC]
         if needs_verification:
             build_tool_groups.append(ToolGroup.ARTIFACT_READ)
+        coder_profile_id, _ = self._resolve_agent_profile_id(
+            role=AgentRole.CODER,
+            requested_profile_id=task.metadata.get("agent_profile_id"),
+            preferred_strategy=task.metadata.get("preferred_strategy") or "build_app",
+        )
 
         implementation_subtask = SubTask(
             id=str(uuid.uuid4()),
             task_id=task.id,
             name="prepare-implementation",
             description=f"Prepare the implementation steps for: {task.goal}",
-            agent_profile_id=self._resolve_agent_profile_id(
-                role=AgentRole.CODER,
-                requested_profile_id=task.metadata.get("agent_profile_id"),
-                preferred_strategy=task.metadata.get("preferred_strategy") or "build_app",
-            ),
+            agent_profile_id=coder_profile_id,
             role=AgentRole.CODER,
             preferred_strategy=task.metadata.get("preferred_strategy") or "build_app",
             required_tool_groups=build_tool_groups,
@@ -311,16 +505,17 @@ class Planner:
         subtasks.append(implementation_subtask)
 
         if needs_verification:
+            tester_profile_id, _ = self._resolve_agent_profile_id(
+                role=AgentRole.TESTER,
+                requested_profile_id=task.metadata.get("agent_profile_id"),
+                preferred_strategy="verification",
+            )
             verify_subtask = SubTask(
                 id=str(uuid.uuid4()),
                 task_id=task.id,
                 name="verify-result",
                 description="Verify the implementation using the declared acceptance criteria.",
-                agent_profile_id=self._resolve_agent_profile_id(
-                    role=AgentRole.TESTER,
-                    requested_profile_id=task.metadata.get("agent_profile_id"),
-                    preferred_strategy="verification",
-                ),
+                agent_profile_id=tester_profile_id,
                 role=AgentRole.TESTER,
                 preferred_strategy="verification",
                 required_tool_groups=[ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
@@ -329,16 +524,17 @@ class Planner:
                 dependencies=[implementation_subtask.id],
                 metadata={"run_id": run.id, "plan_source": "rules"},
             )
+            reviewer_profile_id, _ = self._resolve_agent_profile_id(
+                role=AgentRole.REVIEWER,
+                requested_profile_id=task.metadata.get("agent_profile_id"),
+                preferred_strategy="review",
+            )
             review_subtask = SubTask(
                 id=str(uuid.uuid4()),
                 task_id=task.id,
                 name="review-result",
                 description="Review verification evidence and decide whether to accept or rework.",
-                agent_profile_id=self._resolve_agent_profile_id(
-                    role=AgentRole.REVIEWER,
-                    requested_profile_id=task.metadata.get("agent_profile_id"),
-                    preferred_strategy="review",
-                ),
+                agent_profile_id=reviewer_profile_id,
                 role=AgentRole.REVIEWER,
                 preferred_strategy="review",
                 required_tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
