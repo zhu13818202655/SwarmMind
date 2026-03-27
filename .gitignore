@@ -40,4 +40,5 @@ Thumbs.db
 # Logs and runtime artifacts
 *.log
 agentscope_minimal/logs/
+.github/story/
 
