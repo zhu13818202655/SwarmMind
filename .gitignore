@@ -40,6 +40,8 @@ Thumbs.db
 # Logs and runtime artifacts
 *.log
 agentscope_minimal/logs/
+
+# ai coding
 .github/story/
 .github/skills/
 .agents/
