@@ -5,7 +5,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field
 
 from swarmmind.models.agent_profile import HandoffPolicy, SkillsMode
-from swarmmind.models.capability import AgentRole, ToolGroup
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 
 
 class ExecutionProfile(BaseModel):
@@ -20,6 +20,22 @@ class ExecutionProfile(BaseModel):
         default_factory=list,
         description="Tool groups that should be equipped for this subtask",
     )
+    candidate_runtime_kinds: list[RuntimeKind] = Field(
+        default_factory=list,
+        description="Candidate runtime kinds considered for this subtask",
+    )
+    resolved_runtime_kind: RuntimeKind | None = Field(
+        default=None,
+        description="Resolved runtime kind selected for this execution attempt",
+    )
+    runtime_resolution_reason: str | None = Field(
+        default=None,
+        description="Human-readable explanation for the resolved runtime choice",
+    )
+    runtime_fallback_chain: list[RuntimeKind] = Field(
+        default_factory=list,
+        description="Ordered runtime candidates considered while resolving execution",
+    )
     allowed_tool_groups: list[ToolGroup] = Field(
         default_factory=list,
         description="Tool groups allowed by the resolved agent profile",
@@ -29,9 +45,13 @@ class ExecutionProfile(BaseModel):
         description="Explicit tool allowlist enforced at runtime",
     )
     skill_mode: SkillsMode = Field(default=SkillsMode.ALL, description="How agent skill profiles should be interpreted")
+    preferred_skill_profiles: list[str] = Field(
+        default_factory=list,
+        description="Preferred reusable skill packages selected for the subtask",
+    )
     skill_profiles: list[str] = Field(
         default_factory=list,
-        description="AgentScope skill profiles exposed to agent-backed execution",
+        description="Backward-compatible mirror of preferred skill packages exposed to agent-backed execution",
     )
     allowed_skill_scripts: list[str] = Field(
         default_factory=list,

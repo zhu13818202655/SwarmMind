@@ -6,7 +6,7 @@ from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.agents.agent_skill import resolve_agent_skill_dirs
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
-from swarmmind.models.capability import AgentRole, DEFAULT_ROLE_TOOL_GROUPS
+from swarmmind.models.capability import AgentRole, DEFAULT_ROLE_TOOL_GROUPS, RuntimeKind
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
 from swarmmind.prompt_template.planner import PLANNER_ROLE_ENUM, PLANNER_STRATEGY_ENUM, PLANNER_TOOL_GROUP_ENUM
@@ -80,6 +80,8 @@ async def test_planner_prompt_includes_available_agent_profiles() -> None:
     assert PLANNER_ROLE_ENUM in prompt
     assert PLANNER_TOOL_GROUP_ENUM in prompt
     assert PLANNER_STRATEGY_ENUM in prompt
+    assert "candidate_runtime_kinds" in prompt
+    assert "preferred_skill_profiles" in prompt
     assert '"preferred_strategy": "write_report"' in prompt
     assert "http" not in prompt
 
@@ -132,13 +134,18 @@ def test_build_subtasks_from_plan_records_validation_warnings_and_fallbacks() ->
     assert subtask.agent_profile_id == "coder-default"
     assert subtask.sandbox_profile == "py-basic"
     assert subtask.required_tool_groups == DEFAULT_ROLE_TOOL_GROUPS[AgentRole.CODER]
+    assert subtask.candidate_runtime_kinds == [RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS]
+    assert subtask.preferred_skill_profiles == ["build_app"]
     assert subtask.metadata.get("original_agent_profile_id") == "missing-profile"
     assert subtask.metadata.get("original_sandbox_profile") == ""
     assert subtask.metadata.get("resolved_agent_profile_id") == "coder-default"
     assert subtask.metadata.get("normalized_tool_groups") == [group.value for group in DEFAULT_ROLE_TOOL_GROUPS[AgentRole.CODER]]
+    assert subtask.metadata.get("candidate_runtime_kinds") == [RuntimeKind.SANDBOX.value, RuntimeKind.HOST_TOOLS.value]
+    assert subtask.metadata.get("preferred_skill_profiles") == ["build_app"]
     warnings = subtask.metadata.get("planner_validation_warnings") or []
     assert any("unsupported tool groups" in warning for warning in warnings)
     assert any("Fell back to default tool groups" in warning for warning in warnings)
+    assert any("candidate runtime kinds" in warning for warning in warnings)
     assert any("does not exist" in warning for warning in warnings)
 
 

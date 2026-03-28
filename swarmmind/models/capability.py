@@ -33,6 +33,16 @@ class ToolGroup(str, Enum):
     PRESENTATION = "presentation"
 
 
+class RuntimeKind(str, Enum):
+    """Execution backends available to a subtask attempt."""
+
+    LLM_ONLY = "llm_only"
+    HOST_TOOLS = "host_tools"
+    SANDBOX = "sandbox"
+    BROWSER_AUTOMATION = "browser_automation"
+    AGENT_BACKED = "agent_backed"
+
+
 class StrategyProfile(BaseModel):
     """Structured runtime strategy profile used to equip a subtask."""
 
@@ -46,6 +56,14 @@ class StrategyProfile(BaseModel):
         default_factory=list,
         description="Roles that commonly use this profile",
     )
+    candidate_runtime_kinds: list[RuntimeKind] = Field(
+        default_factory=list,
+        description="Candidate execution backends that may satisfy the workflow",
+    )
+    default_skill_profiles: list[str] = Field(
+        default_factory=list,
+        description="Reusable skill packages commonly attached to the workflow",
+    )
     sandbox_profile: str | None = Field(
         default=None,
         description="Preferred sandbox profile for this skill profile",
@@ -58,13 +76,15 @@ DEFAULT_STRATEGY_PROFILES: dict[str, StrategyProfile] = {
         description="Decompose user goals into executable task graphs.",
         tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
         recommended_roles=[AgentRole.PLANNER, AgentRole.COORDINATOR],
+        candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
+        default_skill_profiles=["task_planning"],
     ),
     "research": StrategyProfile(
         name="research",
         description="Research external information and summarize findings.",
         tool_groups=[ToolGroup.WEB_SEARCH, ToolGroup.BROWSER_READ, ToolGroup.PROJECT_READ],
         recommended_roles=[AgentRole.RESEARCHER, AgentRole.WRITER],
-        sandbox_profile="research-net",
+        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.BROWSER_AUTOMATION],
     ),
     "build_app": StrategyProfile(
         name="build_app",
@@ -76,6 +96,8 @@ DEFAULT_STRATEGY_PROFILES: dict[str, StrategyProfile] = {
             ToolGroup.ARTIFACT_READ,
         ],
         recommended_roles=[AgentRole.CODER, AgentRole.EXECUTOR],
+        candidate_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
+        default_skill_profiles=["build_app"],
         sandbox_profile="py-basic",
     ),
     "verification": StrategyProfile(
@@ -87,13 +109,16 @@ DEFAULT_STRATEGY_PROFILES: dict[str, StrategyProfile] = {
             ToolGroup.ARTIFACT_READ,
         ],
         recommended_roles=[AgentRole.TESTER, AgentRole.REVIEWER],
-        sandbox_profile="py-basic",
+        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS],
+        default_skill_profiles=["verification"],
     ),
     "review": StrategyProfile(
         name="review",
         description="Review results and decide whether to accept or rework.",
         tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
         recommended_roles=[AgentRole.REVIEWER, AgentRole.COORDINATOR],
+        candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
+        default_skill_profiles=["review"],
     ),
     "write_report": StrategyProfile(
         name="write_report",
@@ -104,12 +129,24 @@ DEFAULT_STRATEGY_PROFILES: dict[str, StrategyProfile] = {
             ToolGroup.PROJECT_WRITE,
         ],
         recommended_roles=[AgentRole.WRITER, AgentRole.RESEARCHER],
+        candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
+        default_skill_profiles=["write_report"],
+    ),
+    "presentation_delivery": StrategyProfile(
+        name="presentation_delivery",
+        description="Turn researched material into a presentation delivery artifact.",
+        tool_groups=[ToolGroup.PRESENTATION, ToolGroup.ARTIFACT_READ, ToolGroup.PROJECT_WRITE],
+        recommended_roles=[AgentRole.WRITER, AgentRole.REVIEWER],
+        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+        default_skill_profiles=["pptx"],
+        sandbox_profile="py-basic",
     ),
     "agent_backed": StrategyProfile(
         name="agent_backed",
         description="Run a controlled agent runtime backend instead of the default sandbox strategy.",
         tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
         recommended_roles=[AgentRole.PLANNER, AgentRole.RESEARCHER, AgentRole.WRITER, AgentRole.EXECUTOR],
+        candidate_runtime_kinds=[RuntimeKind.AGENT_BACKED],
     ),
 }
 

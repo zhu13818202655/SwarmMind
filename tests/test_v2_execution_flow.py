@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from swarmmind.models.agent_profile import AgentProfile, HandoffPolicy, SkillsMode
-from swarmmind.models.capability import AgentRole, ToolGroup
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.app.container import build_container
 from swarmmind.config import SwarmMindConfig
 from swarmmind.gateway import TaskSubmitRequest
@@ -59,10 +59,16 @@ async def test_submit_task_executes_subtasks_and_collects_artifacts() -> None:
     implementation_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "prepare-implementation")
     implementation_profile = ExecutionProfile.model_validate(implementation_subtask.metadata.get("execution_profile") or {})
     assert implementation_subtask.metadata.get("resolved_strategy_name") == "build_app"
+    assert implementation_subtask.metadata.get("resolved_runtime_kind") == RuntimeKind.SANDBOX.value
+    assert implementation_subtask.metadata.get("runtime_resolution_reason")
     assert "sandbox_exec" in implementation_subtask.metadata.get("selected_tools", [])
     assert implementation_profile.agent_profile_id == "coder-default"
+    assert implementation_profile.resolved_runtime_kind == RuntimeKind.SANDBOX
+    assert implementation_profile.runtime_fallback_chain == [RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS]
+    assert implementation_profile.preferred_skill_profiles == ["build_app"]
     assert implementation_profile.skill_profiles == ["build_app"]
     assert ToolGroup.SANDBOX_EXEC in implementation_profile.allowed_tool_groups
+
 
     event_types = [entry.event_type for entry in replay.entries]
     assert "subtask.started" in event_types

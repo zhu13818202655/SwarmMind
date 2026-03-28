@@ -15,7 +15,7 @@ from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
 from swarmmind.memory import LongTermMemoryBase
-from swarmmind.models.capability import AgentRole, DEFAULT_ROLE_TOOL_GROUPS, DEFAULT_STRATEGY_PROFILES, ToolGroup
+from swarmmind.models.capability import AgentRole, DEFAULT_ROLE_TOOL_GROUPS, DEFAULT_STRATEGY_PROFILES, RuntimeKind, ToolGroup
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
 from swarmmind.prompt_template import (
@@ -45,6 +45,8 @@ class _NormalizedPlanSubtaskSpec:
     role: AgentRole
     preferred_strategy: str | None
     required_tool_groups: list[ToolGroup]
+    candidate_runtime_kinds: list[RuntimeKind]
+    preferred_skill_profiles: list[str]
     sandbox_profile: str | None
     acceptance_criteria: list[str]
     dependencies: list[str]
@@ -221,6 +223,8 @@ class Planner:
                 metadata["original_agent_profile_id"] = spec.agent_profile_id
             metadata["resolved_agent_profile_id"] = resolved_agent_profile_id
             metadata["normalized_tool_groups"] = [tool_group.value for tool_group in spec.required_tool_groups]
+            metadata["candidate_runtime_kinds"] = [runtime_kind.value for runtime_kind in spec.candidate_runtime_kinds]
+            metadata["preferred_skill_profiles"] = list(spec.preferred_skill_profiles)
 
             subtasks.append(
                 SubTask(
@@ -232,6 +236,8 @@ class Planner:
                     role=spec.role,
                     preferred_strategy=resolved_strategy,
                     required_tool_groups=spec.required_tool_groups,
+                    candidate_runtime_kinds=spec.candidate_runtime_kinds,
+                    preferred_skill_profiles=spec.preferred_skill_profiles,
                     sandbox_profile=spec.sandbox_profile or task.metadata.get("profile", "py-basic"),
                     acceptance_criteria=acceptance_criteria,
                     dependencies=dependencies,
@@ -284,6 +290,15 @@ class Planner:
             tool_groups = self._default_tool_groups_for_role(role)
             warnings.append(f"Fell back to default tool groups for role '{role.value}'.")
 
+        candidate_runtime_kinds = self._parse_runtime_kinds(spec.candidate_runtime_kinds)
+        if not candidate_runtime_kinds:
+            candidate_runtime_kinds = self._default_runtime_kinds_for_strategy(preferred_strategy, tool_groups)
+            warnings.append("Fell back to default candidate runtime kinds for the subtask.")
+
+        preferred_skill_profiles = self._normalize_skill_profiles(spec.preferred_skill_profiles)
+        if not preferred_skill_profiles and preferred_strategy:
+            preferred_skill_profiles = list(DEFAULT_STRATEGY_PROFILES.get(preferred_strategy).default_skill_profiles)
+
         if original_strategy != preferred_strategy and original_strategy is not None:
             metadata.setdefault("original_preferred_strategy", original_strategy)
         if original_role != role.value:
@@ -302,6 +317,8 @@ class Planner:
             role=role,
             preferred_strategy=preferred_strategy,
             required_tool_groups=tool_groups,
+            candidate_runtime_kinds=candidate_runtime_kinds,
+            preferred_skill_profiles=preferred_skill_profiles,
             sandbox_profile=sandbox_profile,
             acceptance_criteria=spec.acceptance_criteria,
             dependencies=spec.dependencies,
@@ -334,8 +351,41 @@ class Planner:
         return parsed
 
     @staticmethod
+    def _parse_runtime_kinds(values: list[str]) -> list[RuntimeKind]:
+        parsed: list[RuntimeKind] = []
+        for value in values:
+            token = str(value).strip().lower()
+            try:
+                runtime_kind = RuntimeKind(token)
+            except ValueError:
+                continue
+            if runtime_kind not in parsed:
+                parsed.append(runtime_kind)
+        return parsed
+
+    @staticmethod
+    def _normalize_skill_profiles(values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values:
+            token = str(value).strip()
+            if token and token not in normalized:
+                normalized.append(token)
+        return normalized
+
+    @staticmethod
     def _default_tool_groups_for_role(role: AgentRole) -> list[ToolGroup]:
         return list(DEFAULT_ROLE_TOOL_GROUPS.get(role, [ToolGroup.PROJECT_READ]))
+
+    @staticmethod
+    def _default_runtime_kinds_for_strategy(preferred_strategy: str | None, tool_groups: list[ToolGroup]) -> list[RuntimeKind]:
+        strategy_profile = DEFAULT_STRATEGY_PROFILES.get(preferred_strategy or "")
+        if strategy_profile and strategy_profile.candidate_runtime_kinds:
+            return list(strategy_profile.candidate_runtime_kinds)
+        if ToolGroup.SANDBOX_EXEC in tool_groups:
+            return [RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS]
+        if any(group in tool_groups for group in {ToolGroup.WEB_SEARCH, ToolGroup.BROWSER_READ}):
+            return [RuntimeKind.HOST_TOOLS, RuntimeKind.BROWSER_AUTOMATION]
+        return [RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS]
 
     @staticmethod
     def _normalize_name(name: str) -> str:
@@ -474,6 +524,8 @@ class Planner:
             role=AgentRole.PLANNER,
             preferred_strategy="task_planning",
             required_tool_groups=[ToolGroup.PROJECT_READ],
+            candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
+            preferred_skill_profiles=["task_planning"],
             acceptance_criteria=["The implementation scope is summarized clearly."],
             metadata={"run_id": run.id, "plan_source": "rules"},
         )
@@ -497,6 +549,8 @@ class Planner:
             role=AgentRole.CODER,
             preferred_strategy=task.metadata.get("preferred_strategy") or "build_app",
             required_tool_groups=build_tool_groups,
+            candidate_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
+            preferred_skill_profiles=["build_app"],
             sandbox_profile=task.metadata.get("profile", "py-basic"),
             acceptance_criteria=["The execution plan references the right tool groups."],
             dependencies=[analyze_subtask.id],
@@ -519,7 +573,8 @@ class Planner:
                 role=AgentRole.TESTER,
                 preferred_strategy="verification",
                 required_tool_groups=[ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
-                sandbox_profile=task.metadata.get("profile", "py-basic"),
+                candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS],
+                preferred_skill_profiles=["verification"],
                 acceptance_criteria=["Verification evidence is attached to the run."],
                 dependencies=[implementation_subtask.id],
                 metadata={"run_id": run.id, "plan_source": "rules"},
@@ -538,6 +593,8 @@ class Planner:
                 role=AgentRole.REVIEWER,
                 preferred_strategy="review",
                 required_tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
+                candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
+                preferred_skill_profiles=["review"],
                 acceptance_criteria=["A structured review decision is attached to the run."],
                 dependencies=[verify_subtask.id],
                 metadata={"run_id": run.id, "plan_source": "rules"},
@@ -556,6 +613,8 @@ class _PlanSubtaskSpec(BaseModel):
 
     preferred_strategy: str | None = Field(default=None)
     required_tool_groups: list[str] = Field(default_factory=list)
+    candidate_runtime_kinds: list[str] = Field(default_factory=list)
+    preferred_skill_profiles: list[str] = Field(default_factory=list)
     sandbox_profile: str | None = Field(default=None)
     acceptance_criteria: list[str] = Field(default_factory=list)
     dependencies: list[str] = Field(default_factory=list)
