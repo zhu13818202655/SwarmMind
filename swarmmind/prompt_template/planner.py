@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from swarmmind.models.capability import DEFAULT_STRATEGY_PROFILES, ToolGroup
+from swarmmind.models.capability import DEFAULT_STRATEGY_PROFILES, RuntimeKind, ToolGroup
 from swarmmind.prompt_template.base import PromptTemplate
 
 
@@ -17,6 +17,7 @@ PLANNER_SUPPORTED_ROLES = (
 )
 PLANNER_ROLE_ENUM = "|".join(PLANNER_SUPPORTED_ROLES)
 PLANNER_TOOL_GROUP_ENUM = "|".join(tool_group.value for tool_group in ToolGroup)
+PLANNER_RUNTIME_KIND_ENUM = "|".join(runtime_kind.value for runtime_kind in RuntimeKind)
 PLANNER_STRATEGY_ENUM = "|".join(DEFAULT_STRATEGY_PROFILES)
 PLANNER_EXAMPLE_JSON = """{
   \"subtasks\": [
@@ -27,6 +28,8 @@ PLANNER_EXAMPLE_JSON = """{
       \"role\": \"writer\",
       \"preferred_strategy\": \"write_report\",
       \"required_tool_groups\": [\"web_search\", \"browser_read\", \"project_write\"],
+      \"candidate_runtime_kinds\": [\"llm_only\", \"host_tools\"],
+      \"preferred_skill_profiles\": [\"write_report\"],
       \"sandbox_profile\": null,
       \"acceptance_criteria\": [
         \"The summary covers the requested release scope.\",
@@ -56,6 +59,8 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
       "role": "{PLANNER_ROLE_ENUM}",
       "preferred_strategy": "{PLANNER_STRATEGY_ENUM}|null",
       "required_tool_groups": ["{PLANNER_TOOL_GROUP_ENUM}"],
+      "candidate_runtime_kinds": ["{PLANNER_RUNTIME_KIND_ENUM}"],
+      "preferred_skill_profiles": ["string"],
       "sandbox_profile": "string|null",
       "acceptance_criteria": ["string"],
       "dependencies": ["subtask-name"]
@@ -75,6 +80,9 @@ Rules:
 9) `role`, `preferred_strategy`, and `agent_profile_id` must be mutually compatible.
 10) `write_report` should normally use `writer` and `research` should normally use `researcher` or `writer`.
 11) `research` tasks should prefer `web_search`, `browser_read`, and `project_read` when those capabilities are needed.
+12) `candidate_runtime_kinds` should list 1..n runtime options in priority order.
+13) `sandbox_profile` should be null unless sandbox is a realistic runtime candidate.
+14) `preferred_skill_profiles` expresses reusable capability packages and does not need to match `preferred_strategy`.
 
 Valid JSON example:
 {PLANNER_EXAMPLE_JSON}

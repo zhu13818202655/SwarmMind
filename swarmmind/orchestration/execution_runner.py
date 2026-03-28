@@ -17,7 +17,7 @@ from swarmmind.events import EventBus
 from swarmmind.memory import LongTermMemoryBase
 from swarmmind.models.artifact import Artifact, ArtifactType
 from swarmmind.models.agent_profile import AgentProfile, HandoffContextMode
-from swarmmind.models.capability import AgentRole
+from swarmmind.models.capability import AgentRole, RuntimeKind
 from swarmmind.models.event import DomainEvent
 from swarmmind.models.execution import (
     ExecutionProfile,
@@ -125,8 +125,15 @@ class ExecutionRunner:
             return
 
         try:
+            execution_profile = self._load_execution_profile(subtask)
             resolved_strategy_name = self._resolve_strategy_name(subtask)
             subtask.metadata["resolved_strategy_name"] = resolved_strategy_name
+            if execution_profile.resolved_runtime_kind is not None:
+                subtask.metadata["resolved_runtime_kind"] = execution_profile.resolved_runtime_kind.value
+            if execution_profile.runtime_resolution_reason:
+                subtask.metadata["runtime_resolution_reason"] = execution_profile.runtime_resolution_reason
+            if execution_profile.runtime_fallback_chain:
+                subtask.metadata["runtime_fallback_chain"] = [item.value for item in execution_profile.runtime_fallback_chain]
             subtask.metadata["selected_tools"] = self._select_tool_names(subtask)
             await self._subtask_repository.save(subtask)
 
@@ -138,6 +145,9 @@ class ExecutionRunner:
                 payload={
                     "strategy_name": resolved_strategy_name,
                     "role": subtask.role,
+                    "resolved_runtime_kind": subtask.metadata.get("resolved_runtime_kind"),
+                    "runtime_resolution_reason": subtask.metadata.get("runtime_resolution_reason"),
+                    "runtime_fallback_chain": subtask.metadata.get("runtime_fallback_chain", []),
                     "selected_tools": subtask.metadata["selected_tools"],
                 },
             )
@@ -183,19 +193,27 @@ class ExecutionRunner:
 
     async def _execute_subtask_via_strategy(self, task, run, subtask, event: DomainEvent) -> StrategyResult:
         strategy_name = self._resolve_strategy_name(subtask)
-        result = await self._execution_strategy_registry.execute(
-            strategy_name,
-            task=task,
-            run=run,
-            subtask=subtask,
-            event=event,
+        execution_profile = self._load_execution_profile(subtask)
+        resolved_runtime_kind = execution_profile.resolved_runtime_kind or RuntimeKind.HOST_TOOLS
+
+        if strategy_name in {"verification", "review"}:
+            await self._execute_validation_subtask(task, run, subtask, event)
+        elif resolved_runtime_kind == RuntimeKind.SANDBOX:
+            await self._execute_sandbox_subtask(task, run, subtask, event)
+        elif resolved_runtime_kind == RuntimeKind.AGENT_BACKED:
+            await self._execute_agent_backed_subtask(task, run, subtask, event)
+        else:
+            await self._execute_inline_runtime_subtask(task, run, subtask, event, resolved_runtime_kind)
+
+        return StrategyResult(
+            success=subtask.status == SubTaskStatus.SUCCEEDED,
+            output=subtask.result,
+            error=subtask.error,
+            metadata={"runtime": resolved_runtime_kind.value, "strategy": strategy_name},
         )
-        if not result.success and subtask.status not in {SubTaskStatus.SUCCEEDED, SubTaskStatus.FAILED}:
-            raise RuntimeError(result.error or f"Strategy execution failed: {strategy_name}")
-        return result
 
     def _resolve_strategy_name(self, subtask) -> str:
-        if subtask.preferred_strategy and self._execution_strategy_registry.get(subtask.preferred_strategy):
+        if subtask.preferred_strategy:
             return subtask.preferred_strategy
         defaults = {
             AgentRole.TESTER: "verification",
@@ -209,7 +227,7 @@ class ExecutionRunner:
     def _select_tool_names(self, subtask) -> list[str]:
         execution_profile = self._load_execution_profile(subtask)
         names: list[str] = []
-        required_groups = {group.value for group in subtask.required_tool_groups}
+        required_groups = {group.value for group in execution_profile.required_tool_groups or subtask.required_tool_groups}
         allowed_groups = {group.value for group in execution_profile.allowed_tool_groups}
         explicit_allowed_names = set(execution_profile.allowed_tool_names)
         for metadata in self._tool_registry.get_tool_metadata():
@@ -228,9 +246,10 @@ class ExecutionRunner:
         return sorted(set(names))
 
     def _runtime_required_tool_names(self, subtask) -> set[str]:
+        execution_profile = self._load_execution_profile(subtask)
         strategy_name = self._resolve_strategy_name(subtask)
         required: set[str] = set()
-        if strategy_name in {"build_app", "research", "write_report", "task_planning"}:
+        if execution_profile.resolved_runtime_kind == RuntimeKind.SANDBOX:
             required.add("sandbox_exec")
         if strategy_name in {"verification", "review"}:
             required.add("artifact_read")
@@ -244,6 +263,64 @@ class ExecutionRunner:
         }:
             required.update({"memory_lookup", "memory_write"})
         return required
+
+    async def _execute_inline_runtime_subtask(self, task, run, subtask, event: DomainEvent, runtime_kind: RuntimeKind) -> None:
+        subtask.start_execution()
+        await self._subtask_repository.save(subtask)
+        await self._event_bus.publish(
+            DomainEvent(
+                event_id=str(uuid.uuid4()),
+                topic="subtask.started",
+                tenant_id=task.metadata.get("tenant_id", event.tenant_id),
+                session_id=run.session_id,
+                task_id=task.id,
+                run_id=run.id,
+                subtask_id=subtask.id,
+                payload={
+                    "name": subtask.name,
+                    "role": subtask.role,
+                    "runtime_kind": runtime_kind.value,
+                },
+            )
+        )
+
+        content = await self._render_subtask_content(task, subtask)
+        artifact = self._create_inline_artifact(
+            task=task,
+            run=run,
+            subtask=subtask,
+            name=f"{subtask.name}-{runtime_kind.value}.md",
+            artifact_type=ArtifactType.REPORT,
+            metadata={
+                "content": content,
+                "runtime_kind": runtime_kind.value,
+                "strategy": self._resolve_strategy_name(subtask),
+                "skill_profiles": self._effective_skill_profiles(self._load_execution_profile(subtask), subtask),
+            },
+        )
+        subtask.complete(
+            {
+                "content_preview": content[:300],
+                "runtime_kind": runtime_kind.value,
+                "artifact_count": 1,
+            }
+        )
+
+        await self._subtask_repository.save(subtask)
+        await self._store_artifact(task, run, subtask, artifact)
+        await self._store_memory_for_subtask(task, run, subtask)
+        await self._event_bus.publish(
+            DomainEvent(
+                event_id=str(uuid.uuid4()),
+                topic="subtask.completed",
+                tenant_id=task.metadata.get("tenant_id", event.tenant_id),
+                session_id=run.session_id,
+                task_id=task.id,
+                run_id=run.id,
+                subtask_id=subtask.id,
+                payload=subtask.result or {},
+            )
+        )
 
     def _tool_allowed_by_execution_profile(self, tool_name: str, execution_profile: ExecutionProfile) -> bool:
         if tool_name in execution_profile.allowed_tool_names:
@@ -1025,6 +1102,15 @@ class ExecutionRunner:
         return ExecutionProfile(role=subtask.role)
 
     @staticmethod
+    def _effective_skill_profiles(execution_profile: ExecutionProfile, subtask) -> list[str]:
+        if execution_profile.preferred_skill_profiles:
+            return list(execution_profile.preferred_skill_profiles)
+        if execution_profile.skill_profiles:
+            return list(execution_profile.skill_profiles)
+        strategy_name = subtask.preferred_strategy
+        return [strategy_name] if strategy_name else []
+
+    @staticmethod
     def _summarize_tool_payload(value: Any) -> Any:
         if value is None or isinstance(value, (int, float, bool)):
             return value
@@ -1217,7 +1303,7 @@ class ExecutionRunner:
                     ),
                     max_steps=6,
                     system_prompt=render_prompt(self._system_prompt_template),
-                    skill_profiles=execution_profile.skill_profiles or [self._resolve_strategy_name(subtask)],
+                        skill_profiles=self._effective_skill_profiles(execution_profile, subtask),
                 )
             )
             if agent_profile is not None:

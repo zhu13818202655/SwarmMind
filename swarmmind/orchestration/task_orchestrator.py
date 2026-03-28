@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from swarmmind.events.bus import EventBus
-from swarmmind.models.capability import AgentRole, ToolGroup
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.models.event import DomainEvent
 from swarmmind.models.run import RunPhase
 from swarmmind.models.execution import ReviewDecisionType
@@ -155,6 +155,8 @@ class TaskOrchestrator:
                 ToolGroup.PROJECT_WRITE,
                 ToolGroup.SANDBOX_EXEC,
             ],
+            candidate_runtime_kinds=target.candidate_runtime_kinds,
+            preferred_skill_profiles=target.preferred_skill_profiles,
             sandbox_profile=target.sandbox_profile or task.metadata.get("profile", "py-basic"),
             acceptance_criteria=target.acceptance_criteria,
             dependencies=[subtask.id],
@@ -174,6 +176,8 @@ class TaskOrchestrator:
             role=AgentRole.TESTER,
             preferred_strategy="verification",
             required_tool_groups=[ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
+            candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS],
+            preferred_skill_profiles=["verification"],
             sandbox_profile=task.metadata.get("profile", "py-basic"),
             acceptance_criteria=["Repair evidence is attached and satisfies the review feedback."],
             dependencies=[repair_subtask.id],
@@ -193,6 +197,8 @@ class TaskOrchestrator:
             role=AgentRole.REVIEWER,
             preferred_strategy="review",
             required_tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
+            candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
+            preferred_skill_profiles=["review"],
             acceptance_criteria=["A final accept or escalate decision is recorded."],
             dependencies=[verify_subtask.id],
             metadata={
@@ -253,6 +259,8 @@ class TaskOrchestrator:
                 ToolGroup.PROJECT_WRITE,
                 ToolGroup.SANDBOX_EXEC,
             ],
+            candidate_runtime_kinds=subtask.candidate_runtime_kinds,
+            preferred_skill_profiles=subtask.preferred_skill_profiles,
             sandbox_profile=subtask.sandbox_profile or task.metadata.get("profile", "py-basic"),
             acceptance_criteria=subtask.acceptance_criteria,
             dependencies=list(subtask.dependencies),
@@ -272,6 +280,8 @@ class TaskOrchestrator:
             role=AgentRole.TESTER,
             preferred_strategy="verification",
             required_tool_groups=[ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
+            candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS],
+            preferred_skill_profiles=["verification"],
             sandbox_profile=task.metadata.get("profile", "py-basic"),
             acceptance_criteria=["Failure repair evidence is attached to the run."],
             dependencies=[repair_subtask.id],
@@ -290,6 +300,8 @@ class TaskOrchestrator:
             role=AgentRole.REVIEWER,
             preferred_strategy="review",
             required_tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
+            candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
+            preferred_skill_profiles=["review"],
             acceptance_criteria=["A final review decision is recorded for the failure repair."],
             dependencies=[verify_subtask.id],
             metadata={

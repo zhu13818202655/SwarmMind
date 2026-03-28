@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
-from swarmmind.models.capability import AgentRole, ToolGroup
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.utils import utc_now
 
 
@@ -98,6 +98,14 @@ class SubTask(BaseModel):
     required_tool_groups: list[ToolGroup] = Field(
         default_factory=list,
         description="Tool groups required by this sub-task",
+    )
+    candidate_runtime_kinds: list[RuntimeKind] = Field(
+        default_factory=list,
+        description="Candidate runtime kinds that may satisfy this sub-task",
+    )
+    preferred_skill_profiles: list[str] = Field(
+        default_factory=list,
+        description="Preferred reusable skill packages for this sub-task",
     )
     sandbox_profile: str | None = Field(default=None, description="Sandbox profile")
     acceptance_criteria: list[str] = Field(
