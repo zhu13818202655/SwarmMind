@@ -204,7 +204,7 @@ class ExecutionRunner:
             AgentRole.RESEARCHER: "research",
             AgentRole.PLANNER: "task_planning",
         }
-        return defaults.get(subtask.role, "build_app")
+        return defaults.get(subtask.role, "build_app")  # TODO - 默认用一个通用的agent而不是build_app
 
     def _select_tool_names(self, subtask) -> list[str]:
         execution_profile = self._load_execution_profile(subtask)
