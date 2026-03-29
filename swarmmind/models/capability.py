@@ -13,6 +13,7 @@ class AgentRole(str, Enum):
     RESEARCHER = "researcher"
     EXECUTOR = "executor"
     CODER = "coder"
+    VERIFIER = "verifier"
     TESTER = "tester"
     REVIEWER = "reviewer"
     WRITER = "writer"
@@ -108,7 +109,7 @@ DEFAULT_STRATEGY_PROFILES: dict[str, StrategyProfile] = {
             ToolGroup.SANDBOX_EXEC,
             ToolGroup.ARTIFACT_READ,
         ],
-        recommended_roles=[AgentRole.TESTER, AgentRole.REVIEWER],
+        recommended_roles=[AgentRole.VERIFIER, AgentRole.TESTER, AgentRole.REVIEWER],
         candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS],
         default_skill_profiles=["verification"],
     ),
@@ -158,6 +159,7 @@ DEFAULT_ROLE_TOOL_GROUPS: dict[AgentRole, list[ToolGroup]] = {
     AgentRole.RESEARCHER: [ToolGroup.WEB_SEARCH, ToolGroup.BROWSER_READ, ToolGroup.PROJECT_READ],
     AgentRole.EXECUTOR: [ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC],
     AgentRole.CODER: [ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC],
+    AgentRole.VERIFIER: [ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
     AgentRole.TESTER: [ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
     AgentRole.REVIEWER: [ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
     AgentRole.WRITER: [ToolGroup.WEB_SEARCH, ToolGroup.BROWSER_READ, ToolGroup.PROJECT_WRITE],

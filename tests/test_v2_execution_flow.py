@@ -306,3 +306,87 @@ async def test_agent_backed_handoff_denied_emits_denied_event_and_falls_back_loc
     event_types = [entry.event_type for entry in replay.entries]
     assert "agent.handoff.denied" in event_types
     assert "policy.denied" in event_types
+
+
+@pytest.mark.asyncio
+async def test_validation_subtasks_use_agent_results_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+    identity = await container.identity_resolver.resolve()
+
+    async def fake_structured_prompt(*, subtask, **kwargs):
+        if subtask.role == AgentRole.TESTER:
+            return """{
+  \"passed\": true,
+  \"summary\": \"LLM verification passed.\",
+  \"criteria_results\": [
+    {
+      \"criterion\": \"Repair evidence is attached and satisfies the review feedback.\",
+      \"passed\": true,
+      \"evidence\": \"verified from dependency and artifact summaries\"
+    }
+  ],
+  \"evidence_subtask_ids\": [],
+  \"artifact_ids\": []
+}"""
+        return """{
+  \"decision\": \"accept\",
+  \"summary\": \"LLM review accepted the result.\",
+  \"rationale\": \"Verification result was accepted.\",
+  \"follow_up_actions\": []
+}"""
+
+    monkeypatch.setattr(container.execution_runner, "_render_structured_prompt_with_model", fake_structured_prompt)
+
+    submission = await container.gateway.submit_task(
+        TaskSubmitRequest(goal="实现一个导出 Excel 功能并补测试", profile="py-basic"),
+        identity=identity,
+    )
+
+    run_detail = await _wait_for_terminal_run(container, submission.run_id, identity)
+    replay = await container.replay_repository.get_by_run(submission.run_id)
+
+    assert run_detail is not None
+    assert replay is not None
+    assert run_detail.run.status == RunStatus.SUCCEEDED
+    verify_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "verify-result")
+    review_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "review-result")
+    assert verify_subtask.result is not None
+    assert verify_subtask.result.get("validation_backend") == "agent"
+    assert review_subtask.result is not None
+    assert review_subtask.result.get("validation_backend") == "agent"
+    event_types = [entry.event_type for entry in replay.entries]
+    assert "validation.agent.started" in event_types
+    assert "validation.agent.completed" in event_types
+
+
+@pytest.mark.asyncio
+async def test_validation_subtasks_fall_back_to_rules_when_agent_output_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+    identity = await container.identity_resolver.resolve()
+
+    async def fake_structured_prompt(**kwargs):
+        return None
+
+    monkeypatch.setattr(container.execution_runner, "_render_structured_prompt_with_model", fake_structured_prompt)
+
+    submission = await container.gateway.submit_task(
+        TaskSubmitRequest(goal="实现一个导出 Excel 功能并补测试", profile="py-basic"),
+        identity=identity,
+    )
+
+    run_detail = await _wait_for_terminal_run(container, submission.run_id, identity)
+    replay = await container.replay_repository.get_by_run(submission.run_id)
+
+    assert run_detail is not None
+    assert replay is not None
+    assert run_detail.run.status == RunStatus.SUCCEEDED
+    verify_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "verify-result")
+    review_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "review-result")
+    assert verify_subtask.result is not None
+    assert verify_subtask.result.get("validation_backend") == "rules_fallback"
+    assert review_subtask.result is not None
+    assert review_subtask.result.get("validation_backend") == "rules_fallback"
+    event_types = [entry.event_type for entry in replay.entries]
+    assert "validation.agent.fallback" in event_types

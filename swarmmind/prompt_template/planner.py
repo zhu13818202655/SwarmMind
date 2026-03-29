@@ -7,6 +7,7 @@ from swarmmind.prompt_template.base import PromptTemplate
 PLANNER_SUPPORTED_ROLES = (
     "planner",
     "coder",
+  "verifier",
     "tester",
     "reviewer",
     "researcher",

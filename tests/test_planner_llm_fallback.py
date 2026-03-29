@@ -74,9 +74,10 @@ async def test_planner_prompt_includes_available_agent_profiles() -> None:
 
     prompt = await planner._compose_planning_prompt(task)
 
-    assert "Available Agent Profiles JSON" in prompt
+    assert "可用 Agent Profiles JSON" in prompt
     assert "coder-default" in prompt
     assert "agent-backed-default" in prompt
+    assert "verifier-default" in prompt
     assert PLANNER_ROLE_ENUM in prompt
     assert PLANNER_TOOL_GROUP_ENUM in prompt
     assert PLANNER_STRATEGY_ENUM in prompt
