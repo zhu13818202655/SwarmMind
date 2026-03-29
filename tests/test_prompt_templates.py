@@ -22,8 +22,8 @@ def test_render_prompt_renders_jinja_template() -> None:
         },
     )
 
-    assert "Goal: 实现导出功能" in rendered
-    assert "Available Agent Profiles JSON: []" in rendered
+    assert "目标：实现导出功能" in rendered
+    assert "可用 Agent Profiles JSON：[]" in rendered
 
 
 def test_render_prompt_fails_fast_when_variable_missing() -> None:

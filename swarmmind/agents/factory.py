@@ -41,6 +41,7 @@ class AgentFactory:
             },
         )
 
+
     def create_formatter(self) -> OpenAIChatFormatter:
         """Create message formatter for the configured model family."""
         return OpenAIChatFormatter(max_tokens=self.config.scope_config.max_tokens)
@@ -54,7 +55,7 @@ class AgentFactory:
         tools: list[Any] | None = None,
         skill_profiles: list[str] | None = None,
     ) -> Toolkit:
-        """Create toolkit and register plain tool functions."""
+        """Create toolkit and register plain tool functions."""  # TODO - 需要区分 1. tool_function 2. tool_group 3. agent_skill，目前的实现是把tool group和agent skill都注册成tool function了，后续需要区分开来，tool group需要支持多工具调用，agent skill需要支持工具调用+技能脚本，目前的实现是把技能脚本注册成了工具函数，后续需要区分开来，并且在agent profile里区分开来
         toolkit = Toolkit()
         effective_skill_profiles = list(skill_profiles or self.config.skill_profiles)
 

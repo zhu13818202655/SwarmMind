@@ -267,6 +267,7 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         query_service=query_service,
     )
 
+    # TODO 怎么区分不同的task，多个用户传不同的任务，怎么区分
     await event_bus.subscribe("*", replay_recorder.handle_event)
     await event_bus.subscribe("task.created", orchestrator.handle_task_created)
     await event_bus.subscribe("subtask.completed", orchestrator.handle_subtask_terminal)

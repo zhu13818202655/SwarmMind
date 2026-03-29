@@ -297,7 +297,9 @@ class Planner:
 
         preferred_skill_profiles = self._normalize_skill_profiles(spec.preferred_skill_profiles)
         if not preferred_skill_profiles and preferred_strategy:
-            preferred_skill_profiles = list(DEFAULT_STRATEGY_PROFILES.get(preferred_strategy).default_skill_profiles)
+            strategy_profile = DEFAULT_STRATEGY_PROFILES.get(preferred_strategy)
+            if strategy_profile is not None:
+                preferred_skill_profiles = list(strategy_profile.default_skill_profiles)
 
         if original_strategy != preferred_strategy and original_strategy is not None:
             metadata.setdefault("original_preferred_strategy", original_strategy)

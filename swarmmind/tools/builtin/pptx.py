@@ -1,6 +1,5 @@
 """PPTX tool for generating PowerPoint presentations."""
 
-from pathlib import Path
 from typing import Any
 
 try:

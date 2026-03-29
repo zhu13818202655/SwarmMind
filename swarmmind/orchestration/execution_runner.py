@@ -132,7 +132,7 @@ class ExecutionRunner:
                 subtask.metadata["resolved_runtime_kind"] = execution_profile.resolved_runtime_kind.value
             if execution_profile.runtime_resolution_reason:
                 subtask.metadata["runtime_resolution_reason"] = execution_profile.runtime_resolution_reason
-            if execution_profile.runtime_fallback_chain:
+            if execution_profile.runtime_fallback_chain:  # TODO 需要去除fallback_chain
                 subtask.metadata["runtime_fallback_chain"] = [item.value for item in execution_profile.runtime_fallback_chain]
             subtask.metadata["selected_tools"] = self._select_tool_names(subtask)
             await self._subtask_repository.save(subtask)
@@ -193,7 +193,7 @@ class ExecutionRunner:
 
     async def _execute_subtask_via_strategy(self, task, run, subtask, event: DomainEvent) -> StrategyResult:
         strategy_name = self._resolve_strategy_name(subtask)
-        execution_profile = self._load_execution_profile(subtask)
+        execution_profile = self._load_execution_profile(subtask)  # TODO - 需要修改， strategy 分配 runtime_kind
         resolved_runtime_kind = execution_profile.resolved_runtime_kind or RuntimeKind.HOST_TOOLS
 
         if strategy_name in {"verification", "review"}:
@@ -263,64 +263,6 @@ class ExecutionRunner:
         }:
             required.update({"memory_lookup", "memory_write"})
         return required
-
-    async def _execute_inline_runtime_subtask(self, task, run, subtask, event: DomainEvent, runtime_kind: RuntimeKind) -> None:
-        subtask.start_execution()
-        await self._subtask_repository.save(subtask)
-        await self._event_bus.publish(
-            DomainEvent(
-                event_id=str(uuid.uuid4()),
-                topic="subtask.started",
-                tenant_id=task.metadata.get("tenant_id", event.tenant_id),
-                session_id=run.session_id,
-                task_id=task.id,
-                run_id=run.id,
-                subtask_id=subtask.id,
-                payload={
-                    "name": subtask.name,
-                    "role": subtask.role,
-                    "runtime_kind": runtime_kind.value,
-                },
-            )
-        )
-
-        content = await self._render_subtask_content(task, subtask)
-        artifact = self._create_inline_artifact(
-            task=task,
-            run=run,
-            subtask=subtask,
-            name=f"{subtask.name}-{runtime_kind.value}.md",
-            artifact_type=ArtifactType.REPORT,
-            metadata={
-                "content": content,
-                "runtime_kind": runtime_kind.value,
-                "strategy": self._resolve_strategy_name(subtask),
-                "skill_profiles": self._effective_skill_profiles(self._load_execution_profile(subtask), subtask),
-            },
-        )
-        subtask.complete(
-            {
-                "content_preview": content[:300],
-                "runtime_kind": runtime_kind.value,
-                "artifact_count": 1,
-            }
-        )
-
-        await self._subtask_repository.save(subtask)
-        await self._store_artifact(task, run, subtask, artifact)
-        await self._store_memory_for_subtask(task, run, subtask)
-        await self._event_bus.publish(
-            DomainEvent(
-                event_id=str(uuid.uuid4()),
-                topic="subtask.completed",
-                tenant_id=task.metadata.get("tenant_id", event.tenant_id),
-                session_id=run.session_id,
-                task_id=task.id,
-                run_id=run.id,
-                subtask_id=subtask.id,
-                payload=subtask.result or {},
-            )
-        )
 
     def _tool_allowed_by_execution_profile(self, tool_name: str, execution_profile: ExecutionProfile) -> bool:
         if tool_name in execution_profile.allowed_tool_names:
@@ -714,6 +656,64 @@ class ExecutionRunner:
             )
         )
 
+    async def _execute_inline_runtime_subtask(self, task, run, subtask, event: DomainEvent, runtime_kind: RuntimeKind) -> None:
+        subtask.start_execution()
+        await self._subtask_repository.save(subtask)
+        await self._event_bus.publish(
+            DomainEvent(
+                event_id=str(uuid.uuid4()),
+                topic="subtask.started",
+                tenant_id=task.metadata.get("tenant_id", event.tenant_id),
+                session_id=run.session_id,
+                task_id=task.id,
+                run_id=run.id,
+                subtask_id=subtask.id,
+                payload={
+                    "name": subtask.name,
+                    "role": subtask.role,
+                    "runtime_kind": runtime_kind.value,
+                },
+            )
+        )
+
+        content = await self._render_subtask_content(task, subtask)
+        artifact = self._create_inline_artifact(
+            task=task,
+            run=run,
+            subtask=subtask,
+            name=f"{subtask.name}-{runtime_kind.value}.md",
+            artifact_type=ArtifactType.REPORT,
+            metadata={
+                "content": content,
+                "runtime_kind": runtime_kind.value,
+                "strategy": self._resolve_strategy_name(subtask),
+                "skill_profiles": self._effective_skill_profiles(self._load_execution_profile(subtask), subtask),
+            },
+        )
+        subtask.complete(
+            {
+                "content_preview": content[:300],
+                "runtime_kind": runtime_kind.value,
+                "artifact_count": 1,
+            }
+        )
+
+        await self._subtask_repository.save(subtask)
+        await self._store_artifact(task, run, subtask, artifact)
+        await self._store_memory_for_subtask(task, run, subtask)
+        await self._event_bus.publish(
+            DomainEvent(
+                event_id=str(uuid.uuid4()),
+                topic="subtask.completed",
+                tenant_id=task.metadata.get("tenant_id", event.tenant_id),
+                session_id=run.session_id,
+                task_id=task.id,
+                run_id=run.id,
+                subtask_id=subtask.id,
+                payload=subtask.result or {},
+            )
+        )
+
     async def _render_agent_backed_content(self, task, run, subtask) -> str:
         execution_profile = self._load_execution_profile(subtask)
         source_profile = self._resolve_agent_profile_for_execution(execution_profile, subtask)
@@ -770,6 +770,8 @@ class ExecutionRunner:
             )
             return None
 
+        assert target_profile is not None
+
         await self._publish_handoff_event(
             topic="agent.handoff.started",
             task=task,
@@ -805,7 +807,7 @@ class ExecutionRunner:
         return None
 
     async def _publish_handoff_denied(self, task, run, subtask, source_profile: AgentProfile, target_profile_id: str, reason: str) -> None:
-        payload = {
+        payload: dict[str, object] = {
             "from_agent_profile_id": source_profile.id,
             "to_agent_profile_id": target_profile_id,
             "reason": reason,
@@ -923,6 +925,7 @@ class ExecutionRunner:
         else:
             summary = "Review escalated the result for manual intervention."
             actions = ["Escalate to coordinator"]
+
 
         return ReviewDecision(
             decision=decision_type,
@@ -1271,10 +1274,10 @@ class ExecutionRunner:
         return CommandRequest(command=command, cwd=".")
 
     async def _render_subtask_content(self, task, subtask) -> str:
-        generated = await self._render_subtask_content_with_model(task, subtask)
-        if generated:
-            return generated
-        return await self._render_subtask_content_template(task, subtask)
+        content = await self._render_subtask_content_with_model(task, subtask)
+        if content:
+            return content
+        return await self._render_subtask_content_template(task, subtask)  # TODO - remove 不能依赖模板，没有就retry，我们需要加入错误信息提示，方便后续优化
 
     async def _render_subtask_content_with_model(
         self,
@@ -1303,7 +1306,7 @@ class ExecutionRunner:
                     ),
                     max_steps=6,
                     system_prompt=render_prompt(self._system_prompt_template),
-                        skill_profiles=self._effective_skill_profiles(execution_profile, subtask),
+                    skill_profiles=self._effective_skill_profiles(execution_profile, subtask),
                 )
             )
             if agent_profile is not None:
