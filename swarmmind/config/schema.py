@@ -58,7 +58,10 @@ class SandboxConfig(ValidatedDefaultsModel):
     @field_validator("base_url", mode="before")
     @classmethod
     def resolve_base_url(cls, value: Any) -> Any:
-        return resolve_env_value(value, "OPEN_SANDBOX_BASE_URL")
+        resolved = resolve_env_value(value, "OPEN_SANDBOX_BASE_URL")
+        if resolved in (None, ""):
+            return cls.model_fields["base_url"].default
+        return resolved
 
     @field_validator("create_retries", mode="before")
     @classmethod
