@@ -422,6 +422,8 @@ SwarmMind/
 当前仓库的 Git 与本地工作区约定如下：
 
 1. `git add` 与 `git commit` 使用 `root` 账号执行。
-2. `git push` 使用 `admin2` 账号执行。
+2. `git push` 与 `git pull` 使用 `admin2` 账号执行。
+3. `pull branch` 都是需要用 `rebase` 的方式，保持 `commit history` 的整洁。
+4. 执行 `pull request` 时，需要执行 `chown -R admin2:admin2 /home/admin2/proj/SwarmMind`，确保文件权限正确。
 
 如果后续调整了本地账号或工具链约束，应同步更新本节，避免自动化代理和人工操作出现不一致。
