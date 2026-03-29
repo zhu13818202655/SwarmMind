@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import uuid
 from typing import Any
@@ -33,6 +34,9 @@ from swarmmind.prompt_template import (
     EXECUTION_SUBTASK_MARKDOWN_PROMPT,
     EXECUTION_SYSTEM_PROMPT,
     PromptTemplate,
+    REVIEW_DECISION_PROMPT,
+    VALIDATION_AGENT_SYSTEM_PROMPT,
+    VERIFICATION_RESULT_PROMPT,
     render_prompt,
 )
 from swarmmind.repositories import ArtifactRepository, RunRepository, SubTaskRepository, TaskRepository
@@ -216,6 +220,7 @@ class ExecutionRunner:
         if subtask.preferred_strategy:
             return subtask.preferred_strategy
         defaults = {
+            AgentRole.VERIFIER: "verification",
             AgentRole.TESTER: "verification",
             AgentRole.REVIEWER: "review",
             AgentRole.WRITER: "write_report",
@@ -544,12 +549,22 @@ class ExecutionRunner:
             dependency_ids=[dep.id for dep in dependencies],
         )
 
-        if subtask.role == AgentRole.TESTER:
-            verification = self._build_verification_result(subtask, dependencies, dependency_artifacts)
+        structured_result = await self._render_validation_result_with_model(
+            task=task,
+            run=run,
+            subtask=subtask,
+            dependencies=dependencies,
+            dependency_artifacts=dependency_artifacts,
+        )
+
+        if self._is_verification_role(subtask.role):
+            verification = structured_result if isinstance(structured_result, VerificationResult) else self._build_verification_result(subtask, dependencies, dependency_artifacts)
+            backend = "agent" if isinstance(structured_result, VerificationResult) else "rules_fallback"
             subtask.complete(
                 {
                     **verification.model_dump(mode="json"),
                     "verification_passed": verification.passed,
+                    "validation_backend": backend,
                 }
             )
             artifact = self._create_inline_artifact(
@@ -558,18 +573,25 @@ class ExecutionRunner:
                 subtask=subtask,
                 name=f"{subtask.name}-verification.json",
                 artifact_type=ArtifactType.TEST_RESULT,
-                metadata=verification.model_dump(mode="json"),
+                metadata={
+                    **verification.model_dump(mode="json"),
+                    "validation_backend": backend,
+                    "dependency_summary": self._summarize_dependency_subtasks(dependencies),
+                    "artifact_summary": self._summarize_artifacts(dependency_artifacts),
+                },
             )
         else:
-            decision = self._build_review_decision(task, subtask, dependencies)
+            decision = structured_result if isinstance(structured_result, ReviewDecision) else self._build_review_decision(task, subtask, dependencies)
+            backend = "agent" if isinstance(structured_result, ReviewDecision) else "rules_fallback"
             subtask.complete(
                 {
                     **decision.model_dump(mode="json"),
                     "verification_passed": all(
                         bool(dep.result and dep.result.get("passed"))
                         for dep in dependencies
-                        if dep.role == AgentRole.TESTER
+                        if self._is_verification_role(dep.role)
                     ),
+                    "validation_backend": backend,
                 }
             )
             artifact = self._create_inline_artifact(
@@ -578,7 +600,12 @@ class ExecutionRunner:
                 subtask=subtask,
                 name=f"{subtask.name}-review.json",
                 artifact_type=ArtifactType.REPORT,
-                metadata=decision.model_dump(mode="json"),
+                metadata={
+                    **decision.model_dump(mode="json"),
+                    "validation_backend": backend,
+                    "dependency_summary": self._summarize_dependency_subtasks(dependencies),
+                    "artifact_summary": self._summarize_artifacts(dependency_artifacts),
+                },
             )
 
         await self._subtask_repository.save(subtask)
@@ -879,6 +906,198 @@ class ExecutionRunner:
         subtask_map = {item.id: item for item in run_subtasks}
         return [subtask_map[dependency] for dependency in subtask.dependencies if dependency in subtask_map]
 
+    async def _render_validation_result_with_model(self, task, run, subtask, dependencies, dependency_artifacts) -> VerificationResult | ReviewDecision | None:
+        prompt = self._compose_validation_prompt(task, subtask, dependencies, dependency_artifacts)
+        if not prompt:
+            return None
+
+        await self._publish_strategy_event(
+            topic="validation.agent.started",
+            task=task,
+            run=run,
+            subtask=subtask,
+            payload={
+                "role": subtask.role,
+                "dependency_ids": [dependency.id for dependency in dependencies],
+                "artifact_ids": [artifact.id for artifact in dependency_artifacts],
+            },
+        )
+
+        text = await self._render_structured_prompt_with_model(
+            task=task,
+            subtask=subtask,
+            prompt=prompt,
+            system_prompt=render_prompt(VALIDATION_AGENT_SYSTEM_PROMPT),
+            run=run,
+        )
+        if not text:
+            await self._publish_strategy_event(
+                topic="validation.agent.fallback",
+                task=task,
+                run=run,
+                subtask=subtask,
+                payload={"reason": "model_unavailable_or_empty"},
+            )
+            return None
+
+        payload = self._extract_json_payload(text)
+        if payload is None:
+            await self._publish_strategy_event(
+                topic="validation.agent.fallback",
+                task=task,
+                run=run,
+                subtask=subtask,
+                payload={"reason": "invalid_json", "response_preview": text[:500]},
+            )
+            return None
+
+        try:
+            if self._is_verification_role(subtask.role):
+                result = VerificationResult.model_validate(payload)
+            else:
+                result = ReviewDecision.model_validate(payload)
+        except Exception as exc:
+            await self._publish_strategy_event(
+                topic="validation.agent.fallback",
+                task=task,
+                run=run,
+                subtask=subtask,
+                payload={"reason": "schema_validation_failed", "error": str(exc), "response_preview": text[:500]},
+            )
+            return None
+
+        await self._publish_strategy_event(
+            topic="validation.agent.completed",
+            task=task,
+            run=run,
+            subtask=subtask,
+            payload={
+                "role": subtask.role,
+                "result": self._summarize_tool_payload(result.model_dump(mode="json")),
+            },
+        )
+        return result
+
+    def _compose_validation_prompt(self, task, subtask, dependencies, dependency_artifacts) -> str:
+        template = VERIFICATION_RESULT_PROMPT if self._is_verification_role(subtask.role) else REVIEW_DECISION_PROMPT
+        return render_prompt(
+            template,
+            {
+                "task_goal": task.goal,
+                "subtask_name": subtask.name,
+                "subtask_description": subtask.description,
+                "acceptance_criteria_json": json.dumps(subtask.acceptance_criteria, ensure_ascii=False),
+                "dependency_summary_json": json.dumps(
+                    self._summarize_dependency_subtasks(dependencies),
+                    ensure_ascii=False,
+                ),
+                "artifact_summary_json": json.dumps(
+                    self._summarize_artifacts(dependency_artifacts),
+                    ensure_ascii=False,
+                ),
+            },
+        )
+
+    async def _render_structured_prompt_with_model(
+        self,
+        *,
+        task,
+        subtask,
+        prompt: str,
+        system_prompt: str,
+        run=None,
+        agent_profile_override: AgentProfile | None = None,
+    ) -> str | None:
+        if not self._model_name:
+            return None
+        if not self._model_api_key and not self._model_base_url:
+            return None
+
+        try:
+            execution_profile = self._load_execution_profile(subtask)
+            agent_profile = agent_profile_override or self._agent_profile_store.get(execution_profile.agent_profile_id)
+            agent_factory = AgentFactory(
+                AgentConfig(
+                    name=f"subtask-{subtask.name}-structured",
+                    scope_config=AgentScopeConfig(
+                        model_name=agent_profile.preferred_model if agent_profile and agent_profile.preferred_model else self._model_name,
+                        api_key=self._model_api_key,
+                        base_url=agent_profile.preferred_endpoint if agent_profile and agent_profile.preferred_endpoint else self._model_base_url,
+                        temperature=self._model_temperature,
+                        max_tokens=self._model_max_tokens,
+                    ),
+                    max_steps=6,
+                    system_prompt=system_prompt,
+                    skill_profiles=self._effective_skill_profiles(execution_profile, subtask),
+                )
+            )
+            if agent_profile is not None:
+                agent = agent_factory.create_profile_agent(
+                    agent_profile,
+                    tools=[],
+                    system_prompt=system_prompt,
+                )
+            else:
+                agent = agent_factory.create_main_agent(tools=[])
+            result = await agent(Msg(name="user", role="user", content=prompt))
+            text = result.get_text_content()
+            if text and text.strip():
+                return text.strip()
+            return json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _extract_json_payload(raw_text: str) -> dict[str, object] | None:
+        fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", raw_text, flags=re.DOTALL | re.IGNORECASE)
+        candidate = fenced.group(1) if fenced else raw_text
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start == -1 or end == -1 or end < start:
+            return None
+        snippet = candidate[start : end + 1]
+        try:
+            value = json.loads(snippet)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(value, dict):
+            return value
+        return None
+
+    @staticmethod
+    def _summarize_dependency_subtasks(dependencies) -> list[dict[str, object]]:
+        summaries: list[dict[str, object]] = []
+        for dependency in dependencies:
+            summaries.append(
+                {
+                    "id": dependency.id,
+                    "name": dependency.name,
+                    "role": str(dependency.role),
+                    "status": str(dependency.status),
+                    "result": ExecutionRunner._summarize_tool_payload(dependency.result or {}),
+                    "error": dependency.error,
+                }
+            )
+        return summaries
+
+    @staticmethod
+    def _summarize_artifacts(artifacts: list[Artifact]) -> list[dict[str, object]]:
+        return [
+            {
+                "id": artifact.id,
+                "name": artifact.name,
+                "type": artifact.type,
+                "subtask_id": artifact.subtask_id,
+                "storage_ref": artifact.storage_ref,
+                "metadata": ExecutionRunner._summarize_tool_payload(artifact.metadata),
+            }
+            for artifact in artifacts
+        ]
+
+    @staticmethod
+    def _is_verification_role(role: AgentRole) -> bool:
+        return role in {AgentRole.VERIFIER, AgentRole.TESTER}
+
     def _build_verification_result(self, subtask, dependencies, artifacts) -> VerificationResult:
         dependency_failures = [dependency for dependency in dependencies if dependency.status == SubTaskStatus.FAILED]
         artifact_ids = [artifact.id for artifact in artifacts]
@@ -912,7 +1131,7 @@ class ExecutionRunner:
         if forced_value:
             decision_type = ReviewDecisionType(str(forced_value).lower())
         else:
-            tester_results = [dependency for dependency in dependencies if dependency.role == AgentRole.TESTER]
+            tester_results = [dependency for dependency in dependencies if self._is_verification_role(dependency.role)]
             passed = all(bool(item.result and item.result.get("passed")) for item in tester_results) and bool(tester_results)
             decision_type = ReviewDecisionType.ACCEPT if passed else ReviewDecisionType.REWORK
 
@@ -1222,6 +1441,12 @@ class ExecutionRunner:
             if not decision or not summary:
                 return ""
             return f"Task goal: {task.goal}\nReview decision: {decision}\nSummary: {summary}"
+        if subtask.role in {AgentRole.VERIFIER, AgentRole.TESTER}:
+            passed = result.get("passed")
+            summary = result.get("summary")
+            if passed is None or not summary:
+                return ""
+            return f"Task goal: {task.goal}\nVerification passed: {passed}\nSummary: {summary}"
         if subtask.role in {AgentRole.CODER, AgentRole.EXECUTOR, AgentRole.WRITER, AgentRole.RESEARCHER, AgentRole.PLANNER}:
             preview = result.get("stdout_preview") or subtask.description
             return f"Task goal: {task.goal}\nSubtask: {subtask.name}\nOutcome: {preview}"

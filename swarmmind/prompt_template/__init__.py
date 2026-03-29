@@ -14,6 +14,9 @@ from swarmmind.prompt_template.planner import (
 from swarmmind.prompt_template.registry import PROMPT_TEMPLATES
 from swarmmind.prompt_template.review import (
 	REVIEW_SUBTASK_VERIFICATION_PROMPT,
+	REVIEW_DECISION_PROMPT,
+	VALIDATION_AGENT_SYSTEM_PROMPT,
+	VERIFICATION_RESULT_PROMPT,
 )
 from swarmmind.prompt_template.task_decomposer import (
 	TASK_DECOMPOSER_LLM_PROMPT,
@@ -26,8 +29,11 @@ __all__ = [
 	"PLANNER_SYSTEM_PROMPT",
 	"PLANNER_TASK_DECOMPOSITION_PROMPT",
 	"PROMPT_TEMPLATES",
+	"REVIEW_DECISION_PROMPT",
 	"PromptTemplate",
 	"REVIEW_SUBTASK_VERIFICATION_PROMPT",
 	"TASK_DECOMPOSER_LLM_PROMPT",
+	"VALIDATION_AGENT_SYSTEM_PROMPT",
+	"VERIFICATION_RESULT_PROMPT",
 	"render_prompt",
 ]

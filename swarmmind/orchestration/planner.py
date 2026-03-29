@@ -29,6 +29,7 @@ from swarmmind.prompt_template import (
 PLANNER_ALLOWED_ROLES: set[AgentRole] = {
     AgentRole.PLANNER,
     AgentRole.CODER,
+    AgentRole.VERIFIER,
     AgentRole.TESTER,
     AgentRole.REVIEWER,
     AgentRole.RESEARCHER,
