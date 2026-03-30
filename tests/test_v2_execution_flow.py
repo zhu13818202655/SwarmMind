@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 import pytest
 
+from swarmmind.agents import OmniAgentResult
 from swarmmind.models.agent_profile import AgentProfile, HandoffPolicy, SkillsMode
 from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.app.container import build_container
 from swarmmind.config import SwarmMindConfig
 from swarmmind.gateway import TaskSubmitRequest
+from swarmmind.models.event import DomainEvent
 from swarmmind.models.execution import ExecutionProfile
-from swarmmind.models.run import RunStatus
+from swarmmind.models.replay import ReplayRoot
+from swarmmind.models.run import Run, RunStatus
 from swarmmind.models.execution import ReviewDecisionType
-from swarmmind.models.task import SubTaskStatus, TaskStatus
+from swarmmind.models.task import SubTask, SubTaskStatus, Task, TaskStatus
 
 
 async def _wait_for_terminal_run(container, run_id: str, identity, timeout: float = 10.0):
@@ -193,7 +197,143 @@ async def test_agent_backed_strategy_completes_with_reserved_profile() -> None:
     assert execution_profile.agent_profile_id == "agent-backed-default"
     assert implementation_subtask.result is not None
     assert implementation_subtask.result.get("strategy_backend") == "agent_backed"
+    assert implementation_subtask.result.get("execution_backend") == "omni_agent"
     assert any(entry.event_type == "strategy.completed" for entry in replay.entries)
+
+
+@pytest.mark.asyncio
+async def test_agent_backed_strategy_emits_unified_agent_step_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+    identity = await container.identity_resolver.resolve()
+    captured: list[dict[str, object]] = []
+
+    async def fake_run(request, *, publisher=None):
+        payload = {
+            "step_kind": request.step_kind,
+            "tool_names": [getattr(tool, "__name__", repr(tool)) for tool in request.tool_functions],
+            "agent_profile_id": request.agent_profile.id if request.agent_profile is not None else None,
+        }
+        captured.append(payload)
+        if publisher is not None:
+            await publisher("agent.step.fallback", {**payload, "reason": "test_fallback"})
+        return OmniAgentResult(status="fallback", reason="test_fallback", tool_names=payload["tool_names"])
+
+    monkeypatch.setattr(container.execution_runner._omni_agent, "run", fake_run)
+
+    submission = await container.gateway.submit_task(
+        TaskSubmitRequest(
+            goal="整理一份版本发布说明",
+            preferred_strategy="agent_backed",
+            profile="py-basic",
+        ),
+        identity=identity,
+    )
+
+    run_detail = await _wait_for_terminal_run(container, submission.run_id, identity)
+    replay = await container.replay_repository.get_by_run(submission.run_id)
+
+    assert run_detail is not None
+    assert replay is not None
+    assert run_detail.run.status == RunStatus.SUCCEEDED
+    assert any(item.get("step_kind") == "execution.agent_backed" for item in captured)
+    assert "agent.step.fallback" in [entry.event_type for entry in replay.entries]
+
+
+@pytest.mark.asyncio
+async def test_host_tools_runtime_uses_omni_agent_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+    identity = await container.identity_resolver.resolve()
+    captured: list[dict[str, object]] = []
+
+    async def fake_run(request, *, publisher=None):
+        payload = {
+            "step_kind": request.step_kind,
+            "tool_names": [getattr(tool, "__name__", repr(tool)) for tool in request.tool_functions],
+            "skill_profiles": list(request.skill_profiles),
+        }
+        captured.append(payload)
+        if publisher is not None:
+            await publisher("agent.step.fallback", {**payload, "reason": "test_fallback"})
+        return OmniAgentResult(status="fallback", reason="test_fallback", tool_names=payload["tool_names"])
+
+    monkeypatch.setattr(container.execution_runner._omni_agent, "run", fake_run)
+
+    task = Task(
+        id="task-host-tools-1",
+        goal="整理月度金价研究并输出 PPT",
+        metadata={
+            "tenant_id": identity.tenant_id,
+            "principal_id": identity.principal_id,
+            "profile": "py-basic",
+        },
+    )
+    run = Run(id="run-host-tools-1", task_id=task.id, session_id="session-host-tools-1")
+    execution_profile = ExecutionProfile(
+        role=AgentRole.WRITER,
+        preferred_strategy="presentation_delivery",
+        required_tool_groups=[ToolGroup.PRESENTATION, ToolGroup.ARTIFACT_READ, ToolGroup.PROJECT_WRITE],
+        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+        resolved_runtime_kind=RuntimeKind.HOST_TOOLS,
+        runtime_resolution_reason="Test forces host_tools runtime for OmniAgent coverage.",
+        runtime_fallback_chain=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+        preferred_skill_profiles=["pptx"],
+        skill_profiles=["pptx"],
+    )
+    subtask = SubTask(
+        id="subtask-host-tools-1",
+        task_id=task.id,
+        name="generate-pptx",
+        description="Generate the final presentation deck.",
+        role=AgentRole.WRITER,
+        preferred_strategy="presentation_delivery",
+        required_tool_groups=[ToolGroup.PRESENTATION, ToolGroup.ARTIFACT_READ, ToolGroup.PROJECT_WRITE],
+        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+        preferred_skill_profiles=["pptx"],
+        acceptance_criteria=["A PPT delivery artifact is produced."],
+        metadata={"run_id": run.id, "plan_source": "test"},
+    )
+    subtask.assign(execution_profile.model_dump(mode="json"), run.id)
+    run.attach_subtasks([subtask.id])
+
+    await container.task_repository.create(task)
+    await container.run_repository.create(run)
+    await container.subtask_repository.save(subtask)
+    await container.replay_repository.create(ReplayRoot(id="replay-host-tools-1", task_id=task.id, run_id=run.id))
+
+    await container.event_bus.publish(
+        DomainEvent(
+            event_id="event-host-tools-1",
+            topic="subtask.assigned",
+            tenant_id=identity.tenant_id,
+            session_id=run.session_id,
+            task_id=task.id,
+            run_id=run.id,
+            subtask_id=subtask.id,
+            payload={"name": subtask.name, "role": subtask.role.value},
+        )
+    )
+
+    assigned_subtask = await container.subtask_repository.get(subtask.id)
+    stored_run = await container.run_repository.get(run.id)
+    replay = await container.replay_repository.get_by_run(run.id)
+
+    assert assigned_subtask is not None
+    assert stored_run is not None
+    assert replay is not None
+    assert stored_run.status == RunStatus.SUCCEEDED
+    assert assigned_subtask.status == SubTaskStatus.SUCCEEDED
+    assert assigned_subtask.metadata.get("resolved_runtime_kind") == RuntimeKind.HOST_TOOLS.value
+    assert assigned_subtask.result is not None
+    assert assigned_subtask.result.get("execution_backend") == "omni_agent"
+    assert any(item.get("step_kind") == "content.render" and item.get("tool_names") for item in captured)
+    assert any(
+        isinstance(item.get("skill_profiles"), list)
+        and "pptx" in cast(list[str], item.get("skill_profiles"))
+        for item in captured
+    )
+    assert "agent.step.fallback" in [entry.event_type for entry in replay.entries]
 
 
 @pytest.mark.asyncio

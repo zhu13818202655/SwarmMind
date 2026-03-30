@@ -10,9 +10,7 @@ from typing import Any
 
 from agentscope.message import Msg
 
-from swarmmind.agents import AgentProfileStore
-from swarmmind.agents.config import AgentConfig, AgentScopeConfig
-from swarmmind.agents.factory import AgentFactory
+from swarmmind.agents import AgentProfileStore, OmniAgent, OmniAgentRequest
 from swarmmind.execution_strategies import CallbackStrategy, ExecutionStrategyRegistry, StrategyResult
 from swarmmind.events import EventBus
 from swarmmind.memory import LongTermMemoryBase
@@ -103,6 +101,13 @@ class ExecutionRunner:
         self._user_prompt_template = user_prompt_template
         self._fallback_content_template = fallback_content_template
         self._long_term_memory = long_term_memory
+        self._omni_agent = OmniAgent(
+            model_name=model_name,
+            api_key=model_api_key,
+            base_url=model_base_url,
+            temperature=model_temperature,
+            max_tokens=model_max_tokens,
+        )
         self._register_default_tools()
         self._register_default_strategies()
 
@@ -625,67 +630,43 @@ class ExecutionRunner:
         )
 
     async def _execute_agent_backed_subtask(self, task, run, subtask, event: DomainEvent) -> None:
-        subtask.start_execution()
-        await self._subtask_repository.save(subtask)
-        await self._event_bus.publish(
-            DomainEvent(
-                event_id=str(uuid.uuid4()),
-                topic="subtask.started",
-                tenant_id=task.metadata.get("tenant_id", event.tenant_id),
-                session_id=run.session_id,
-                task_id=task.id,
-                run_id=run.id,
-                subtask_id=subtask.id,
-                payload={
-                    "name": subtask.name,
-                    "role": subtask.role,
-                    "agent_profile_id": subtask.agent_profile_id,
-                },
-            )
-        )
-
-        content = await self._render_agent_backed_content(task, run, subtask)
-        artifact = self._create_inline_artifact(
+        await self._execute_omni_agent_subtask(
             task=task,
             run=run,
             subtask=subtask,
-            name=f"{subtask.name}-agent-backed.md",
-            artifact_type=ArtifactType.REPORT,
-            metadata={
-                "agent_profile_id": subtask.agent_profile_id,
-                "content": content,
-                "strategy": "agent_backed",
-                "handoff": subtask.metadata.get("handoff"),
-            },
-        )
-        subtask.complete(
-            {
-                "agent_profile_id": subtask.agent_profile_id,
-                "content_preview": content[:300],
-                "strategy_backend": "agent_backed",
-                "handoff": subtask.metadata.get("handoff"),
-            }
-        )
-
-        await self._subtask_repository.save(subtask)
-        await self._store_artifact(task, run, subtask, artifact)
-        await self._store_memory_for_subtask(task, run, subtask)
-        await self._event_bus.publish(
-            DomainEvent(
-                event_id=str(uuid.uuid4()),
-                topic="subtask.completed",
-                tenant_id=task.metadata.get("tenant_id", event.tenant_id),
-                session_id=run.session_id,
-                task_id=task.id,
-                run_id=run.id,
-                subtask_id=subtask.id,
-                payload=subtask.result or {},
-            )
+            event=event,
+            runtime_kind=RuntimeKind.AGENT_BACKED,
+            strategy_backend="agent_backed",
         )
 
     async def _execute_inline_runtime_subtask(self, task, run, subtask, event: DomainEvent, runtime_kind: RuntimeKind) -> None:
+        await self._execute_omni_agent_subtask(
+            task=task,
+            run=run,
+            subtask=subtask,
+            event=event,
+            runtime_kind=runtime_kind,
+        )
+
+    async def _execute_omni_agent_subtask(
+        self,
+        *,
+        task,
+        run,
+        subtask,
+        event: DomainEvent,
+        runtime_kind: RuntimeKind,
+        strategy_backend: str | None = None,
+    ) -> None:
         subtask.start_execution()
         await self._subtask_repository.save(subtask)
+        start_payload = {
+            "name": subtask.name,
+            "role": subtask.role,
+            "runtime_kind": runtime_kind.value,
+        }
+        if strategy_backend == "agent_backed":
+            start_payload["agent_profile_id"] = subtask.agent_profile_id
         await self._event_bus.publish(
             DomainEvent(
                 event_id=str(uuid.uuid4()),
@@ -695,35 +676,53 @@ class ExecutionRunner:
                 task_id=task.id,
                 run_id=run.id,
                 subtask_id=subtask.id,
-                payload={
-                    "name": subtask.name,
-                    "role": subtask.role,
-                    "runtime_kind": runtime_kind.value,
-                },
+                payload=start_payload,
             )
         )
 
-        content = await self._render_subtask_content(task, subtask)
+        if strategy_backend == "agent_backed":
+            content = await self._render_agent_backed_content(task, run, subtask)
+            artifact_name = f"{subtask.name}-agent-backed.md"
+        else:
+            content = await self._render_subtask_content(task, subtask, run=run)
+            artifact_name = f"{subtask.name}-{runtime_kind.value}.md"
+
+        execution_profile = self._load_execution_profile(subtask)
+        skill_profiles = self._effective_skill_profiles(execution_profile, subtask)
         artifact = self._create_inline_artifact(
             task=task,
             run=run,
             subtask=subtask,
-            name=f"{subtask.name}-{runtime_kind.value}.md",
+            name=artifact_name,
             artifact_type=ArtifactType.REPORT,
             metadata={
                 "content": content,
                 "runtime_kind": runtime_kind.value,
                 "strategy": self._resolve_strategy_name(subtask),
-                "skill_profiles": self._effective_skill_profiles(self._load_execution_profile(subtask), subtask),
+                "skill_profiles": skill_profiles,
+                "execution_backend": "omni_agent",
+                "omni_agent": {
+                    "tool_names": [getattr(tool, "__name__", repr(tool)) for tool in self._build_agent_tool_functions(task, run, subtask)],
+                    "skill_profiles": skill_profiles,
+                },
+                **({"agent_profile_id": subtask.agent_profile_id, "handoff": subtask.metadata.get("handoff"), "strategy_backend": strategy_backend} if strategy_backend else {}),
             },
         )
-        subtask.complete(
-            {
-                "content_preview": content[:300],
-                "runtime_kind": runtime_kind.value,
-                "artifact_count": 1,
-            }
-        )
+        result_payload = {
+            "content_preview": content[:300],
+            "runtime_kind": runtime_kind.value,
+            "artifact_count": 1,
+            "execution_backend": "omni_agent",
+        }
+        if strategy_backend == "agent_backed":
+            result_payload.update(
+                {
+                    "agent_profile_id": subtask.agent_profile_id,
+                    "strategy_backend": "agent_backed",
+                    "handoff": subtask.metadata.get("handoff"),
+                }
+            )
+        subtask.complete(result_payload)
 
         await self._subtask_repository.save(subtask)
         await self._store_artifact(task, run, subtask, artifact)
@@ -747,14 +746,19 @@ class ExecutionRunner:
         target_profile = await self._resolve_handoff_profile(task, run, subtask, source_profile, execution_profile)
         active_profile = target_profile or source_profile
 
-        content = await self._render_subtask_content_with_model(
-            task,
-            subtask,
+        prompt = await self._compose_subtask_prompt(task, subtask)
+        result = await self._run_omni_agent_prompt(
+            task=task,
+            subtask=subtask,
+            prompt=prompt,
+            system_prompt=render_prompt(self._system_prompt_template),
             run=run,
+            step_kind="execution.agent_backed",
             agent_profile_override=active_profile,
         )
-        if content:
-            return content
+        if result.content:
+            await self._complete_handoff_if_needed(task, run, subtask, active_profile)
+            return result.content
         return await self._render_agent_backed_fallback_content(task, run, subtask, source_profile, active_profile)
 
     def _resolve_agent_profile_for_execution(self, execution_profile: ExecutionProfile, subtask) -> AgentProfile:
@@ -1008,44 +1012,16 @@ class ExecutionRunner:
         run=None,
         agent_profile_override: AgentProfile | None = None,
     ) -> str | None:
-        if not self._model_name:
-            return None
-        if not self._model_api_key and not self._model_base_url:
-            return None
-
-        try:
-            execution_profile = self._load_execution_profile(subtask)
-            agent_profile = agent_profile_override or self._agent_profile_store.get(execution_profile.agent_profile_id)
-            agent_factory = AgentFactory(
-                AgentConfig(
-                    name=f"subtask-{subtask.name}-structured",
-                    scope_config=AgentScopeConfig(
-                        model_name=agent_profile.preferred_model if agent_profile and agent_profile.preferred_model else self._model_name,
-                        api_key=self._model_api_key,
-                        base_url=agent_profile.preferred_endpoint if agent_profile and agent_profile.preferred_endpoint else self._model_base_url,
-                        temperature=self._model_temperature,
-                        max_tokens=self._model_max_tokens,
-                    ),
-                    max_steps=6,
-                    system_prompt=system_prompt,
-                    skill_profiles=self._effective_skill_profiles(execution_profile, subtask),
-                )
-            )
-            if agent_profile is not None:
-                agent = agent_factory.create_profile_agent(
-                    agent_profile,
-                    tools=[],
-                    system_prompt=system_prompt,
-                )
-            else:
-                agent = agent_factory.create_main_agent(tools=[])
-            result = await agent(Msg(name="user", role="user", content=prompt))
-            text = result.get_text_content()
-            if text and text.strip():
-                return text.strip()
-            return json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
-        except Exception:
-            return None
+        result = await self._run_omni_agent_prompt(
+            task=task,
+            subtask=subtask,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            run=run,
+            step_kind="validation.structured",
+            agent_profile_override=agent_profile_override,
+        )
+        return result.content
 
     @staticmethod
     def _extract_json_payload(raw_text: str) -> dict[str, object] | None:
@@ -1498,8 +1474,8 @@ class ExecutionRunner:
         command = f"python3 -c {shlex.quote('; '.join(python_code))}"
         return CommandRequest(command=command, cwd=".")
 
-    async def _render_subtask_content(self, task, subtask) -> str:
-        content = await self._render_subtask_content_with_model(task, subtask)
+    async def _render_subtask_content(self, task, subtask, run=None) -> str:
+        content = await self._render_subtask_content_with_model(task, subtask, run=run)
         if content:
             return content
         return await self._render_subtask_content_template(task, subtask)  # TODO - remove 不能依赖模板，没有就retry，我们需要加入错误信息提示，方便后续优化
@@ -1511,63 +1487,208 @@ class ExecutionRunner:
         run=None,
         agent_profile_override: AgentProfile | None = None,
     ) -> str | None:
-        if not self._model_name:
-            return None
-        if not self._model_api_key and not self._model_base_url:
-            return None
+        prompt = await self._compose_subtask_prompt(task, subtask)
+        result = await self._run_omni_agent_prompt(
+            task=task,
+            subtask=subtask,
+            prompt=prompt,
+            system_prompt=render_prompt(self._system_prompt_template),
+            run=run,
+            step_kind="content.render",
+            agent_profile_override=agent_profile_override,
+        )
+        if result.content:
+            current_profile = agent_profile_override or self._resolve_agent_profile_for_omni_agent(subtask)
+            if current_profile is not None and run is not None:
+                await self._complete_handoff_if_needed(task, run, subtask, current_profile)
+        return result.content
 
-        try:
-            execution_profile = self._load_execution_profile(subtask)
-            agent_profile = agent_profile_override or self._agent_profile_store.get(execution_profile.agent_profile_id)
-            agent_factory = AgentFactory(
-                AgentConfig(
-                    name=f"subtask-{subtask.name}",
-                    scope_config=AgentScopeConfig(
-                        model_name=agent_profile.preferred_model if agent_profile and agent_profile.preferred_model else self._model_name,
-                        api_key=self._model_api_key,
-                        base_url=agent_profile.preferred_endpoint if agent_profile and agent_profile.preferred_endpoint else self._model_base_url,
-                        temperature=self._model_temperature,
-                        max_tokens=self._model_max_tokens,
-                    ),
-                    max_steps=6,
-                    system_prompt=render_prompt(self._system_prompt_template),
-                    skill_profiles=self._effective_skill_profiles(execution_profile, subtask),
-                )
-            )
-            if agent_profile is not None:
-                agent = agent_factory.create_profile_agent(
-                    agent_profile,
-                    tools=[],
-                    system_prompt=render_prompt(self._system_prompt_template),
-                )
-            else:
-                agent = agent_factory.create_main_agent(tools=[])
-            prompt = await self._compose_subtask_prompt(task, subtask)
-            result = await agent(Msg(name="user", role="user", content=prompt))
-            text = result.get_text_content()
-            if text and text.strip():
-                handoff = subtask.metadata.get("handoff") if isinstance(subtask.metadata.get("handoff"), dict) else None
-                if handoff and handoff.get("status") == "started" and agent_profile is not None and subtask.agent_profile_id:
-                    handoff["status"] = "completed"
-                    await self._subtask_repository.save(subtask)
-                    current_run = run or await self._run_repository.get(subtask.metadata.get("run_id") or "")
-                    if current_run is not None:
-                        await self._publish_handoff_event(
-                            topic="agent.handoff.completed",
-                            task=task,
-                            run=current_run,
-                            subtask=subtask,
-                            payload={
-                                "from_agent_profile_id": handoff.get("from_agent_profile_id", subtask.agent_profile_id),
-                                "to_agent_profile_id": agent_profile.id,
-                                "depth": handoff.get("depth", 1),
-                                "context_mode": handoff.get("context_mode", HandoffContextMode.SUMMARY.value),
-                            },
-                        )
-                return text.strip()
-            return json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
-        except Exception:
+    def _resolve_agent_profile_for_omni_agent(self, subtask) -> AgentProfile | None:
+        execution_profile = self._load_execution_profile(subtask)
+        if not execution_profile.agent_profile_id:
             return None
+        return self._agent_profile_store.get(execution_profile.agent_profile_id)
+
+    async def _run_omni_agent_prompt(
+        self,
+        *,
+        task,
+        subtask,
+        prompt: str,
+        system_prompt: str,
+        step_kind: str,
+        run=None,
+        agent_profile_override: AgentProfile | None = None,
+    ):
+        current_run = run or await self._run_repository.get(subtask.metadata.get("run_id") or "")
+        execution_profile = self._load_execution_profile(subtask)
+        active_profile = agent_profile_override or self._agent_profile_store.get(execution_profile.agent_profile_id)
+        tool_functions = self._build_agent_tool_functions(task, current_run, subtask) if current_run is not None else []
+        skill_profiles = self._effective_skill_profiles(execution_profile, subtask)
+        return await self._omni_agent.run(
+            OmniAgentRequest(
+                agent_name=f"subtask-{subtask.name}-{step_kind}",
+                prompt=prompt,
+                system_prompt=system_prompt,
+                step_kind=step_kind,
+                tool_functions=tool_functions,
+                skill_profiles=skill_profiles,
+                agent_profile=active_profile,
+            ),
+            publisher=(
+                None
+                if current_run is None
+                else lambda topic, payload: self._publish_agent_step_event(
+                    topic=topic,
+                    task=task,
+                    run=current_run,
+                    subtask=subtask,
+                    payload=payload,
+                )
+            ),
+        )
+
+    async def _publish_agent_step_event(self, topic: str, task, run, subtask, payload: dict[str, object]) -> None:
+        await self._event_bus.publish(
+            DomainEvent(
+                event_id=str(uuid.uuid4()),
+                topic=topic,
+                tenant_id=task.metadata.get("tenant_id", "local"),
+                session_id=run.session_id,
+                task_id=task.id,
+                run_id=run.id,
+                subtask_id=subtask.id,
+                payload=payload,
+            )
+        )
+
+    async def _complete_handoff_if_needed(self, task, run, subtask, active_profile: AgentProfile) -> None:
+        handoff = subtask.metadata.get("handoff") if isinstance(subtask.metadata.get("handoff"), dict) else None
+        if not handoff or handoff.get("status") != "started" or not subtask.agent_profile_id:
+            return
+        handoff["status"] = "completed"
+        await self._subtask_repository.save(subtask)
+        await self._publish_handoff_event(
+            topic="agent.handoff.completed",
+            task=task,
+            run=run,
+            subtask=subtask,
+            payload={
+                "from_agent_profile_id": handoff.get("from_agent_profile_id", subtask.agent_profile_id),
+                "to_agent_profile_id": active_profile.id,
+                "depth": handoff.get("depth", 1),
+                "context_mode": handoff.get("context_mode", HandoffContextMode.SUMMARY.value),
+            },
+        )
+
+    def _build_agent_tool_functions(self, task, run, subtask) -> list[Any]:
+        selected_tools = set(subtask.metadata.get("selected_tools") or [])
+        tools: list[Any] = []
+
+        def register(name: str, description: str, func: Any) -> None:
+            func.__name__ = name
+            func.__doc__ = description
+            tools.append(func)
+
+        if "project_read" in selected_tools:
+            async def project_read(path: str, encoding: str = "utf-8") -> str:
+                return await self._run_tool("project_read", task=task, run=run, subtask=subtask, path=path, encoding=encoding)
+            register("project_read", "Read a project file.", project_read)
+
+        if "project_write" in selected_tools:
+            async def project_write(path: str, content: str, encoding: str = "utf-8") -> str:
+                return await self._run_tool(
+                    "project_write",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    path=path,
+                    content=content,
+                    encoding=encoding,
+                )
+            register("project_write", "Write a project file.", project_write)
+
+        if "project_list" in selected_tools:
+            async def project_list(path: str = ".") -> str:
+                return await self._run_tool("project_list", task=task, run=run, subtask=subtask, path=path)
+            register("project_list", "List project files.", project_list)
+
+        if "project_exists" in selected_tools:
+            async def project_exists(path: str) -> str:
+                return await self._run_tool("project_exists", task=task, run=run, subtask=subtask, path=path)
+            register("project_exists", "Check whether a project file exists.", project_exists)
+
+        if "web_search" in selected_tools:
+            async def web_search(query: str, max_results: int = 5) -> str:
+                return await self._run_tool("web_search", task=task, run=run, subtask=subtask, query=query, max_results=max_results)
+            register("web_search", "Search the web.", web_search)
+
+        if "browser_read" in selected_tools:
+            async def browser_read(url: str) -> str:
+                return await self._run_tool("browser_read", task=task, run=run, subtask=subtask, url=url)
+            register("browser_read", "Fetch and summarize a webpage.", browser_read)
+
+        if "memory_lookup" in selected_tools:
+            async def memory_lookup(query: str, top_k: int = 3) -> list[dict[str, Any]]:
+                return await self._run_tool("memory_lookup", task=task, run=run, subtask=subtask, query=query, top_k=top_k)
+            register("memory_lookup", "Retrieve related long-term memory items.", memory_lookup)
+
+        if "artifact_read" in selected_tools:
+            dependency_ids = list(subtask.dependencies)
+
+            async def artifact_read() -> list[dict[str, object]]:
+                artifacts = await self._run_tool(
+                    "artifact_read",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    run_id=run.id,
+                    dependency_ids=dependency_ids,
+                )
+                return self._summarize_artifacts(artifacts)
+            register("artifact_read", "Read artifacts associated with dependency subtasks.", artifact_read)
+
+        if "list_skill_scripts" in selected_tools:
+            async def list_skill_scripts(skill_name: str) -> list[str]:
+                return await self._run_tool("list_skill_scripts", task=task, run=run, subtask=subtask, skill_name=skill_name)
+            register("list_skill_scripts", "List declared scripts for a skill package.", list_skill_scripts)
+
+        if "get_skill_details" in selected_tools:
+            async def get_skill_details(skill_name: str) -> dict[str, object]:
+                return await self._run_tool("get_skill_details", task=task, run=run, subtask=subtask, skill_name=skill_name)
+            register("get_skill_details", "Inspect expanded metadata and resources for a skill package.", get_skill_details)
+
+        if "run_skill_script" in selected_tools:
+            async def run_skill_script(
+                skill_name: str,
+                script_path: str,
+                sandbox_profile: str = "py-basic",
+                sandbox_root: str = "/workspace/skill",
+                allow_sandbox_exec: bool = False,
+                environment: dict[str, str] | None = None,
+                artifact_paths: list[str] | None = None,
+            ) -> dict[str, object]:
+                return await self._run_tool(
+                    "run_skill_script",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    skill_name=skill_name,
+                    script_path=script_path,
+                    sandbox_profile=sandbox_profile,
+                    sandbox_root=sandbox_root,
+                    allow_sandbox_exec=allow_sandbox_exec,
+                    environment=environment,
+                    artifact_paths=artifact_paths,
+                    tenant_id=task.metadata.get("tenant_id", "local"),
+                    session_id=run.session_id,
+                    task_id=task.id,
+                    run_id=run.id,
+                    subtask_id=subtask.id,
+                )
+            register("run_skill_script", "Execute a declared skill script inside a sandbox with audit context.", run_skill_script)
+
+        return tools
 
     async def _compose_subtask_prompt(self, task, subtask) -> str:
         prompt = render_prompt(
