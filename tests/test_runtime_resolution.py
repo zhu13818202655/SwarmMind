@@ -59,3 +59,27 @@ async def test_coordinator_records_browser_automation_fallback_to_host_tools() -
     assert profile.runtime_fallback_chain == [RuntimeKind.BROWSER_AUTOMATION, RuntimeKind.HOST_TOOLS]
     assert profile.runtime_resolution_reason is not None
     assert "browser_automation" in profile.runtime_resolution_reason
+
+
+@pytest.mark.asyncio
+async def test_coordinator_normalizes_legacy_executor_role_to_coder_profile() -> None:
+    coordinator = Coordinator(AgentProfileStore())
+    task = Task(id="task-3", goal="实现并验证", metadata={"profile": "py-basic"})
+    run = Run(id="run-3", task_id=task.id, session_id="session-3")
+    subtask = SubTask(
+        id="subtask-3",
+        task_id=task.id,
+        name="legacy-executor-implementation",
+        description="Implement using a legacy executor role.",
+        role=AgentRole.EXECUTOR,
+        preferred_strategy="build_app",
+        required_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC],
+        candidate_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
+    )
+
+    [assigned_subtask] = await coordinator.assign(task, run, [subtask])
+    profile = ExecutionProfile.model_validate(assigned_subtask.metadata["execution_profile"])
+
+    assert assigned_subtask.agent_profile_id == "coder-default"
+    assert profile.agent_profile_id == "coder-default"
+    assert profile.role == AgentRole.EXECUTOR

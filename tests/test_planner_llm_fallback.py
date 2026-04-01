@@ -180,6 +180,31 @@ def test_build_subtasks_from_plan_normalizes_role_to_match_strategy_and_profile(
     assert any("Normalized role 'reviewer' to 'writer'" in warning for warning in warnings)
 
 
+def test_build_subtasks_from_plan_normalizes_legacy_executor_role() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-6b", goal="实现功能", metadata={"profile": "py-basic"})
+    run = Run(id="run-6b", task_id=task.id, session_id="session-6b")
+    plan_result = _PlanResult(
+        subtasks=[
+            _PlanSubtaskSpec(
+                name="legacy-executor-step",
+                description="Implement the feature with a legacy role.",
+                role="executor",
+                agent_profile_id=None,
+                preferred_strategy="build_app",
+                required_tool_groups=["project_read", "project_write", "sandbox_exec"],
+            )
+        ]
+    )
+
+    [subtask] = planner._build_subtasks_from_plan(task, run, plan_result)
+
+    assert subtask.role == AgentRole.CODER
+    assert subtask.agent_profile_id == "coder-default"
+    warnings = subtask.metadata.get("planner_validation_warnings") or []
+    assert any("Normalized invalid planner role 'executor' to 'coder'" in warning for warning in warnings)
+
+
 @pytest.mark.parametrize(
     ("agent_profile_id", "expected_profile_id", "expect_warning"),
     [
@@ -236,3 +261,16 @@ def test_agent_factory_registers_native_agentscope_skills() -> None:
     assert resolve_agent_skill_dirs(["task_planning", "build_app"])
     assert "task_planning" in prompt
     assert "build_app" in prompt
+
+
+def test_agent_profile_store_maps_legacy_executor_role_to_coder_default() -> None:
+    store = AgentProfileStore()
+
+    profile = store.resolve_for_subtask(
+        profile_id=None,
+        role=AgentRole.EXECUTOR,
+        preferred_strategy="build_app",
+    )
+
+    assert profile.id == "coder-default"
+    assert profile.role == AgentRole.CODER

@@ -10,13 +10,13 @@ from typing import Any
 
 from agentscope.message import Msg
 
-from swarmmind.agents import AgentProfileStore, OmniAgent, OmniAgentRequest
+from swarmmind.agents import AgentProfileStore, OmniAgentRequest, OmniAgentRunner
 from swarmmind.execution_strategies import CallbackStrategy, ExecutionStrategyRegistry, StrategyResult
 from swarmmind.events import EventBus
 from swarmmind.memory import LongTermMemoryBase
 from swarmmind.models.artifact import Artifact, ArtifactType
 from swarmmind.models.agent_profile import AgentProfile, HandoffContextMode
-from swarmmind.models.capability import AgentRole, RuntimeKind
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolExecutionContract, canonicalize_agent_role
 from swarmmind.models.event import DomainEvent
 from swarmmind.models.execution import (
     ExecutionProfile,
@@ -101,7 +101,7 @@ class ExecutionRunner:
         self._user_prompt_template = user_prompt_template
         self._fallback_content_template = fallback_content_template
         self._long_term_memory = long_term_memory
-        self._omni_agent = OmniAgent(
+        self._omni_agent = OmniAgentRunner(
             model_name=model_name,
             api_key=model_api_key,
             base_url=model_base_url,
@@ -258,15 +258,15 @@ class ExecutionRunner:
     def _runtime_required_tool_names(self, subtask) -> set[str]:
         execution_profile = self._load_execution_profile(subtask)
         strategy_name = self._resolve_strategy_name(subtask)
+        role = canonicalize_agent_role(subtask.role)
         required: set[str] = set()
         if execution_profile.resolved_runtime_kind == RuntimeKind.SANDBOX:
             required.add("sandbox_exec")
         if strategy_name in {"verification", "review"}:
             required.add("artifact_read")
-        if self._long_term_memory is not None and subtask.role in {
+        if self._long_term_memory is not None and role in {
             AgentRole.PLANNER,
             AgentRole.CODER,
-            AgentRole.EXECUTOR,
             AgentRole.WRITER,
             AgentRole.RESEARCHER,
             AgentRole.REVIEWER,
@@ -294,6 +294,13 @@ class ExecutionRunner:
                 name="sandbox_exec",
                 description="Execute a command inside an acquired sandbox lease.",
                 groups=["sandbox_exec"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.SANDBOX,
+                    allowed_runtimes=[RuntimeKind.SANDBOX],
+                    audit_required=True,
+                    dangerous=True,
+                    sandbox_only=True,
+                ),
             )
         if "artifact_read" not in existing:
             self._tool_registry.register(
@@ -301,6 +308,11 @@ class ExecutionRunner:
                 name="artifact_read",
                 description="Read artifacts associated with dependency subtasks.",
                 groups=["artifact_read"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.HOST_TOOLS,
+                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+                    read_only=True,
+                ),
             )
         if "memory_lookup" not in existing:
             self._tool_registry.register(
@@ -308,6 +320,11 @@ class ExecutionRunner:
                 name="memory_lookup",
                 description="Retrieve related long-term memory items.",
                 groups=["memory_lookup"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.HOST_TOOLS,
+                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+                    read_only=True,
+                ),
             )
         if "memory_write" not in existing:
             self._tool_registry.register(
@@ -315,19 +332,86 @@ class ExecutionRunner:
                 name="memory_write",
                 description="Store a concise long-term memory summary.",
                 groups=["memory_lookup"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.HOST_TOOLS,
+                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+                    audit_required=True,
+                ),
             )
         if "project_read" not in existing:
-            self._tool_registry.register(read_file, name="project_read", description="Read a project file.", groups=["project_read"])
+            self._tool_registry.register(
+                read_file,
+                name="project_read",
+                description="Read a project file.",
+                groups=["project_read"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.HOST_TOOLS,
+                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+                    read_only=True,
+                ),
+            )
         if "project_write" not in existing:
-            self._tool_registry.register(write_file, name="project_write", description="Write a project file.", groups=["project_write"])
+            self._tool_registry.register(
+                write_file,
+                name="project_write",
+                description="Write a project file.",
+                groups=["project_write"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.HOST_TOOLS,
+                    allowed_runtimes=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+                    audit_required=True,
+                ),
+            )
         if "project_list" not in existing:
-            self._tool_registry.register(list_files, name="project_list", description="List project files.", groups=["project_read"])
+            self._tool_registry.register(
+                list_files,
+                name="project_list",
+                description="List project files.",
+                groups=["project_read"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.HOST_TOOLS,
+                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+                    read_only=True,
+                ),
+            )
         if "project_exists" not in existing:
-            self._tool_registry.register(file_exists, name="project_exists", description="Check whether a project file exists.", groups=["project_read"])
+            self._tool_registry.register(
+                file_exists,
+                name="project_exists",
+                description="Check whether a project file exists.",
+                groups=["project_read"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.HOST_TOOLS,
+                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+                    read_only=True,
+                ),
+            )
         if "web_search" not in existing:
-            self._tool_registry.register(search, name="web_search", description="Search the web.", groups=["web_search"])
+            self._tool_registry.register(
+                search,
+                name="web_search",
+                description="Search the web.",
+                groups=["web_search"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.HOST_TOOLS,
+                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+                    read_only=True,
+                    expensive=True,
+                ),
+            )
         if "browser_read" not in existing:
-            self._tool_registry.register(browser_get, name="browser_read", description="Fetch and summarize a webpage.", groups=["browser_read"])
+            self._tool_registry.register(
+                browser_get,
+                name="browser_read",
+                description="Fetch and summarize a webpage.",
+                groups=["browser_read"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.HOST_TOOLS,
+                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+                    read_only=True,
+                    expensive=True,
+                ),
+            )
         if self._skill_execution_service is not None:
             skill_tool = SkillTool(self._skill_execution_service)
             if "list_skill_scripts" not in existing:
@@ -336,6 +420,11 @@ class ExecutionRunner:
                     name="list_skill_scripts",
                     description="List declared scripts for a skill package.",
                     groups=["project_read"],
+                    contract=ToolExecutionContract(
+                        default_runtime=RuntimeKind.HOST_TOOLS,
+                        allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+                        read_only=True,
+                    ),
                 )
             if "get_skill_details" not in existing:
                 self._tool_registry.register(
@@ -343,6 +432,11 @@ class ExecutionRunner:
                     name="get_skill_details",
                     description="Inspect expanded metadata and resources for a skill package.",
                     groups=["project_read"],
+                    contract=ToolExecutionContract(
+                        default_runtime=RuntimeKind.HOST_TOOLS,
+                        allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+                        read_only=True,
+                    ),
                 )
             if "run_skill_script" not in existing:
                 self._tool_registry.register(
@@ -350,6 +444,14 @@ class ExecutionRunner:
                     name="run_skill_script",
                     description="Execute a declared skill script inside a sandbox with audit context.",
                     groups=["sandbox_exec"],
+                    contract=ToolExecutionContract(
+                        default_runtime=RuntimeKind.SANDBOX,
+                        allowed_runtimes=[RuntimeKind.SANDBOX],
+                        audit_required=True,
+                        dangerous=True,
+                        expensive=True,
+                        sandbox_only=True,
+                    ),
                 )
 
     def _register_default_strategies(self) -> None:
@@ -1423,7 +1525,12 @@ class ExecutionRunner:
             if passed is None or not summary:
                 return ""
             return f"Task goal: {task.goal}\nVerification passed: {passed}\nSummary: {summary}"
-        if subtask.role in {AgentRole.CODER, AgentRole.EXECUTOR, AgentRole.WRITER, AgentRole.RESEARCHER, AgentRole.PLANNER}:
+        if canonicalize_agent_role(subtask.role) in {
+            AgentRole.CODER,
+            AgentRole.WRITER,
+            AgentRole.RESEARCHER,
+            AgentRole.PLANNER,
+        }:
             preview = result.get("stdout_preview") or subtask.description
             return f"Task goal: {task.goal}\nSubtask: {subtask.name}\nOutcome: {preview}"
         return ""
@@ -1534,6 +1641,7 @@ class ExecutionRunner:
                 tool_functions=tool_functions,
                 skill_profiles=skill_profiles,
                 agent_profile=active_profile,
+                execution_profile=execution_profile,
             ),
             publisher=(
                 None
@@ -1588,6 +1696,9 @@ class ExecutionRunner:
         def register(name: str, description: str, func: Any) -> None:
             func.__name__ = name
             func.__doc__ = description
+            contract = self._tool_registry.get_tool_contract(name)
+            if contract is not None:
+                setattr(func, "__swarmmind_tool_contract__", contract.model_copy(deep=True))
             tools.append(func)
 
         if "project_read" in selected_tools:

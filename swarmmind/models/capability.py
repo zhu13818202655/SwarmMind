@@ -19,6 +19,23 @@ class AgentRole(str, Enum):
     WRITER = "writer"
 
 
+LEGACY_AGENT_ROLE_ALIASES: dict[AgentRole, AgentRole] = {
+    AgentRole.EXECUTOR: AgentRole.CODER,
+}
+
+
+def canonicalize_agent_role(role: AgentRole) -> AgentRole:
+    """Collapse legacy roles into the role-first canonical surface."""
+
+    return LEGACY_AGENT_ROLE_ALIASES.get(role, role)
+
+
+def agent_roles_match(left: AgentRole, right: AgentRole) -> bool:
+    """Return whether two roles are equivalent after compatibility normalization."""
+
+    return canonicalize_agent_role(left) == canonicalize_agent_role(right)
+
+
 class ToolGroup(str, Enum):
     """Groups of atomic tools equipped per subtask."""
 
@@ -42,6 +59,24 @@ class RuntimeKind(str, Enum):
     SANDBOX = "sandbox"
     BROWSER_AUTOMATION = "browser_automation"
     AGENT_BACKED = "agent_backed"
+
+
+class ToolExecutionContract(BaseModel):
+    """Execution metadata attached to an atomic tool function."""
+
+    default_runtime: RuntimeKind = Field(
+        default=RuntimeKind.HOST_TOOLS,
+        description="Default runtime used when the agent selects this tool.",
+    )
+    allowed_runtimes: list[RuntimeKind] = Field(
+        default_factory=list,
+        description="Explicit runtimes that may execute this tool.",
+    )
+    read_only: bool = Field(default=False, description="Whether the tool is expected to avoid side effects.")
+    expensive: bool = Field(default=False, description="Whether the tool is materially expensive in time or resources.")
+    audit_required: bool = Field(default=False, description="Whether every invocation should be treated as auditable.")
+    dangerous: bool = Field(default=False, description="Whether the tool can mutate state or execute untrusted actions.")
+    sandbox_only: bool = Field(default=False, description="Whether the tool must run inside a sandbox runtime.")
 
 
 class StrategyProfile(BaseModel):
@@ -96,7 +131,7 @@ DEFAULT_STRATEGY_PROFILES: dict[str, StrategyProfile] = {
             ToolGroup.SANDBOX_EXEC,
             ToolGroup.ARTIFACT_READ,
         ],
-        recommended_roles=[AgentRole.CODER, AgentRole.EXECUTOR],
+        recommended_roles=[AgentRole.CODER],
         candidate_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
         default_skill_profiles=["build_app"],
         sandbox_profile="py-basic",
@@ -146,7 +181,7 @@ DEFAULT_STRATEGY_PROFILES: dict[str, StrategyProfile] = {
         name="agent_backed",
         description="Run a controlled agent runtime backend instead of the default sandbox strategy.",
         tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
-        recommended_roles=[AgentRole.PLANNER, AgentRole.RESEARCHER, AgentRole.WRITER, AgentRole.EXECUTOR],
+        recommended_roles=[AgentRole.PLANNER, AgentRole.RESEARCHER, AgentRole.WRITER, AgentRole.CODER],
         candidate_runtime_kinds=[RuntimeKind.AGENT_BACKED],
     ),
 }
@@ -157,7 +192,6 @@ DEFAULT_ROLE_TOOL_GROUPS: dict[AgentRole, list[ToolGroup]] = {
     AgentRole.PLANNER: [ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
     AgentRole.COORDINATOR: [ToolGroup.TASK_ADMIN, ToolGroup.MEMORY_LOOKUP, ToolGroup.ARTIFACT_READ],
     AgentRole.RESEARCHER: [ToolGroup.WEB_SEARCH, ToolGroup.BROWSER_READ, ToolGroup.PROJECT_READ],
-    AgentRole.EXECUTOR: [ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC],
     AgentRole.CODER: [ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC],
     AgentRole.VERIFIER: [ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
     AgentRole.TESTER: [ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],

@@ -4,7 +4,7 @@ import json
 import uuid
 from typing import Any
 
-from swarmmind.models.capability import AgentRole, ToolGroup
+from swarmmind.models.capability import AgentRole, ToolGroup, canonicalize_agent_role
 from swarmmind.models.task import SubTask
 from swarmmind.prompt_template import TASK_DECOMPOSER_LLM_PROMPT, render_prompt
 
@@ -115,7 +115,7 @@ class TaskDecomposer:
             },
             {
                 "name": "analyze",
-                "role": AgentRole.EXECUTOR,
+                "role": AgentRole.CODER,
                 "preferred_strategy": None,
                 "required_tool_groups": [ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC],
                 "acceptance_criteria": ["Analysis logic is generated"],
@@ -162,6 +162,17 @@ class TaskDecomposer:
     def __init__(self, model_client=None):
         """Initialize with optional LLM client for intelligent decomposition."""
         self._model_client = model_client
+
+    @staticmethod
+    def _normalize_role(value: AgentRole | str | None) -> AgentRole:
+        if isinstance(value, AgentRole):
+            return canonicalize_agent_role(value)
+        if value is None:
+            return AgentRole.CODER
+        try:
+            return canonicalize_agent_role(AgentRole(str(value).strip().lower()))
+        except ValueError:
+            return AgentRole.CODER
 
     def set_model_client(self, model_client) -> None:
         """Set the LLM model client."""
@@ -215,7 +226,7 @@ class TaskDecomposer:
                     task_id=task_id,
                     name=item.get("name", "step"),
                     description=item.get("description", ""),
-                    role=item.get("role", AgentRole.EXECUTOR),
+                    role=self._normalize_role(item.get("role")),
                     preferred_strategy=item.get("preferred_strategy"),
                     required_tool_groups=item.get("required_tool_groups", []),
                     sandbox_profile=item.get("sandbox_profile", "py-basic"),
@@ -274,7 +285,7 @@ class TaskDecomposer:
                     task_id=task_id,
                     name="main",
                     description=goal,
-                    role=AgentRole.EXECUTOR,
+                    role=AgentRole.CODER,
                     preferred_strategy=None,
                     required_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC],
                     sandbox_profile="py-basic",

@@ -337,6 +337,94 @@ async def test_host_tools_runtime_uses_omni_agent_wrapper(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+async def test_host_tools_runtime_propagates_execution_profile_to_omni_runner(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+    identity = await container.identity_resolver.resolve()
+    captured: list[dict[str, object]] = []
+
+    async def fake_run(request, *, publisher=None):
+        captured.append(
+            {
+                "step_kind": request.step_kind,
+                "resolved_runtime_kind": (
+                    request.execution_profile.resolved_runtime_kind.value
+                    if request.execution_profile is not None and request.execution_profile.resolved_runtime_kind is not None
+                    else None
+                ),
+                "allowed_skill_scripts": (
+                    list(request.execution_profile.allowed_skill_scripts)
+                    if request.execution_profile is not None
+                    else []
+                ),
+            }
+        )
+        return OmniAgentResult(status="fallback", reason="test_fallback")
+
+    monkeypatch.setattr(container.execution_runner._omni_agent, "run", fake_run)
+
+    task = Task(
+        id="task-host-tools-profile-1",
+        goal="整理月度金价研究并输出 PPT",
+        metadata={
+            "tenant_id": identity.tenant_id,
+            "principal_id": identity.principal_id,
+            "profile": "py-basic",
+        },
+    )
+    run = Run(id="run-host-tools-profile-1", task_id=task.id, session_id="session-host-tools-profile-1")
+    execution_profile = ExecutionProfile(
+        role=AgentRole.WRITER,
+        preferred_strategy="presentation_delivery",
+        required_tool_groups=[ToolGroup.PRESENTATION, ToolGroup.ARTIFACT_READ, ToolGroup.PROJECT_WRITE],
+        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+        resolved_runtime_kind=RuntimeKind.HOST_TOOLS,
+        runtime_resolution_reason="Test request propagation.",
+        runtime_fallback_chain=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+        preferred_skill_profiles=["pptx"],
+        skill_profiles=["pptx"],
+        allowed_skill_scripts=["pptx:scripts/render.py"],
+    )
+    subtask = SubTask(
+        id="subtask-host-tools-profile-1",
+        task_id=task.id,
+        name="generate-pptx-propagation",
+        description="Generate the final presentation deck.",
+        role=AgentRole.WRITER,
+        preferred_strategy="presentation_delivery",
+        required_tool_groups=[ToolGroup.PRESENTATION, ToolGroup.ARTIFACT_READ, ToolGroup.PROJECT_WRITE],
+        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+        preferred_skill_profiles=["pptx"],
+        acceptance_criteria=["A PPT delivery artifact is produced."],
+        metadata={"run_id": run.id, "plan_source": "test"},
+    )
+    subtask.assign(execution_profile.model_dump(mode="json"), run.id)
+    run.attach_subtasks([subtask.id])
+
+    await container.task_repository.create(task)
+    await container.run_repository.create(run)
+    await container.subtask_repository.save(subtask)
+    await container.replay_repository.create(ReplayRoot(id="replay-host-tools-profile-1", task_id=task.id, run_id=run.id))
+
+    await container.event_bus.publish(
+        DomainEvent(
+            event_id="event-host-tools-profile-1",
+            topic="subtask.assigned",
+            tenant_id=identity.tenant_id,
+            session_id=run.session_id,
+            task_id=task.id,
+            run_id=run.id,
+            subtask_id=subtask.id,
+            payload={"name": subtask.name, "role": subtask.role.value},
+        )
+    )
+
+    assert any(item.get("step_kind") == "content.render" for item in captured)
+    assert any(item.get("resolved_runtime_kind") == RuntimeKind.HOST_TOOLS.value for item in captured)
+    assert any(item.get("allowed_skill_scripts") == ["pptx:scripts/render.py"] for item in captured)
+
+
+@pytest.mark.asyncio
 async def test_execution_policy_denies_tools_outside_profile_allowlist() -> None:
     settings = SwarmMindConfig(sandbox={"provider": "local"})
     container = await build_container(settings)

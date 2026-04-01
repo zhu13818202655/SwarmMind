@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from swarmmind.events.bus import EventBus
-from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup, canonicalize_agent_role
 from swarmmind.models.event import DomainEvent
 from swarmmind.models.run import RunPhase
 from swarmmind.models.execution import ReviewDecisionType
@@ -237,7 +237,12 @@ class TaskOrchestrator:
     async def _maybe_generate_failure_repair_chain(self, task, run, subtask: SubTask, event: DomainEvent) -> None:
         if not task.constraints.get("enable_failure_repair"):
             return
-        if subtask.role not in {AgentRole.CODER, AgentRole.EXECUTOR, AgentRole.WRITER, AgentRole.RESEARCHER, AgentRole.PLANNER}:
+        if canonicalize_agent_role(subtask.role) not in {
+            AgentRole.CODER,
+            AgentRole.WRITER,
+            AgentRole.RESEARCHER,
+            AgentRole.PLANNER,
+        }:
             return
         if subtask.metadata.get("repair_generated"):
             return
@@ -375,7 +380,11 @@ class TaskOrchestrator:
             dependency = subtask_map.get(dependency_id)
             if dependency is None:
                 continue
-            if dependency.role in {AgentRole.CODER, AgentRole.EXECUTOR, AgentRole.WRITER, AgentRole.RESEARCHER}:
+            if canonicalize_agent_role(dependency.role) in {
+                AgentRole.CODER,
+                AgentRole.WRITER,
+                AgentRole.RESEARCHER,
+            }:
                 return dependency
             pending_ids.extend(dependency.dependencies)
         return None
