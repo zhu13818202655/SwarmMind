@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from swarmmind.models.agent_profile import AgentProfile, HandoffPolicy, SkillsMode
-from swarmmind.models.capability import AgentRole, ToolGroup
+from swarmmind.models.capability import AgentRole, ToolGroup, agent_roles_match, canonicalize_agent_role
 
 
 DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
@@ -43,23 +43,6 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         skill_profiles=["verification"],
         allowed_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
         default_strategy="verification",
-        default_sandbox_profile="py-basic",
-    ),
-    "executor-default": AgentProfile(
-        id="executor-default",
-        name="Executor Default",
-        role=AgentRole.EXECUTOR,
-        description="Default execution profile for sandbox-backed runtime tasks.",
-        skill_mode=SkillsMode.INCLUSIVE,
-        skill_profiles=["build_app"],
-        allowed_tool_groups=[
-            ToolGroup.PROJECT_READ,
-            ToolGroup.PROJECT_WRITE,
-            ToolGroup.SANDBOX_EXEC,
-            ToolGroup.ARTIFACT_READ,
-            ToolGroup.MEMORY_LOOKUP,
-        ],
-        default_strategy="build_app",
         default_sandbox_profile="py-basic",
     ),
     "tester-default": AgentProfile(
@@ -119,7 +102,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
     "agent-backed-default": AgentProfile(
         id="agent-backed-default",
         name="Agent Backed Default",
-        role=AgentRole.EXECUTOR,
+        role=AgentRole.CODER,
         description="Controlled profile for the reserved agent-backed execution strategy.",
         skill_mode=SkillsMode.ALL,
         allowed_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
@@ -132,7 +115,7 @@ DEFAULT_ROLE_PROFILE_IDS: dict[AgentRole, str] = {
     AgentRole.PLANNER: "planner-default",
     AgentRole.COORDINATOR: "planner-default",
     AgentRole.RESEARCHER: "researcher-default",
-    AgentRole.EXECUTOR: "executor-default",
+    AgentRole.EXECUTOR: "coder-default",
     AgentRole.CODER: "coder-default",
     AgentRole.VERIFIER: "verifier-default",
     AgentRole.TESTER: "tester-default",
@@ -167,20 +150,23 @@ class AgentProfileStore:
         role: AgentRole,
         preferred_strategy: str | None = None,
     ) -> AgentProfile:
+        canonical_role = canonicalize_agent_role(role)
         if profile_id:
             profile = self.get(profile_id)
             if profile is None:
                 raise ValueError(f"Agent profile not found: {profile_id}")
-            if profile.role in {role, AgentRole.EXECUTOR}:
-                return profile
+            if agent_roles_match(profile.role, canonical_role):
+                if profile.role == canonical_role:
+                    return profile
+                return profile.model_copy(update={"role": canonical_role})
 
         if preferred_strategy == "agent_backed":
             profile = self.get("agent-backed-default")
             if profile is not None:
-                return profile
+                return profile.model_copy(update={"role": canonical_role})
 
-        default_profile_id = DEFAULT_ROLE_PROFILE_IDS.get(role)
+        default_profile_id = DEFAULT_ROLE_PROFILE_IDS.get(canonical_role)
         profile = self.get(default_profile_id)
         if profile is None:
-            raise ValueError(f"No default agent profile for role: {role}")
+            raise ValueError(f"No default agent profile for role: {canonical_role}")
         return profile

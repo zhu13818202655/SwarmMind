@@ -93,7 +93,7 @@ class SubTask(BaseModel):
     status: SubTaskStatus = Field(default=SubTaskStatus.QUEUED)
     agent_id: str | None = Field(default=None, description="Agent assigned to this sub-task")
     agent_profile_id: str | None = Field(default=None, description="Preferred agent profile for this sub-task")
-    role: AgentRole = Field(default=AgentRole.EXECUTOR, description="Logical executor role")
+    role: AgentRole = Field(default=AgentRole.CODER, description="Logical agent role")
     preferred_strategy: str | None = Field(default=None, description="Preferred runtime strategy profile")
     required_tool_groups: list[ToolGroup] = Field(
         default_factory=list,

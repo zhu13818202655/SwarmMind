@@ -12,7 +12,6 @@ PLANNER_SUPPORTED_ROLES = (
     "reviewer",
     "researcher",
     "writer",
-    "executor",
 )
 PLANNER_ROLE_ENUM = "|".join(PLANNER_SUPPORTED_ROLES)
 PLANNER_TOOL_GROUP_ENUM = "|".join(tool_group.value for tool_group in ToolGroup)

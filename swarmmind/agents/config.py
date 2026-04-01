@@ -21,7 +21,7 @@ class AgentConfig(BaseModel):
     """Agent configuration."""
 
     name: str = Field(default="main", description="Agent name")
-    role: AgentRole = Field(default=AgentRole.EXECUTOR, description="Logical agent role")
+    role: AgentRole = Field(default=AgentRole.CODER, description="Logical agent role")
     scope_config: AgentScopeConfig = Field(default_factory=AgentScopeConfig)
     max_steps: int = Field(default=100, description="Max steps")
     memory_config: dict[str, Any] = Field(

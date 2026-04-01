@@ -15,7 +15,15 @@ from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
 from swarmmind.memory import LongTermMemoryBase
-from swarmmind.models.capability import AgentRole, DEFAULT_ROLE_TOOL_GROUPS, DEFAULT_STRATEGY_PROFILES, RuntimeKind, ToolGroup
+from swarmmind.models.capability import (
+    AgentRole,
+    DEFAULT_ROLE_TOOL_GROUPS,
+    DEFAULT_STRATEGY_PROFILES,
+    RuntimeKind,
+    ToolGroup,
+    agent_roles_match,
+    canonicalize_agent_role,
+)
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
 from swarmmind.prompt_template import (
@@ -34,7 +42,6 @@ PLANNER_ALLOWED_ROLES: set[AgentRole] = {
     AgentRole.REVIEWER,
     AgentRole.RESEARCHER,
     AgentRole.WRITER,
-    AgentRole.EXECUTOR,
 }
 
 
@@ -333,7 +340,7 @@ class Planner:
         if not value:
             return AgentRole.CODER
         try:
-            role = AgentRole(str(value).strip().lower())
+            role = canonicalize_agent_role(AgentRole(str(value).strip().lower()))
         except ValueError:
             return AgentRole.CODER
         if role not in PLANNER_ALLOWED_ROLES:
@@ -377,7 +384,7 @@ class Planner:
 
     @staticmethod
     def _default_tool_groups_for_role(role: AgentRole) -> list[ToolGroup]:
-        return list(DEFAULT_ROLE_TOOL_GROUPS.get(role, [ToolGroup.PROJECT_READ]))
+        return list(DEFAULT_ROLE_TOOL_GROUPS.get(canonicalize_agent_role(role), [ToolGroup.PROJECT_READ]))
 
     @staticmethod
     def _default_runtime_kinds_for_strategy(preferred_strategy: str | None, tool_groups: list[ToolGroup]) -> list[RuntimeKind]:
@@ -424,7 +431,7 @@ class Planner:
             requested_profile = self._agent_profile_store.get(requested_profile_id)
             if requested_profile is None:
                 warnings.append(f"Requested agent profile '{requested_profile_id}' does not exist; using role default.")
-            elif requested_profile.role not in {role, AgentRole.EXECUTOR}:
+            elif not agent_roles_match(requested_profile.role, role):
                 warnings.append(
                     f"Requested agent profile '{requested_profile_id}' is incompatible with role '{role.value}'; using a compatible profile."
                 )
@@ -504,9 +511,8 @@ class Planner:
             AgentRole.REVIEWER: "review",
             AgentRole.RESEARCHER: "research",
             AgentRole.WRITER: "write_report",
-            AgentRole.EXECUTOR: "build_app",
         }
-        return role_defaults.get(role, "build_app")
+        return role_defaults.get(canonicalize_agent_role(role), "build_app")
 
     def _plan_with_rules(self, task: Task, run: Run) -> list[SubTask]:
         goal = task.goal.lower()

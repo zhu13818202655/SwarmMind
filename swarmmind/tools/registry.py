@@ -5,7 +5,7 @@ import inspect
 
 from agentscope.tool import Toolkit
 
-from swarmmind.models.capability import ToolGroup
+from swarmmind.models.capability import RuntimeKind, ToolExecutionContract, ToolGroup
 
 
 class ToolRegistry:
@@ -16,6 +16,7 @@ class ToolRegistry:
         self._funcs: dict[str, Callable] = {}
         self._tool_groups: dict[str, list[ToolGroup]] = {}
         self._descriptions: dict[str, str] = {}
+        self._contracts: dict[str, ToolExecutionContract] = {}
 
     def register(
         self,
@@ -23,6 +24,7 @@ class ToolRegistry:
         name: str | None = None,
         description: str | None = None,
         groups: list[ToolGroup | str] | None = None,
+        contract: ToolExecutionContract | dict[str, Any] | None = None,
     ) -> None:
         """Register a function as a tool."""
         tool_name = name or func.__name__
@@ -37,6 +39,11 @@ class ToolRegistry:
                 return await func(*args, **kwargs)
             return func(*args, **kwargs)
 
+        normalized_contract = self._normalize_contract(contract)
+        contract_target = getattr(func, "__func__", func)
+        setattr(contract_target, "__swarmmind_tool_contract__", normalized_contract)
+        setattr(async_wrapper, "__swarmmind_tool_contract__", normalized_contract)
+
         self._toolkit.register_tool_function(
             async_wrapper,
             func_name=tool_name,
@@ -48,6 +55,7 @@ class ToolRegistry:
             group if isinstance(group, ToolGroup) else ToolGroup(group)
             for group in (groups or [])
         ]
+        self._contracts[tool_name] = normalized_contract
 
     def get_tool(self, name: str) -> Any:
         """Get tool by name."""
@@ -78,6 +86,10 @@ class ToolRegistry:
         """Return the tool groups associated with a tool."""
         return self._tool_groups.get(name, [])
 
+    def get_tool_contract(self, name: str) -> ToolExecutionContract | None:
+        """Return execution metadata associated with a tool."""
+        return self._contracts.get(name)
+
     def get_tool_metadata(self) -> list[dict[str, Any]]:
         """Return tool metadata including tool group assignments."""
         return [
@@ -85,6 +97,7 @@ class ToolRegistry:
                 "name": name,
                 "description": self._descriptions.get(name, ""),
                 "groups": [group.value for group in self._tool_groups.get(name, [])],
+                "contract": self._contracts.get(name, ToolExecutionContract()).model_dump(mode="json"),
             }
             for name in self._funcs
         ]
@@ -111,6 +124,27 @@ class ToolRegistry:
         self._funcs.clear()
         self._tool_groups.clear()
         self._descriptions.clear()
+        self._contracts.clear()
+
+    @staticmethod
+    def _normalize_contract(
+        contract: ToolExecutionContract | dict[str, Any] | None,
+    ) -> ToolExecutionContract:
+        if isinstance(contract, ToolExecutionContract):
+            normalized = contract.model_copy(deep=True)
+        elif isinstance(contract, dict):
+            normalized = ToolExecutionContract(**contract)
+        else:
+            normalized = ToolExecutionContract()
+
+        allowed_runtimes = list(normalized.allowed_runtimes)
+        if normalized.sandbox_only:
+            normalized = normalized.model_copy(update={"default_runtime": RuntimeKind.SANDBOX})
+            allowed_runtimes = [RuntimeKind.SANDBOX]
+        elif not allowed_runtimes:
+            allowed_runtimes = [normalized.default_runtime]
+
+        return normalized.model_copy(update={"allowed_runtimes": allowed_runtimes})
 
     @property
     def toolkit(self) -> Toolkit:
