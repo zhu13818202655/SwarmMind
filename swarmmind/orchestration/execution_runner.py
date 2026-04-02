@@ -197,6 +197,7 @@ class ExecutionRunner:
                     payload={"error": str(exc)},
                 )
             )
+            await self._publish_subtask_terminal_events(task, run, subtask, payload={"error": str(exc)})
         finally:
             await self._run_state_service.reconcile(run.id)
 
@@ -623,6 +624,7 @@ class ExecutionRunner:
                     payload=completion_payload,
                 )
             )
+            await self._publish_subtask_terminal_events(task, run, subtask, lease.sandbox_id, completion_payload)
         finally:
             if lease is not None:
                 await self._sandbox_manager.release(lease.lease_id)
@@ -730,6 +732,7 @@ class ExecutionRunner:
                 payload=subtask.result or {},
             )
         )
+        await self._publish_subtask_terminal_events(task, run, subtask, payload=subtask.result or {})
 
     async def _execute_agent_backed_subtask(self, task, run, subtask, event: DomainEvent) -> None:
         await self._execute_omni_agent_subtask(
@@ -839,6 +842,52 @@ class ExecutionRunner:
                 run_id=run.id,
                 subtask_id=subtask.id,
                 payload=subtask.result or {},
+            )
+        )
+        await self._publish_subtask_terminal_events(task, run, subtask, payload=subtask.result or {})
+
+    async def _publish_subtask_terminal_events(
+        self,
+        task,
+        run,
+        subtask,
+        sandbox_id: str | None = None,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        summary_payload = {
+            "name": subtask.name,
+            "status": subtask.status,
+            "role": subtask.role,
+            "error": subtask.error,
+            **(payload or {}),
+        }
+        await self._event_bus.publish(
+            DomainEvent(
+                event_id=str(uuid.uuid4()),
+                topic="subtask.terminal",
+                tenant_id=task.metadata.get("tenant_id", "local"),
+                session_id=run.session_id,
+                task_id=task.id,
+                run_id=run.id,
+                subtask_id=subtask.id,
+                sandbox_id=sandbox_id,
+                payload=summary_payload,
+            )
+        )
+        await self._event_bus.publish(
+            DomainEvent(
+                event_id=str(uuid.uuid4()),
+                topic="subtask.summary",
+                tenant_id=task.metadata.get("tenant_id", "local"),
+                session_id=run.session_id,
+                task_id=task.id,
+                run_id=run.id,
+                subtask_id=subtask.id,
+                sandbox_id=sandbox_id,
+                payload={
+                    **summary_payload,
+                    "result": self._summarize_tool_payload(subtask.result),
+                },
             )
         )
 

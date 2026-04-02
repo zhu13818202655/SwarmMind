@@ -141,3 +141,40 @@ class RunStateService:
                 },
             )
         )
+
+        if run.status in {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}:
+            terminal_payload = {
+                "status": run.status,
+                "phase": run.phase,
+                "task_status": task.status,
+                "artifact_count": len(artifacts),
+                "subtask_count": len(subtasks),
+                "error": run.error,
+            }
+            await self._event_bus.publish(
+                DomainEvent(
+                    event_id=str(uuid.uuid4()),
+                    topic="run.terminal",
+                    tenant_id=task.metadata.get("tenant_id", "local"),
+                    session_id=run.session_id,
+                    task_id=task.id,
+                    run_id=run.id,
+                    payload=terminal_payload,
+                )
+            )
+            await self._event_bus.publish(
+                DomainEvent(
+                    event_id=str(uuid.uuid4()),
+                    topic="run.summary",
+                    tenant_id=task.metadata.get("tenant_id", "local"),
+                    session_id=run.session_id,
+                    task_id=task.id,
+                    run_id=run.id,
+                    payload={
+                        **terminal_payload,
+                        "completed_subtasks": [subtask.name for subtask in succeeded],
+                        "failed_subtasks": [subtask.name for subtask in failed],
+                        "pending_subtasks": [subtask.name for subtask in pending],
+                    },
+                )
+            )

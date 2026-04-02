@@ -15,3 +15,6 @@ class ArtifactRepository(Protocol):
 
     async def list_for_run(self, run_id: str) -> list[Artifact]:
         ...
+
+    async def list_for_subtask(self, run_id: str, subtask_id: str) -> list[Artifact]:
+        ...

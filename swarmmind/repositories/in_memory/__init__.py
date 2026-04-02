@@ -110,6 +110,13 @@ class InMemoryArtifactRepository:
     async def list_for_run(self, run_id: str) -> list[Artifact]:
         return [artifact for artifact in self._items.values() if artifact.run_id == run_id]
 
+    async def list_for_subtask(self, run_id: str, subtask_id: str) -> list[Artifact]:
+        return [
+            artifact
+            for artifact in self._items.values()
+            if artifact.run_id == run_id and artifact.subtask_id == subtask_id
+        ]
+
 
 class InMemoryReplayRepository:
     """In-memory replay store."""

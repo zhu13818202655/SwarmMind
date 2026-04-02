@@ -98,6 +98,29 @@ class RunEventsResponse(BaseModel):
     events: list[RunEventResponse] = Field(default_factory=list)
 
 
+class SubTaskEventsResponse(BaseModel):
+    """Paged replay events for a single subtask."""
+
+    run_id: str
+    subtask_id: str
+    next_cursor: int
+    events: list[RunEventResponse] = Field(default_factory=list)
+
+
+class ArtifactResponse(BaseModel):
+    """Serialized artifact item."""
+
+    artifact: dict[str, Any]
+
+
+class SubTaskArtifactsResponse(BaseModel):
+    """Artifacts associated with a single subtask."""
+
+    run_id: str
+    subtask_id: str
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+
+
 async def resolve_identity(request: Request):
     """Resolve the current identity context from the container."""
     container = request.app.state.container
@@ -152,8 +175,38 @@ def to_task_detail_response(task_detail: TaskDetail) -> TaskDetailResponse:
 
 def build_run_events_response(run_id: str, replay, cursor: int, limit: int) -> RunEventsResponse:
     """Build a paged replay response from a replay root."""
+    events, next_cursor = _build_event_page(replay.entries, cursor, limit)
+
+    return RunEventsResponse(
+        run_id=run_id,
+        next_cursor=next_cursor,
+        events=events,
+    )
+
+
+def build_subtask_events_response(run_id: str, subtask_id: str, replay, cursor: int, limit: int) -> SubTaskEventsResponse:
+    """Build a paged replay response filtered to a single subtask."""
+    entries = [entry for entry in replay.entries if entry.payload.get("subtask_id") == subtask_id]
+    events, next_cursor = _build_event_page(entries, cursor, limit)
+
+    return SubTaskEventsResponse(
+        run_id=run_id,
+        subtask_id=subtask_id,
+        next_cursor=next_cursor,
+        events=events,
+    )
+
+
+def replay_contains_subtask(replay, subtask_id: str) -> bool:
+    """Return whether the replay contains at least one event for the subtask."""
+
+    return any(str((entry.payload or {}).get("subtask_id") or "") == subtask_id for entry in replay.entries)
+
+
+def _build_event_page(entries, cursor: int, limit: int) -> tuple[list[RunEventResponse], int]:
+    """Build a paged replay slice from a list of entries."""
     start = max(0, cursor)
-    selected_entries = replay.entries[start : start + max(1, limit)]
+    selected_entries = entries[start : start + max(1, limit)]
 
     events: list[RunEventResponse] = []
     for offset, entry in enumerate(selected_entries):
@@ -165,12 +218,7 @@ def build_run_events_response(run_id: str, replay, cursor: int, limit: int) -> R
                 payload=entry.payload,
             )
         )
-
-    return RunEventsResponse(
-        run_id=run_id,
-        next_cursor=start + len(events),
-        events=events,
-    )
+    return events, start + len(events)
 
 
 def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
@@ -322,18 +370,79 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
         identity = await resolve_identity(raw_request)
         container.authorization_policy.ensure_can_read_run(identity)
 
-        run_detail = await container.query_service.get_run_detail(run_id, identity)
-        if run_detail is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Run not found: {run_id}",
-            )
-
         replay = await container.replay_repository.get_by_run(run_id)
         if replay is None:
+            run_detail = await container.query_service.get_run_detail(run_id, identity)
+            if run_detail is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Run not found: {run_id}",
+                )
             return RunEventsResponse(run_id=run_id, next_cursor=max(0, cursor), events=[])
 
         return build_run_events_response(run_id, replay, cursor, limit)
+
+    @app.get("/v1/runs/{run_id}/subtasks/{subtask_id}/events", response_model=SubTaskEventsResponse)
+    async def get_subtask_events(
+        run_id: str,
+        subtask_id: str,
+        raw_request: Request,
+        cursor: int = 0,
+        limit: int = 100,
+    ):
+        """Get paged replay events for a single subtask within a run."""
+        container = raw_request.app.state.container
+        identity = await resolve_identity(raw_request)
+        container.authorization_policy.ensure_can_read_run(identity)
+
+        replay = await container.replay_repository.get_by_run(run_id)
+        if replay is None:
+            run_detail = await container.query_service.get_run_detail(run_id, identity)
+            if run_detail is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Run not found: {run_id}",
+                )
+            return SubTaskEventsResponse(run_id=run_id, subtask_id=subtask_id, next_cursor=max(0, cursor), events=[])
+
+        if not replay_contains_subtask(replay, subtask_id):
+            subtask = await container.subtask_repository.get(subtask_id)
+            if subtask is None or subtask.metadata.get("run_id") != run_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Subtask not found for run: {subtask_id}",
+                )
+
+        return build_subtask_events_response(run_id, subtask_id, replay, cursor, limit)
+
+    @app.get("/v1/runs/{run_id}/subtasks/{subtask_id}/artifacts", response_model=SubTaskArtifactsResponse)
+    async def get_subtask_artifacts(run_id: str, subtask_id: str, raw_request: Request):
+        """Get artifacts associated with a single subtask within a run."""
+        container = raw_request.app.state.container
+        identity = await resolve_identity(raw_request)
+        container.authorization_policy.ensure_can_read_run(identity)
+
+        artifacts = await container.artifact_repository.list_for_subtask(run_id, subtask_id)
+        if not artifacts:
+            run_detail = await container.query_service.get_run_detail(run_id, identity)
+            if run_detail is None:
+                replay = await container.replay_repository.get_by_run(run_id)
+                if replay is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Run not found: {run_id}",
+                    )
+            if run_detail is not None and not any(subtask.id == subtask_id for subtask in run_detail.subtasks):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Subtask not found for run: {subtask_id}",
+                )
+
+        return SubTaskArtifactsResponse(
+            run_id=run_id,
+            subtask_id=subtask_id,
+            artifacts=[artifact.model_dump(mode="json") for artifact in artifacts],
+        )
 
     @app.get("/v1/runs/{run_id}/stream")
     async def stream_run_events(
@@ -399,6 +508,8 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
                         "run_id": run_id,
                         "status": latest.run.status,
                         "phase": latest.run.phase,
+                        "subtask_count": len(latest.subtasks),
+                        "artifact_count": len(latest.artifacts),
                     }
                     yield (
                         "event: run.terminal\n"

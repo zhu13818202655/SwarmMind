@@ -307,6 +307,13 @@ class PostgresArtifactRepository:
         )
         return [Artifact.model_validate(row["payload"]) for row in rows]
 
+    async def list_for_subtask(self, run_id: str, subtask_id: str) -> list[Artifact]:
+        rows = await self._store.fetch_all(
+            "SELECT payload FROM artifacts WHERE run_id = %s AND subtask_id = %s ORDER BY id",
+            (run_id, subtask_id),
+        )
+        return [Artifact.model_validate(row["payload"]) for row in rows]
+
 
 class PostgresReplayRepository:
     """PostgreSQL replay repository."""
