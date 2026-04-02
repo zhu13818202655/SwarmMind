@@ -9,6 +9,7 @@ from swarmmind.config.schema import (
     PostgresConfig,
     RateLimitConfig,
     RedisConfig,
+    RepositoryConfig,
     SandboxConfig,
     VectorStoreConfig,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "PostgresConfig",
     "RateLimitConfig",
     "RedisConfig",
+    "RepositoryConfig",
     "SandboxConfig",
     "SwarmMindConfig",
     "VectorStoreConfig",

@@ -19,6 +19,8 @@ from swarmmind.orchestration import (
 from swarmmind.query import QueryService
 from swarmmind.repositories import (
     ArtifactRepository,
+    FileArtifactRepository,
+    FileReplayRepository,
     InMemoryArtifactRepository,
     InMemoryReplayRepository,
     InMemoryRunRepository,
@@ -344,13 +346,17 @@ async def _build_repositories(
             PostgresReplayRepository(store),
         )
 
+    artifact_backend = settings.repositories.artifact_backend.strip().lower()
+    replay_backend = settings.repositories.replay_backend.strip().lower()
+    file_base_path = settings.repositories.file_base_path or settings.storage_path
+
     return (
         InMemoryTaskRepository(),
         InMemorySessionRepository(),
         InMemoryRunRepository(),
         InMemorySubTaskRepository(),
-        InMemoryArtifactRepository(),
-        InMemoryReplayRepository(),
+        FileArtifactRepository(file_base_path) if artifact_backend == "file" else InMemoryArtifactRepository(),
+        FileReplayRepository(file_base_path) if replay_backend == "file" else InMemoryReplayRepository(),
     )
 
 

@@ -14,6 +14,7 @@ from swarmmind.repositories.in_memory import (
     InMemorySubTaskRepository,
     InMemoryTaskRepository,
 )
+from swarmmind.repositories.file import FileArtifactRepository, FileReplayRepository
 from swarmmind.repositories.postgres import (
     PostgresArtifactRepository,
     PostgresReplayRepository,
@@ -26,6 +27,8 @@ from swarmmind.repositories.postgres import (
 
 __all__ = [
     "ArtifactRepository",
+    "FileArtifactRepository",
+    "FileReplayRepository",
     "InMemoryArtifactRepository",
     "InMemoryReplayRepository",
     "InMemoryRunRepository",

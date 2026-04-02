@@ -16,6 +16,7 @@ from swarmmind.events import InMemoryEventBus, RedisBufferedEventBus
 from swarmmind.locks import InMemoryLockManager, RedisLockManager
 from swarmmind.memory import InMemoryLongTermMemory
 from swarmmind.repositories import PostgresTaskRepository
+from swarmmind.repositories import FileArtifactRepository, FileReplayRepository
 
 
 @pytest.mark.asyncio
@@ -31,6 +32,22 @@ async def test_build_repositories_uses_postgres_when_enabled_without_init() -> N
     repositories = await _build_repositories(settings)
 
     assert isinstance(repositories[0], PostgresTaskRepository)
+
+
+@pytest.mark.asyncio
+async def test_build_repositories_can_use_file_backed_replay_and_artifacts(tmp_path) -> None:
+    settings = SwarmMindConfig(
+        repositories={
+            "artifact_backend": "file",
+            "replay_backend": "file",
+            "file_base_path": str(tmp_path),
+        }
+    )
+
+    repositories = await _build_repositories(settings)
+
+    assert isinstance(repositories[4], FileArtifactRepository)
+    assert isinstance(repositories[5], FileReplayRepository)
 
 
 def test_infra_builders_switch_to_redis_types_when_enabled() -> None:

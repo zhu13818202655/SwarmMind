@@ -97,6 +97,29 @@ class PostgresConfig(ValidatedDefaultsModel):
         return resolve_env_value(value, "POSTGRES_DSN", "DATABASE_URL")
 
 
+class RepositoryConfig(ValidatedDefaultsModel):
+    """Repository backend configuration for development and testing."""
+
+    replay_backend: str = Field(default="memory", description="Replay repository backend: memory, file, postgres")
+    artifact_backend: str = Field(default="memory", description="Artifact repository backend: memory, file, postgres")
+    file_base_path: str = Field(default="./data", description="Base directory for file-backed repositories")
+
+    @field_validator("replay_backend", mode="before")
+    @classmethod
+    def resolve_replay_backend(cls, value: Any) -> Any:
+        return resolve_env_value(value, "SWARMMIND_REPOSITORIES__REPLAY_BACKEND")
+
+    @field_validator("artifact_backend", mode="before")
+    @classmethod
+    def resolve_artifact_backend(cls, value: Any) -> Any:
+        return resolve_env_value(value, "SWARMMIND_REPOSITORIES__ARTIFACT_BACKEND")
+
+    @field_validator("file_base_path", mode="before")
+    @classmethod
+    def resolve_file_base_path(cls, value: Any) -> Any:
+        return resolve_env_value(value, "SWARMMIND_REPOSITORIES__FILE_BASE_PATH")
+
+
 class RedisConfig(ValidatedDefaultsModel):
     """Redis infrastructure configuration."""
 

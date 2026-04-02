@@ -21,6 +21,7 @@ from swarmmind.config.schema import (
     PostgresConfig,
     RateLimitConfig,
     RedisConfig,
+    RepositoryConfig,
     SandboxConfig,
     VectorStoreConfig,
 )
@@ -64,6 +65,7 @@ class SwarmMindConfig(BaseSettings):
 
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     postgres: PostgresConfig = Field(default_factory=PostgresConfig)
+    repositories: RepositoryConfig = Field(default_factory=RepositoryConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
