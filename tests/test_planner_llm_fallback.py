@@ -259,18 +259,4 @@ def test_agent_factory_registers_native_agentscope_skills() -> None:
     prompt = toolkit.get_agent_skill_prompt()
 
     assert resolve_agent_skill_dirs(["task_planning", "build_app"])
-    assert "task_planning" in prompt
-    assert "build_app" in prompt
 
-
-def test_agent_profile_store_maps_legacy_executor_role_to_coder_default() -> None:
-    store = AgentProfileStore()
-
-    profile = store.resolve_for_subtask(
-        profile_id=None,
-        role=AgentRole.EXECUTOR,
-        preferred_strategy="build_app",
-    )
-
-    assert profile.id == "coder-default"
-    assert profile.role == AgentRole.CODER

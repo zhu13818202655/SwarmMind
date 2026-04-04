@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from swarmmind.models.capability import DEFAULT_STRATEGY_PROFILES, RuntimeKind, ToolGroup
 from swarmmind.prompt_template.base import PromptTemplate
 
 
 PLANNER_SUPPORTED_ROLES = (
-    "planner",   # 规划者，负责将目标拆解为子任务，并为每个子任务分配角色、策略、工具和运行时要求
     "coder",     # 编码者，负责编写代码实现任务
   	"verifier",  # 验证者，负责验证任务的正确性和完整性
     "tester",    # 测试者，负责编写和执行测试用例
@@ -14,26 +12,62 @@ PLANNER_SUPPORTED_ROLES = (
     "writer",    # 撰写者，负责编写文档和报告，主要使用撰写工具和阅读工具，写成PPT、Word、Excel、Markdown、HTML等格式
 )
 PLANNER_ROLE_ENUM = "|".join(PLANNER_SUPPORTED_ROLES)
-PLANNER_TOOL_GROUP_ENUM = "|".join(tool_group.value for tool_group in ToolGroup)
-PLANNER_RUNTIME_KIND_ENUM = "|".join(runtime_kind.value for runtime_kind in RuntimeKind)
-PLANNER_STRATEGY_ENUM = "|".join(DEFAULT_STRATEGY_PROFILES)
+
+
+# =============================================================================
+# Few-shot 示例（展示 description 如何在大角色内细分职责 + DAG 依赖）
+# =============================================================================
 PLANNER_EXAMPLE_JSON = """{
-  \"subtasks\": [
+  "subtasks": [
     {
-      \"name\": \"draft-release-summary\",
-      \"description\": \"研究本次发布变更并撰写一份简明的发布摘要。\",
-      \"agent_profile_id\": \"writer-default\",
-      \"role\": \"writer\",
-      \"preferred_strategy\": \"write_report\",
-      \"required_tool_groups\": [\"web_search\", \"browser_read\", \"project_write\"],
-      \"candidate_runtime_kinds\": [\"llm_only\", \"host_tools\"],
-      \"preferred_skill_profiles\": [\"write_report\"],
-      \"sandbox_profile\": null,
-      \"acceptance_criteria\": [
-        \"摘要覆盖了要求的发布范围。\",
-        \"输出内容可直接发布，且不存在空占位符。\"
+      "name": "design-system-architecture",
+      "description": "负责系统整体架构设计：定义模块边界、接口契约、数据库模型与技术选型。",
+      "role": "coder",
+      "acceptance_criteria": [
+        "包含模块关系图或接口定义文档。",
+        "技术选型说明了对比理由。"
       ],
-      \"dependencies\": []
+      "dependencies": []
+    },
+    {
+      "name": "implement-core-module",
+      "description": "根据架构设计实现核心模块的业务逻辑代码。",
+      "role": "coder",
+      "acceptance_criteria": [
+        "代码通过编译/解释且无运行时错误。",
+        "关键路径包含基础异常处理。"
+      ],
+      "dependencies": ["design-system-architecture"]
+    },
+    {
+      "name": "setup-ci-pipeline",
+      "description": "编写 CI/CD 配置文件（如 GitHub Actions）并验证构建流程可正常跑通。",
+      "role": "coder",
+      "acceptance_criteria": [
+        "CI 配置文件已提交到仓库。",
+        "在测试分支上触发构建成功。"
+      ],
+      "dependencies": ["implement-core-module"]
+    },
+    {
+      "name": "write-module-tests",
+      "description": "为核心模块编写单元测试和集成测试。",
+      "role": "tester",
+      "acceptance_criteria": [
+        "覆盖正常路径与至少 2 种异常路径。",
+        "测试用例在本地可直接运行。"
+      ],
+      "dependencies": ["implement-core-module"]
+    },
+    {
+      "name": "verify-release-readiness",
+      "description": "验证代码、测试、CI 流程是否满足发布标准。",
+      "role": "verifier",
+      "acceptance_criteria": [
+        "所有子任务的验收标准已满足。",
+        "未发现阻塞性缺陷。"
+      ],
+      "dependencies": ["write-module-tests", "setup-ci-pipeline"]
     }
   ]
 }"""
@@ -41,53 +75,54 @@ PLANNER_EXAMPLE_JSON = """{
 
 PLANNER_SYSTEM_PROMPT = PromptTemplate(
     name="planner_system",
-  	template="""你是一个规划代理，需要将目标拆解为可执行的 JSON 任务 DAG，只返回严格的 JSON。""",
+    template="""你是一个规划代理，负责将用户目标拆解为结构化的子任务 DAG。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。""",
 )
 
 PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
     name="planner_task_decomposition",
-  	template=f"""请根据输入生成一个符合如下结构的计划 JSON：
+    template=f"""请根据输入生成一个符合如下结构的计划 JSON。
+
+输出 Schema：
 {{
   "subtasks": [
     {{
       "name": "string-kebab-case",
       "description": "string",
-      "agent_profile_id": "string|null",
       "role": "{PLANNER_ROLE_ENUM}",
-      "preferred_strategy": "{PLANNER_STRATEGY_ENUM}|null",
-      "required_tool_groups": ["{PLANNER_TOOL_GROUP_ENUM}"],
-      "candidate_runtime_kinds": ["{PLANNER_RUNTIME_KIND_ENUM}"],
-      "preferred_skill_profiles": ["string"],
-      "sandbox_profile": "string|null",
       "acceptance_criteria": ["string"],
-      "dependencies": ["subtask-name"]
+      "dependencies": ["subtask-name"],
+      "execution_overrides": {{ "sandbox_profile": "string|null", "runtime_kind": "string|null" }} | null
     }}
   ]
 }}
 
+字段说明：
+- `name`: 子任务唯一标识。
+- `description`: 具体、可执行的任务描述。
+  注意：当 `role` 为 `coder` 时，请在这里明确说明它负责的是**架构设计**、**核心编码**、**Bug 排查**还是 **CI/CD/部署脚本**。不同 coder 子任务各司其职即可，无需拆成多个不同 `role`。
+- `role`: 只能是 {PLANNER_ROLE_ENUM} 之一。
+- `acceptance_criteria`: 明确的验收标准，供下游验证者判断任务完成质量。
+- `dependencies`: 依赖的其它子任务 `name` 列表。必须无环，且只能引用真实存在的子任务。
+- `execution_overrides`: **仅在需要覆盖该 role 的默认执行配置时使用**。例如：
+  - 某个 `coder` 需要运行不可信代码 → `{{"sandbox_profile": "python-sandbox", "runtime_kind": "sandbox"}}`
+  - 绝大多数情况下直接设为 `null` 或省略。
+
 规则：
-1) 子任务必须足够精简，并且可执行、可验证。
-2) 依赖关系必须无环。
-3) 当任务要求测试或验证时，必须包含验证类子任务。
-4) 简单目标优先使用更少的子任务，复杂目标可以使用更丰富的 DAG。
-5) 确保每个子任务都有具体的验收标准。
-6) 只有在子任务确实需要显式执行配置时才使用 `agent_profile_id`；否则请省略或设为 null。
-7) `agent_profile_id` 必须来自可用配置列表，并且要与子任务角色兼容。
-8) 可选字段绝不能使用空字符串；请使用 null 或直接省略。
-9) `role`、`preferred_strategy` 和 `agent_profile_id` 必须彼此兼容。
-10) `write_report` 通常应使用 `writer`，`research` 通常应使用 `researcher` 或 `writer`。
-11) 当 `research` 任务需要相关能力时，应优先选择 `web_search`、`browser_read` 和 `project_read`。
-12) `candidate_runtime_kinds` 应按优先级顺序列出 1 到 n 个运行时选项。
-13) 除非沙箱确实是合理的运行时候选项，否则 `sandbox_profile` 应为 null。
-14) `preferred_skill_profiles` 表示可复用的能力包，不需要与 `preferred_strategy` 一一对应。
+1. 子任务必须精简、可执行、可验证。
+2. 依赖关系必须构成 DAG，禁止循环依赖。
+3. 任务需要测试时，必须显式产出 `tester` 子任务；需要验证时，必须显式产出 `verifier` 子任务。
+4. 简单目标（5 分钟内可完成）优先不拆；复杂目标再展开为丰富 DAG，子任务总数建议 2-6 个，不要超过 8 个。
+5. 每个子任务必须有具体且无歧义的验收标准。
+6. 不需要的字段请使用 `null` 或省略，绝不要使用空字符串。
 
 合法 JSON 示例：
 {PLANNER_EXAMPLE_JSON}
 
+在正式输出 JSON 之前，请完成以下自检：
+1. `dependencies` 中的 `name` 是否都存在于 `subtasks` 里？
+2. 是否存在循环依赖？
+3. 输出是否只有纯 JSON，没有任何 Markdown 标记？
+
 输入：
-- 目标：{{{{ task_goal }}}}
-- 约束 JSON：{{{{ constraints_json }}}}
-- 首选 Profile：{{{{ profile }}}}
-- 首选策略：{{{{ preferred_strategy }}}}
-- 可用 Agent Profiles JSON：{{{{ agent_profiles_json }}}}""",
+- 目标：{{{{ task_goal }}}}"""  # TODO 后续添加用户上传skill，知识库等上下文输入
 )

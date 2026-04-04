@@ -1,5 +1,3 @@
-"""Execution runner for assigned subtasks."""
-
 from __future__ import annotations
 
 import json
@@ -8,15 +6,13 @@ import shlex
 import uuid
 from typing import Any
 
-from agentscope.message import Msg
-
 from swarmmind.agents import AgentProfileStore, OmniAgentRequest, OmniAgentRunner
 from swarmmind.execution_strategies import CallbackStrategy, ExecutionStrategyRegistry, StrategyResult
 from swarmmind.events import EventBus
 from swarmmind.memory import LongTermMemoryBase
 from swarmmind.models.artifact import Artifact, ArtifactType
 from swarmmind.models.agent_profile import AgentProfile, HandoffContextMode
-from swarmmind.models.capability import AgentRole, RuntimeKind, ToolExecutionContract, canonicalize_agent_role
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolExecutionContract
 from swarmmind.models.event import DomainEvent
 from swarmmind.models.execution import (
     ExecutionProfile,
@@ -259,7 +255,7 @@ class ExecutionRunner:
     def _runtime_required_tool_names(self, subtask) -> set[str]:
         execution_profile = self._load_execution_profile(subtask)
         strategy_name = self._resolve_strategy_name(subtask)
-        role = canonicalize_agent_role(subtask.role)
+        role = subtask.role
         required: set[str] = set()
         if execution_profile.resolved_runtime_kind == RuntimeKind.SANDBOX:
             required.add("sandbox_exec")
@@ -1574,7 +1570,7 @@ class ExecutionRunner:
             if passed is None or not summary:
                 return ""
             return f"Task goal: {task.goal}\nVerification passed: {passed}\nSummary: {summary}"
-        if canonicalize_agent_role(subtask.role) in {
+        if subtask.role in {
             AgentRole.CODER,
             AgentRole.WRITER,
             AgentRole.RESEARCHER,

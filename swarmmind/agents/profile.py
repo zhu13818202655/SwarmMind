@@ -1,10 +1,7 @@
-"""Agent profile store and built-in runtime profile defaults."""
-
 from __future__ import annotations
 
 from swarmmind.models.agent_profile import AgentProfile, HandoffPolicy, SkillsMode
-from swarmmind.models.capability import AgentRole, ToolGroup, agent_roles_match, canonicalize_agent_role
-
+from swarmmind.models.capability import AgentRole, ToolGroup
 
 DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
     "planner-default": AgentProfile(
@@ -115,7 +112,6 @@ DEFAULT_ROLE_PROFILE_IDS: dict[AgentRole, str] = {
     AgentRole.PLANNER: "planner-default",
     AgentRole.COORDINATOR: "planner-default",
     AgentRole.RESEARCHER: "researcher-default",
-    AgentRole.EXECUTOR: "coder-default",
     AgentRole.CODER: "coder-default",
     AgentRole.VERIFIER: "verifier-default",
     AgentRole.TESTER: "tester-default",
@@ -150,23 +146,20 @@ class AgentProfileStore:
         role: AgentRole,
         preferred_strategy: str | None = None,
     ) -> AgentProfile:
-        canonical_role = canonicalize_agent_role(role)
         if profile_id:
             profile = self.get(profile_id)
             if profile is None:
                 raise ValueError(f"Agent profile not found: {profile_id}")
-            if agent_roles_match(profile.role, canonical_role):
-                if profile.role == canonical_role:
-                    return profile
-                return profile.model_copy(update={"role": canonical_role})
+            if profile.role == role:
+                return profile
 
         if preferred_strategy == "agent_backed":
             profile = self.get("agent-backed-default")
             if profile is not None:
-                return profile.model_copy(update={"role": canonical_role})
+                return profile.model_copy(update={"role": role})
 
-        default_profile_id = DEFAULT_ROLE_PROFILE_IDS.get(canonical_role)
+        default_profile_id = DEFAULT_ROLE_PROFILE_IDS.get(role)
         profile = self.get(default_profile_id)
         if profile is None:
-            raise ValueError(f"No default agent profile for role: {canonical_role}")
+            raise ValueError(f"No default agent profile for role: {role}")
         return profile

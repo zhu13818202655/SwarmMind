@@ -21,8 +21,6 @@ from swarmmind.models.capability import (
     DEFAULT_STRATEGY_PROFILES,
     RuntimeKind,
     ToolGroup,
-    agent_roles_match,
-    canonicalize_agent_role,
 )
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
@@ -334,7 +332,7 @@ class Planner:
         if not value:
             return AgentRole.CODER
         try:
-            role = canonicalize_agent_role(AgentRole(str(value).strip().lower()))
+            role = AgentRole(str(value).strip().lower())
         except ValueError:
             return AgentRole.CODER
         if role not in PLANNER_ALLOWED_ROLES:
@@ -378,7 +376,7 @@ class Planner:
 
     @staticmethod
     def _default_tool_groups_for_role(role: AgentRole) -> list[ToolGroup]:
-        return list(DEFAULT_ROLE_TOOL_GROUPS.get(canonicalize_agent_role(role), [ToolGroup.PROJECT_READ]))
+        return list(DEFAULT_ROLE_TOOL_GROUPS.get(role, [ToolGroup.PROJECT_READ]))
 
     @staticmethod
     def _default_runtime_kinds_for_strategy(preferred_strategy: str | None, tool_groups: list[ToolGroup]) -> list[RuntimeKind]:
@@ -425,7 +423,7 @@ class Planner:
             requested_profile = self._agent_profile_store.get(requested_profile_id)
             if requested_profile is None:
                 warnings.append(f"Requested agent profile '{requested_profile_id}' does not exist; using role default.")
-            elif not agent_roles_match(requested_profile.role, role):
+            elif requested_profile.role == role:
                 warnings.append(
                     f"Requested agent profile '{requested_profile_id}' is incompatible with role '{role.value}'; using a compatible profile."
                 )
@@ -506,7 +504,7 @@ class Planner:
             AgentRole.RESEARCHER: "research",
             AgentRole.WRITER: "write_report",
         }
-        return role_defaults.get(canonicalize_agent_role(role), "build_app")
+        return role_defaults.get(role, "build_app")
 
 
 class _PlanSubtaskSpec(BaseModel):

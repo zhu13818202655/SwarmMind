@@ -8,8 +8,6 @@ from swarmmind.models.capability import (
 	DEFAULT_STRATEGY_PROFILES,
 	StrategyProfile,
 	ToolGroup,
-	agent_roles_match,
-	canonicalize_agent_role,
 )
 from swarmmind.models.event import DomainEvent
 from swarmmind.models.execution import ExecutionProfile
@@ -23,8 +21,6 @@ __all__ = [
 	"AgentProfile",
 	"Artifact",
 	"ArtifactType",
-	"agent_roles_match",
-	"canonicalize_agent_role",
 	"DEFAULT_ROLE_TOOL_GROUPS",
 	"DEFAULT_STRATEGY_PROFILES",
 	"DomainEvent",

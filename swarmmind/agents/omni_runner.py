@@ -11,7 +11,7 @@ from agentscope.message import Msg
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
 from swarmmind.models.agent_profile import AgentProfile
-from swarmmind.models.capability import AgentRole, canonicalize_agent_role
+from swarmmind.models.capability import AgentRole
 from swarmmind.models.execution import ExecutionProfile
 
 
@@ -107,9 +107,9 @@ class OmniAgentRunner:
                     "event_source": "omni_agent_runner",
                     "agent_name": result.agent_name or request.agent_name,
                     "role": (
-                        canonicalize_agent_role(request.execution_profile.role).value
+                        request.execution_profile.role.value
                         if request.execution_profile is not None
-                        else canonicalize_agent_role(request.agent_profile.role).value
+                        else request.agent_profile.role.value
                         if request.agent_profile is not None
                         else AgentRole.CODER.value
                     ),
@@ -144,9 +144,9 @@ class OmniAgentRunner:
                     system_prompt=request.system_prompt,
                     skill_profiles=list(request.skill_profiles),
                     role=(
-                        canonicalize_agent_role(request.execution_profile.role)
+                        request.execution_profile.role
                         if request.execution_profile is not None
-                        else canonicalize_agent_role(agent_profile.role)
+                        else agent_profile.role
                         if agent_profile is not None
                         else AgentRole.CODER
                     ),

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from swarmmind.events.bus import EventBus
-from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup, canonicalize_agent_role
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.models.event import DomainEvent
 from swarmmind.models.run import RunPhase
 from swarmmind.models.execution import ReviewDecisionType
@@ -40,7 +40,7 @@ class TaskOrchestrator:
 
     async def handle_task_created(self, event: DomainEvent) -> None:
         """Build the initial task graph and assign ready subtasks."""
-        task = await self._task_repository.get(event.task_id or "")
+        task = await self._task_repository.get(event.task_id or "")  # TODO 需要区分 task and run？
         run = await self._run_repository.get(event.run_id or "")
         if task is None or run is None:
             return
@@ -237,7 +237,7 @@ class TaskOrchestrator:
     async def _maybe_generate_failure_repair_chain(self, task, run, subtask: SubTask, event: DomainEvent) -> None:
         if not task.constraints.get("enable_failure_repair"):
             return
-        if canonicalize_agent_role(subtask.role) not in {
+        if subtask.role not in {
             AgentRole.CODER,
             AgentRole.WRITER,
             AgentRole.RESEARCHER,
@@ -380,7 +380,7 @@ class TaskOrchestrator:
             dependency = subtask_map.get(dependency_id)
             if dependency is None:
                 continue
-            if canonicalize_agent_role(dependency.role) in {
+            if dependency.role in {
                 AgentRole.CODER,
                 AgentRole.WRITER,
                 AgentRole.RESEARCHER,
