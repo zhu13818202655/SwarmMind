@@ -54,7 +54,6 @@ class AgentProfile(BaseModel):
     default_sandbox_profile: str | None = Field(default=None)
     preferred_model: str | None = Field(default=None)
     preferred_endpoint: str | None = Field(default=None)
-    fallback_profile_id: str | None = Field(default=None)
     handoff_policy: HandoffPolicy = Field(default_factory=HandoffPolicy)
     ephemeral: bool = Field(default=False)
     inherit_from: str | None = Field(default=None)

@@ -102,9 +102,8 @@ class Planner:
                         temperature=self._model_temperature,
                         max_tokens=self._model_max_tokens,
                     ),
-                    max_steps=6,
+                    max_steps=3,
                     system_prompt=render_prompt(self._system_prompt_template),
-                    skill_profiles=["task_planning"],
                 )
             )
             agent = agent_factory.create_main_agent(tools=[])
@@ -248,6 +247,7 @@ class Planner:
         return subtasks
 
     def _normalize_plan_subtask(self, task: Task, spec: "_PlanSubtaskSpec") -> _NormalizedPlanSubtaskSpec:
+        # TODO 需要重新写
         warnings: list[str] = []
         metadata: dict[str, Any] = {}
 
@@ -403,7 +403,6 @@ class Planner:
             {
                 "id": profile.id,
                 "role": profile.role.value,
-                "default_strategy": profile.default_strategy,
                 "allow_handoff": profile.handoff_policy.allow_handoff,
             }
             for profile in self._agent_profile_store.list_all()

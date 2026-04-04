@@ -90,8 +90,7 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
       "description": "string",
       "role": "{PLANNER_ROLE_ENUM}",
       "acceptance_criteria": ["string"],
-      "dependencies": ["subtask-name"],
-      "execution_overrides": {{ "sandbox_profile": "string|null", "runtime_kind": "string|null" }} | null
+      "dependencies": ["subtask-name"]
     }}
   ]
 }}
@@ -103,9 +102,7 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
 - `role`: 只能是 {PLANNER_ROLE_ENUM} 之一。
 - `acceptance_criteria`: 明确的验收标准，供下游验证者判断任务完成质量。
 - `dependencies`: 依赖的其它子任务 `name` 列表。必须无环，且只能引用真实存在的子任务。
-- `execution_overrides`: **仅在需要覆盖该 role 的默认执行配置时使用**。例如：
-  - 某个 `coder` 需要运行不可信代码 → `{{"sandbox_profile": "python-sandbox", "runtime_kind": "sandbox"}}`
-  - 绝大多数情况下直接设为 `null` 或省略。
+
 
 规则：
 1. 子任务必须精简、可执行、可验证。
