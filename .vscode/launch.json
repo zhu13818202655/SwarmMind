@@ -24,6 +24,12 @@
       }
     },
     {
+      "name": "SandBox",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "bash -lc 'cd \"${workspaceFolder}\" && source .venv/bin/activate && exec .venv/bin/opensandbox-server'"
+    },
+    {
       "name": "User Test",
       "consoleName": "User Test",
       "type": "debugpy",
@@ -96,26 +102,17 @@
   ],
   "compounds": [
     {
-      "name": "SwarmMind API + Submit Task",
+      "name": "Server + Sandbox",
       "configurations": [
-        "SwarmMind API",
-        "Submit Task Script"
-      ],
-      "stopAll": true
+        "Server",
+        "SandBox"
+      ]
     },
     {
-      "name": "SwarmMind API + Submit Agent Backed Task",
+      "name": "Server + User Test",
       "configurations": [
-        "SwarmMind API",
-        "Submit Agent Backed Task"
-      ],
-      "stopAll": true
-    },
-    {
-      "name": "SwarmMind API + Submit Agent Backed Handoff Task",
-      "configurations": [
-        "SwarmMind API",
-        "Submit Agent Backed Handoff Task"
+        "Server",
+        "User Test"
       ],
       "stopAll": true
     }

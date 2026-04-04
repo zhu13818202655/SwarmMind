@@ -5,13 +5,13 @@ from swarmmind.prompt_template.base import PromptTemplate
 
 
 PLANNER_SUPPORTED_ROLES = (
-    "planner",
-    "coder",
-  "verifier",
-    "tester",
-    "reviewer",
-    "researcher",
-    "writer",
+    "planner",   # 规划者，负责将目标拆解为子任务，并为每个子任务分配角色、策略、工具和运行时要求
+    "coder",     # 编码者，负责编写代码实现任务
+  	"verifier",  # 验证者，负责验证任务的正确性和完整性
+    "tester",    # 测试者，负责编写和执行测试用例
+    "reviewer",  # 审查者，负责审查任务的输出质量
+    "researcher",# 研究者，负责进行背景研究和信息收集，主要使用搜索工具和沙盒进行浏览器搜索和文档阅读
+    "writer",    # 撰写者，负责编写文档和报告，主要使用撰写工具和阅读工具，写成PPT、Word、Excel、Markdown、HTML等格式
 )
 PLANNER_ROLE_ENUM = "|".join(PLANNER_SUPPORTED_ROLES)
 PLANNER_TOOL_GROUP_ENUM = "|".join(tool_group.value for tool_group in ToolGroup)
@@ -41,13 +41,12 @@ PLANNER_EXAMPLE_JSON = """{
 
 PLANNER_SYSTEM_PROMPT = PromptTemplate(
     name="planner_system",
-  template="""你是一个规划代理，需要将目标拆解为可执行的 JSON 任务 DAG。
-只返回严格的 JSON。""",
+  	template="""你是一个规划代理，需要将目标拆解为可执行的 JSON 任务 DAG，只返回严格的 JSON。""",
 )
 
 PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
     name="planner_task_decomposition",
-  template=f"""请根据输入生成一个符合如下结构的计划 JSON：
+  	template=f"""请根据输入生成一个符合如下结构的计划 JSON：
 {{
   "subtasks": [
     {{

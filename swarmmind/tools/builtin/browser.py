@@ -1,7 +1,6 @@
 """Browser tool for web browsing and content extraction."""
 
 import httpx
-from typing import Any
 
 
 class BrowserTool:

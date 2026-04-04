@@ -1,8 +1,6 @@
 """File tool for reading and writing files."""
 
-import os
 from pathlib import Path
-from typing import Any
 
 
 class FileTool:
