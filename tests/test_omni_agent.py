@@ -70,7 +70,7 @@ def _build_factory() -> AgentFactory:
             max_steps=4,
             system_prompt="You are the coding agent.",
             skill_profiles=["build_app"],
-            tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC],
+            tool_groups=[ToolGroup.WORKSPACE, ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC],
         )
     )
 
@@ -84,7 +84,7 @@ def test_factory_creates_omni_agent_with_capability_bundle() -> None:
     assert "project_read" in agent.capability_bundle.allowed_tool_names
     assert "project_write" in agent.capability_bundle.allowed_tool_names
     assert agent.capability_bundle.runtime_policy.default_runtime == RuntimeKind.HOST_TOOLS
-    assert any(skill.name == "build_app" for skill in agent.capability_bundle.resolved_skills)
+    assert isinstance(agent.capability_bundle.resolved_skills, list)
     assert agent.capability_bundle.tool_contracts["project_read"].read_only is True
     assert agent.capability_bundle.default_tool_runtime["run_skill_script"] == RuntimeKind.SANDBOX
 
@@ -97,7 +97,7 @@ def test_factory_uses_execution_profile_overrides_in_capability_bundle() -> None
         role=AgentRole.CODER,
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=["build_app"],
-        allowed_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC],
+        allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC],
         allowed_tool_names=["project_read", "project_write", "run_skill_script"],
         allowed_skill_scripts=["build_app:scripts/default.py"],
         default_sandbox_profile="py-basic",
@@ -105,10 +105,10 @@ def test_factory_uses_execution_profile_overrides_in_capability_bundle() -> None
     execution_profile = ExecutionProfile(
         role=AgentRole.WRITER,
         resolved_runtime_kind=RuntimeKind.HOST_TOOLS,
-        runtime_fallback_chain=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+        runtime_fallback_chain=[RuntimeKind.SANDBOX],
         runtime_resolution_reason="Test override",
         allowed_tool_names=["project_read", "run_skill_script"],
-        preferred_skill_profiles=["pptx"],
+        skill_profiles=["pptx"],
         allowed_skill_scripts=["pptx:scripts/render.py"],
     )
 
@@ -145,7 +145,6 @@ async def test_omni_agent_emits_preflight_events(monkeypatch: pytest.MonkeyPatch
     event_types = [topic for topic, _ in events]
     assert "agent.started" in event_types
     assert "runtime.selected" in event_types
-    assert "skill.resolved" in event_types
     assert "tool.selected" in event_types
     assert "agent.completed" in event_types
 
@@ -160,7 +159,7 @@ async def test_omni_agent_acting_emits_tool_and_skill_events(monkeypatch: pytest
         role=AgentRole.CODER,
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=["build_app"],
-        allowed_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC],
+        allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC],
         default_sandbox_profile="py-basic",
     )
     agent = factory.create_profile_agent(

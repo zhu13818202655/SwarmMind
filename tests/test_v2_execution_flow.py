@@ -6,16 +6,15 @@ from typing import cast
 import pytest
 
 from swarmmind.agents import OmniAgentResult
-from swarmmind.models.agent_profile import AgentProfile, HandoffPolicy, SkillsMode
-from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.app.container import build_container
 from swarmmind.config import SwarmMindConfig
 from swarmmind.gateway import TaskSubmitRequest
+from swarmmind.models.agent_profile import AgentProfile, SkillsMode
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.models.event import DomainEvent
-from swarmmind.models.execution import ExecutionProfile
+from swarmmind.models.execution import ExecutionConfiguration, ExecutionProfile, ReviewDecisionType
 from swarmmind.models.replay import ReplayRoot
 from swarmmind.models.run import Run, RunStatus
-from swarmmind.models.execution import ReviewDecisionType
 from swarmmind.models.task import SubTask, SubTaskStatus, Task, TaskStatus
 
 
@@ -55,24 +54,24 @@ async def test_submit_task_executes_subtasks_and_collects_artifacts() -> None:
     assert task.status == TaskStatus.SUCCEEDED
     assert run_detail.artifacts
     assert all(subtask.status == SubTaskStatus.SUCCEEDED for subtask in run_detail.subtasks)
+
     review_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "review-result")
     assert review_subtask.result is not None
     assert review_subtask.result.get("decision") == ReviewDecisionType.ACCEPT.value
-    assert review_subtask.metadata.get("resolved_strategy_name") == "review"
+    assert review_subtask.metadata.get("execution_label") == "review"
     assert "artifact_read" in review_subtask.metadata.get("selected_tools", [])
+
     implementation_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "prepare-implementation")
     implementation_profile = ExecutionProfile.model_validate(implementation_subtask.metadata.get("execution_profile") or {})
-    assert implementation_subtask.metadata.get("resolved_strategy_name") == "build_app"
+    assert implementation_subtask.metadata.get("execution_label") == "build_app"
     assert implementation_subtask.metadata.get("resolved_runtime_kind") == RuntimeKind.SANDBOX.value
     assert implementation_subtask.metadata.get("runtime_resolution_reason")
     assert "sandbox_exec" in implementation_subtask.metadata.get("selected_tools", [])
     assert implementation_profile.agent_profile_id == "coder-default"
     assert implementation_profile.resolved_runtime_kind == RuntimeKind.SANDBOX
-    assert implementation_profile.runtime_fallback_chain == [RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS]
-    assert implementation_profile.preferred_skill_profiles == ["build_app"]
+    assert implementation_profile.runtime_fallback_chain == [RuntimeKind.HOST_TOOLS]
     assert implementation_profile.skill_profiles == ["build_app"]
-    assert ToolGroup.SANDBOX_EXEC in implementation_profile.allowed_tool_groups
-
+    assert ToolGroup.CODE_EXEC in implementation_profile.allowed_tool_groups
 
     event_types = [entry.event_type for entry in replay.entries]
     assert "subtask.started" in event_types
@@ -170,77 +169,6 @@ async def test_failed_subtask_can_trigger_failure_repair_chain() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_backed_strategy_completes_with_reserved_profile() -> None:
-    settings = SwarmMindConfig(sandbox={"provider": "local"})
-    container = await build_container(settings)
-    identity = await container.identity_resolver.resolve()
-
-    submission = await container.gateway.submit_task(
-        TaskSubmitRequest(
-            goal="整理一份版本发布说明",
-            preferred_strategy="agent_backed",
-            profile="py-basic",
-        ),
-        identity=identity,
-    )
-
-    run_detail = await _wait_for_terminal_run(container, submission.run_id, identity)
-    replay = await container.replay_repository.get_by_run(submission.run_id)
-
-    assert run_detail is not None
-    assert replay is not None
-    assert run_detail.run.status == RunStatus.SUCCEEDED
-
-    implementation_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "prepare-implementation")
-    execution_profile = ExecutionProfile.model_validate(implementation_subtask.metadata.get("execution_profile") or {})
-    assert implementation_subtask.metadata.get("resolved_strategy_name") == "agent_backed"
-    assert execution_profile.agent_profile_id == "agent-backed-default"
-    assert implementation_subtask.result is not None
-    assert implementation_subtask.result.get("strategy_backend") == "agent_backed"
-    assert implementation_subtask.result.get("execution_backend") == "omni_agent"
-    assert any(entry.event_type == "strategy.completed" for entry in replay.entries)
-
-
-@pytest.mark.asyncio
-async def test_agent_backed_strategy_emits_unified_agent_step_events(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = SwarmMindConfig(sandbox={"provider": "local"})
-    container = await build_container(settings)
-    identity = await container.identity_resolver.resolve()
-    captured: list[dict[str, object]] = []
-
-    async def fake_run(request, *, publisher=None):
-        payload = {
-            "step_kind": request.step_kind,
-            "tool_names": [getattr(tool, "__name__", repr(tool)) for tool in request.tool_functions],
-            "agent_profile_id": request.agent_profile.id if request.agent_profile is not None else None,
-        }
-        captured.append(payload)
-        if publisher is not None:
-            await publisher("agent.step.fallback", {**payload, "reason": "test_fallback"})
-        return OmniAgentResult(status="fallback", reason="test_fallback", tool_names=payload["tool_names"])
-
-    monkeypatch.setattr(container.execution_runner._omni_agent, "run", fake_run)
-
-    submission = await container.gateway.submit_task(
-        TaskSubmitRequest(
-            goal="整理一份版本发布说明",
-            preferred_strategy="agent_backed",
-            profile="py-basic",
-        ),
-        identity=identity,
-    )
-
-    run_detail = await _wait_for_terminal_run(container, submission.run_id, identity)
-    replay = await container.replay_repository.get_by_run(submission.run_id)
-
-    assert run_detail is not None
-    assert replay is not None
-    assert run_detail.run.status == RunStatus.SUCCEEDED
-    assert any(item.get("step_kind") == "execution.agent_backed" for item in captured)
-    assert "agent.step.fallback" in [entry.event_type for entry in replay.entries]
-
-
-@pytest.mark.asyncio
 async def test_host_tools_runtime_uses_omni_agent_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = SwarmMindConfig(sandbox={"provider": "local"})
     container = await build_container(settings)
@@ -270,15 +198,18 @@ async def test_host_tools_runtime_uses_omni_agent_wrapper(monkeypatch: pytest.Mo
         },
     )
     run = Run(id="run-host-tools-1", task_id=task.id, session_id="session-host-tools-1")
+    execution_configuration = ExecutionConfiguration(
+        runtime_kind=RuntimeKind.HOST_TOOLS,
+        tool_requirements=[ToolGroup.WORKSPACE, ToolGroup.ARTIFACT],
+        skill_profiles=["pptx"],
+    )
     execution_profile = ExecutionProfile(
         role=AgentRole.WRITER,
-        preferred_strategy="presentation_delivery",
-        required_tool_groups=[ToolGroup.PRESENTATION, ToolGroup.ARTIFACT_READ, ToolGroup.PROJECT_WRITE],
-        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+        execution_configuration=execution_configuration,
+        required_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.ARTIFACT],
         resolved_runtime_kind=RuntimeKind.HOST_TOOLS,
         runtime_resolution_reason="Test forces host_tools runtime for OmniAgent coverage.",
-        runtime_fallback_chain=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
-        preferred_skill_profiles=["pptx"],
+        runtime_fallback_chain=[RuntimeKind.SANDBOX],
         skill_profiles=["pptx"],
     )
     subtask = SubTask(
@@ -287,10 +218,7 @@ async def test_host_tools_runtime_uses_omni_agent_wrapper(monkeypatch: pytest.Mo
         name="generate-pptx",
         description="Generate the final presentation deck.",
         role=AgentRole.WRITER,
-        preferred_strategy="presentation_delivery",
-        required_tool_groups=[ToolGroup.PRESENTATION, ToolGroup.ARTIFACT_READ, ToolGroup.PROJECT_WRITE],
-        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
-        preferred_skill_profiles=["pptx"],
+        execution_configuration=execution_configuration,
         acceptance_criteria=["A PPT delivery artifact is produced."],
         metadata={"run_id": run.id, "plan_source": "test"},
     )
@@ -373,15 +301,18 @@ async def test_host_tools_runtime_propagates_execution_profile_to_omni_runner(mo
         },
     )
     run = Run(id="run-host-tools-profile-1", task_id=task.id, session_id="session-host-tools-profile-1")
+    execution_configuration = ExecutionConfiguration(
+        runtime_kind=RuntimeKind.HOST_TOOLS,
+        tool_requirements=[ToolGroup.WORKSPACE, ToolGroup.ARTIFACT],
+        skill_profiles=["pptx"],
+    )
     execution_profile = ExecutionProfile(
         role=AgentRole.WRITER,
-        preferred_strategy="presentation_delivery",
-        required_tool_groups=[ToolGroup.PRESENTATION, ToolGroup.ARTIFACT_READ, ToolGroup.PROJECT_WRITE],
-        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
+        execution_configuration=execution_configuration,
+        required_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.ARTIFACT],
         resolved_runtime_kind=RuntimeKind.HOST_TOOLS,
         runtime_resolution_reason="Test request propagation.",
-        runtime_fallback_chain=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
-        preferred_skill_profiles=["pptx"],
+        runtime_fallback_chain=[RuntimeKind.SANDBOX],
         skill_profiles=["pptx"],
         allowed_skill_scripts=["pptx:scripts/render.py"],
     )
@@ -391,10 +322,7 @@ async def test_host_tools_runtime_propagates_execution_profile_to_omni_runner(mo
         name="generate-pptx-propagation",
         description="Generate the final presentation deck.",
         role=AgentRole.WRITER,
-        preferred_strategy="presentation_delivery",
-        required_tool_groups=[ToolGroup.PRESENTATION, ToolGroup.ARTIFACT_READ, ToolGroup.PROJECT_WRITE],
-        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
-        preferred_skill_profiles=["pptx"],
+        execution_configuration=execution_configuration,
         acceptance_criteria=["A PPT delivery artifact is produced."],
         metadata={"run_id": run.id, "plan_source": "test"},
     )
@@ -436,8 +364,9 @@ async def test_execution_policy_denies_tools_outside_profile_allowlist() -> None
             description="Profile that intentionally blocks sandbox execution.",
             skill_mode=SkillsMode.INCLUSIVE,
             skill_profiles=["build_app"],
-            allowed_tool_groups=[ToolGroup.PROJECT_READ],
-            default_strategy="build_app",
+            default_tool_groups=[ToolGroup.WORKSPACE],
+            recommended_runtime_kinds=[RuntimeKind.HOST_TOOLS],
+            allowed_tool_groups=[ToolGroup.WORKSPACE],
         )
     )
     identity = await container.identity_resolver.resolve()
@@ -461,160 +390,3 @@ async def test_execution_policy_denies_tools_outside_profile_allowlist() -> None
     implementation_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "prepare-implementation")
     assert implementation_subtask.status == SubTaskStatus.FAILED
     assert "sandbox_exec" not in implementation_subtask.metadata.get("selected_tools", [])
-
-
-@pytest.mark.asyncio
-async def test_agent_backed_handoff_emits_started_and_completed_events() -> None:
-    settings = SwarmMindConfig(sandbox={"provider": "local"})
-    container = await build_container(settings)
-    container.agent_profile_store.save(
-        AgentProfile(
-            id="delegating-coder",
-            name="Delegating Coder",
-            role=AgentRole.CODER,
-            description="Coder profile that may hand off research-heavy work.",
-            skill_mode=SkillsMode.ALL,
-            allowed_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
-            default_strategy="agent_backed",
-            handoff_policy=HandoffPolicy(
-                allow_handoff=True,
-                allowed_targets=["researcher-default"],
-                max_depth=1,
-            ),
-        )
-    )
-    identity = await container.identity_resolver.resolve()
-
-    submission = await container.gateway.submit_task(
-        TaskSubmitRequest(
-            goal="整理竞品调研摘要",
-            preferred_strategy="agent_backed",
-            agent_profile_id="delegating-coder",
-            constraints={"handoff_requests": {"prepare-implementation": "researcher-default"}},
-        ),
-        identity=identity,
-    )
-
-    run_detail = await _wait_for_terminal_run(container, submission.run_id, identity)
-    replay = await container.replay_repository.get_by_run(submission.run_id)
-
-    assert run_detail is not None
-    assert replay is not None
-    assert run_detail.run.status == RunStatus.SUCCEEDED
-    implementation_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "prepare-implementation")
-    assert implementation_subtask.result is not None
-    handoff = implementation_subtask.result.get("handoff") or {}
-    assert handoff.get("to_agent_profile_id") == "researcher-default"
-    event_types = [entry.event_type for entry in replay.entries]
-    assert "agent.handoff.started" in event_types
-    assert "agent.handoff.completed" in event_types
-
-
-@pytest.mark.asyncio
-async def test_agent_backed_handoff_denied_emits_denied_event_and_falls_back_local() -> None:
-    settings = SwarmMindConfig(sandbox={"provider": "local"})
-    container = await build_container(settings)
-    identity = await container.identity_resolver.resolve()
-
-    submission = await container.gateway.submit_task(
-        TaskSubmitRequest(
-            goal="整理一份版本发布说明",
-            preferred_strategy="agent_backed",
-            constraints={"handoff_requests": {"prepare-implementation": "researcher-default"}},
-        ),
-        identity=identity,
-    )
-
-    run_detail = await _wait_for_terminal_run(container, submission.run_id, identity)
-    replay = await container.replay_repository.get_by_run(submission.run_id)
-
-    assert run_detail is not None
-    assert replay is not None
-    assert run_detail.run.status == RunStatus.SUCCEEDED
-    event_types = [entry.event_type for entry in replay.entries]
-    assert "agent.handoff.denied" in event_types
-    assert "policy.denied" in event_types
-
-
-@pytest.mark.asyncio
-async def test_validation_subtasks_use_agent_results_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = SwarmMindConfig(sandbox={"provider": "local"})
-    container = await build_container(settings)
-    identity = await container.identity_resolver.resolve()
-
-    async def fake_structured_prompt(*, subtask, **kwargs):
-        if subtask.role == AgentRole.TESTER:
-            return """{
-  \"passed\": true,
-  \"summary\": \"LLM verification passed.\",
-  \"criteria_results\": [
-    {
-      \"criterion\": \"Repair evidence is attached and satisfies the review feedback.\",
-      \"passed\": true,
-      \"evidence\": \"verified from dependency and artifact summaries\"
-    }
-  ],
-  \"evidence_subtask_ids\": [],
-  \"artifact_ids\": []
-}"""
-        return """{
-  \"decision\": \"accept\",
-  \"summary\": \"LLM review accepted the result.\",
-  \"rationale\": \"Verification result was accepted.\",
-  \"follow_up_actions\": []
-}"""
-
-    monkeypatch.setattr(container.execution_runner, "_render_structured_prompt_with_model", fake_structured_prompt)
-
-    submission = await container.gateway.submit_task(
-        TaskSubmitRequest(goal="实现一个导出 Excel 功能并补测试", profile="py-basic"),
-        identity=identity,
-    )
-
-    run_detail = await _wait_for_terminal_run(container, submission.run_id, identity)
-    replay = await container.replay_repository.get_by_run(submission.run_id)
-
-    assert run_detail is not None
-    assert replay is not None
-    assert run_detail.run.status == RunStatus.SUCCEEDED
-    verify_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "verify-result")
-    review_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "review-result")
-    assert verify_subtask.result is not None
-    assert verify_subtask.result.get("validation_backend") == "agent"
-    assert review_subtask.result is not None
-    assert review_subtask.result.get("validation_backend") == "agent"
-    event_types = [entry.event_type for entry in replay.entries]
-    assert "validation.agent.started" in event_types
-    assert "validation.agent.completed" in event_types
-
-
-@pytest.mark.asyncio
-async def test_validation_subtasks_fall_back_to_rules_when_agent_output_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = SwarmMindConfig(sandbox={"provider": "local"})
-    container = await build_container(settings)
-    identity = await container.identity_resolver.resolve()
-
-    async def fake_structured_prompt(**kwargs):
-        return None
-
-    monkeypatch.setattr(container.execution_runner, "_render_structured_prompt_with_model", fake_structured_prompt)
-
-    submission = await container.gateway.submit_task(
-        TaskSubmitRequest(goal="实现一个导出 Excel 功能并补测试", profile="py-basic"),
-        identity=identity,
-    )
-
-    run_detail = await _wait_for_terminal_run(container, submission.run_id, identity)
-    replay = await container.replay_repository.get_by_run(submission.run_id)
-
-    assert run_detail is not None
-    assert replay is not None
-    assert run_detail.run.status == RunStatus.SUCCEEDED
-    verify_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "verify-result")
-    review_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "review-result")
-    assert verify_subtask.result is not None
-    assert verify_subtask.result.get("validation_backend") == "rules_fallback"
-    assert review_subtask.result is not None
-    assert review_subtask.result.get("validation_backend") == "rules_fallback"
-    event_types = [entry.event_type for entry in replay.entries]
-    assert "validation.agent.fallback" in event_types

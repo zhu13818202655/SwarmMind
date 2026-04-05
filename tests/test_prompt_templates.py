@@ -16,14 +16,14 @@ def test_render_prompt_renders_jinja_template() -> None:
         {
             "task_goal": "实现导出功能",
             "constraints_json": "{}",
-            "profile": "py-basic",
-            "preferred_strategy": "build_app",
             "agent_profiles_json": "[]",
+            "role_definitions": "coder: implement code",
         },
     )
 
     assert "目标：实现导出功能" in rendered
     assert "可用 Agent Profiles JSON：[]" in rendered
+    assert "角色定义" in rendered
 
 
 def test_render_prompt_fails_fast_when_variable_missing() -> None:

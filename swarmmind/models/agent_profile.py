@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from swarmmind.models.capability import AgentRole, ToolGroup
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 
 
 class SkillsMode(str, Enum):
@@ -47,10 +47,11 @@ class AgentProfile(BaseModel):
     custom_prompt: str | None = Field(default=None, description="Prompt suffix injected for this profile")
     skill_mode: SkillsMode = Field(default=SkillsMode.ALL)
     skill_profiles: list[str] = Field(default_factory=list, description="Native AgentScope skill profiles")
+    default_tool_groups: list[ToolGroup] = Field(default_factory=list)
+    recommended_runtime_kinds: list[RuntimeKind] = Field(default_factory=list)
     allowed_tool_groups: list[ToolGroup] = Field(default_factory=list)
     allowed_tool_names: list[str] = Field(default_factory=list)
     allowed_skill_scripts: list[str] = Field(default_factory=list)
-    default_strategy: str | None = Field(default=None)
     default_sandbox_profile: str | None = Field(default=None)
     preferred_model: str | None = Field(default=None)
     preferred_endpoint: str | None = Field(default=None)

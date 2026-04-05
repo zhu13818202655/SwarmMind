@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import pytest
 
-from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.agents.agent_skill import resolve_agent_skill_dirs
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
-from swarmmind.models.capability import AgentRole, DEFAULT_ROLE_TOOL_GROUPS, RuntimeKind
+from swarmmind.agents.profile import AgentProfileStore
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
-from swarmmind.prompt_template.planner import PLANNER_ROLE_ENUM, PLANNER_STRATEGY_ENUM, PLANNER_TOOL_GROUP_ENUM
-from swarmmind.orchestration.planner import Planner, _PlanResult, _PlanSubtaskSpec
+from swarmmind.orchestration.planner import (
+    Planner,
+    _ExecutionConfigurationSubtaskSpec,
+    _PlanResult,
+    _PlanSubtaskSpec,
+)
+from swarmmind.prompt_template.planner import PLANNER_ROLE_ENUM
 
 
 @pytest.mark.asyncio
@@ -62,9 +67,9 @@ async def test_planner_falls_back_to_rules_when_llm_unavailable(monkeypatch: pyt
     assert subtask_map["prepare-implementation"].dependencies == [subtask_map["analyze-requirement"].id]
     assert subtask_map["verify-result"].dependencies == [subtask_map["prepare-implementation"].id]
     assert subtask_map["review-result"].dependencies == [subtask_map["verify-result"].id]
-    assert subtask_map["analyze-requirement"].agent_profile_id == "planner-default"
-    assert subtask_map["prepare-implementation"].agent_profile_id == "coder-default"
-    assert subtask_map["review-result"].agent_profile_id == "reviewer-default"
+    assert subtask_map["prepare-implementation"].execution_configuration is not None
+    assert subtask_map["prepare-implementation"].execution_configuration.runtime_kind == RuntimeKind.SANDBOX
+    assert ToolGroup.CODE_EXEC in subtask_map["prepare-implementation"].execution_configuration.tool_requirements
 
 
 @pytest.mark.asyncio
@@ -76,20 +81,17 @@ async def test_planner_prompt_includes_available_agent_profiles() -> None:
 
     assert "可用 Agent Profiles JSON" in prompt
     assert "coder-default" in prompt
-    assert "agent-backed-default" in prompt
     assert "verifier-default" in prompt
     assert PLANNER_ROLE_ENUM in prompt
-    assert PLANNER_TOOL_GROUP_ENUM in prompt
-    assert PLANNER_STRATEGY_ENUM in prompt
-    assert "candidate_runtime_kinds" in prompt
-    assert "preferred_skill_profiles" in prompt
-    assert '"preferred_strategy": "write_report"' in prompt
+    assert "expected_artifacts" in prompt
+    assert "candidate_runtime_kinds" not in prompt
+    assert "preferred_strategy" not in prompt
     assert "http" not in prompt
 
 
-def test_build_subtasks_from_plan_resolves_role_compatible_agent_profile_ids() -> None:
+def test_build_subtasks_from_plan_applies_default_execution_configuration() -> None:
     planner = Planner(agent_profile_store=AgentProfileStore())
-    task = Task(id="task-4", goal="实现并评审", metadata={"profile": "py-basic", "agent_profile_id": "writer-default"})
+    task = Task(id="task-4", goal="实现并评审", metadata={"profile": "py-basic"})
     run = Run(id="run-4", task_id=task.id, session_id="session-4")
     plan_result = _PlanResult(
         subtasks=[
@@ -97,20 +99,25 @@ def test_build_subtasks_from_plan_resolves_role_compatible_agent_profile_ids() -
                 name="prepare-implementation",
                 description="Implement the feature.",
                 role="coder",
-                agent_profile_id="writer-default",
-                preferred_strategy="build_app",
-                required_tool_groups=["project_read", "project_write", "sandbox_exec"],
+                acceptance_criteria=["Implementation is complete."],
+                expected_artifacts=["code_changes"],
             )
         ]
     )
 
-    subtasks = planner._build_subtasks_from_plan(task, run, plan_result)
+    normalized = planner._validate_and_normalize_plan(task, plan_result)
+    merged = planner._merge_execution_configurations(task, normalized, [])
+    subtasks = planner._build_subtasks_from_plan(task, run, merged)
 
     assert len(subtasks) == 1
-    assert subtasks[0].agent_profile_id == "coder-default"
+    subtask = subtasks[0]
+    assert subtask.role == AgentRole.CODER
+    assert subtask.execution_configuration is not None
+    assert subtask.execution_configuration.runtime_kind == RuntimeKind.SANDBOX
+    assert ToolGroup.CODE_EXEC in subtask.execution_configuration.tool_requirements
 
 
-def test_build_subtasks_from_plan_records_validation_warnings_and_fallbacks() -> None:
+def test_build_subtasks_from_plan_records_validation_warnings_for_missing_expected_artifacts() -> None:
     planner = Planner(agent_profile_store=AgentProfileStore())
     task = Task(id="task-5", goal="实现功能", metadata={"profile": "py-basic"})
     run = Run(id="run-5", task_id=task.id, session_id="session-5")
@@ -119,131 +126,59 @@ def test_build_subtasks_from_plan_records_validation_warnings_and_fallbacks() ->
             _PlanSubtaskSpec(
                 name="prepare-implementation",
                 description="Implement the feature.",
-                role="coder",
-                agent_profile_id="missing-profile",
-                preferred_strategy="build_app",
-                required_tool_groups=["http"],
-                sandbox_profile="",
+                role="executor",
+                acceptance_criteria=["Implementation is complete."],
+                expected_artifacts=[],
             )
         ]
     )
 
-    subtasks = planner._build_subtasks_from_plan(task, run, plan_result)
+    normalized = planner._validate_and_normalize_plan(task, plan_result)
+    merged = planner._merge_execution_configurations(task, normalized, [])
+    [subtask] = planner._build_subtasks_from_plan(task, run, merged)
 
-    assert len(subtasks) == 1
-    subtask = subtasks[0]
-    assert subtask.agent_profile_id == "coder-default"
-    assert subtask.sandbox_profile == "py-basic"
-    assert subtask.required_tool_groups == DEFAULT_ROLE_TOOL_GROUPS[AgentRole.CODER]
-    assert subtask.candidate_runtime_kinds == [RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS]
-    assert subtask.preferred_skill_profiles == ["build_app"]
-    assert subtask.metadata.get("original_agent_profile_id") == "missing-profile"
-    assert subtask.metadata.get("original_sandbox_profile") == ""
-    assert subtask.metadata.get("resolved_agent_profile_id") == "coder-default"
-    assert subtask.metadata.get("normalized_tool_groups") == [group.value for group in DEFAULT_ROLE_TOOL_GROUPS[AgentRole.CODER]]
-    assert subtask.metadata.get("candidate_runtime_kinds") == [RuntimeKind.SANDBOX.value, RuntimeKind.HOST_TOOLS.value]
-    assert subtask.metadata.get("preferred_skill_profiles") == ["build_app"]
+    assert subtask.role == AgentRole.CODER
+    assert subtask.expected_artifacts == ["deliverable"]
     warnings = subtask.metadata.get("planner_validation_warnings") or []
-    assert any("unsupported tool groups" in warning for warning in warnings)
-    assert any("Fell back to default tool groups" in warning for warning in warnings)
-    assert any("candidate runtime kinds" in warning for warning in warnings)
-    assert any("does not exist" in warning for warning in warnings)
+    assert any("expected_artifacts" in warning for warning in warnings)
+    assert any("Normalized invalid planner role 'executor'" in warning for warning in warnings)
 
 
-def test_build_subtasks_from_plan_normalizes_role_to_match_strategy_and_profile() -> None:
+def test_merge_execution_configurations_prefers_llm_execution_output() -> None:
     planner = Planner(agent_profile_store=AgentProfileStore())
     task = Task(id="task-6", goal="整理发布说明", metadata={"profile": "py-basic"})
-    run = Run(id="run-6", task_id=task.id, session_id="session-6")
     plan_result = _PlanResult(
         subtasks=[
             _PlanSubtaskSpec(
                 name="draft-release-summary",
                 description="Draft the summary.",
-                role="reviewer",
-                agent_profile_id="writer-default",
-                preferred_strategy="write_report",
-                required_tool_groups=[],
+                role="writer",
+                acceptance_criteria=["Summary is complete."],
+                expected_artifacts=["report"],
             )
         ]
     )
 
-    subtasks = planner._build_subtasks_from_plan(task, run, plan_result)
-
-    assert len(subtasks) == 1
-    subtask = subtasks[0]
-    assert subtask.role == AgentRole.WRITER
-    assert subtask.agent_profile_id == "writer-default"
-    assert subtask.preferred_strategy == "write_report"
-    assert subtask.metadata.get("original_role") == "reviewer"
-    assert subtask.metadata.get("resolved_agent_profile_id") == "writer-default"
-    warnings = subtask.metadata.get("planner_validation_warnings") or []
-    assert any("Normalized role 'reviewer' to 'writer'" in warning for warning in warnings)
-
-
-def test_build_subtasks_from_plan_normalizes_legacy_executor_role() -> None:
-    planner = Planner(agent_profile_store=AgentProfileStore())
-    task = Task(id="task-6b", goal="实现功能", metadata={"profile": "py-basic"})
-    run = Run(id="run-6b", task_id=task.id, session_id="session-6b")
-    plan_result = _PlanResult(
-        subtasks=[
-            _PlanSubtaskSpec(
-                name="legacy-executor-step",
-                description="Implement the feature with a legacy role.",
-                role="executor",
-                agent_profile_id=None,
-                preferred_strategy="build_app",
-                required_tool_groups=["project_read", "project_write", "sandbox_exec"],
+    normalized = planner._validate_and_normalize_plan(task, plan_result)
+    merged = planner._merge_execution_configurations(
+        task,
+        normalized,
+        [
+            _ExecutionConfigurationSubtaskSpec(
+                name="draft-release-summary",
+                runtime_kind="host_tools",
+                tool_requirements=["workspace", "artifact"],
+                skill_profiles=["write_report"],
             )
-        ]
+        ],
     )
 
-    [subtask] = planner._build_subtasks_from_plan(task, run, plan_result)
-
-    assert subtask.role == AgentRole.CODER
-    assert subtask.agent_profile_id == "coder-default"
-    warnings = subtask.metadata.get("planner_validation_warnings") or []
-    assert any("Normalized invalid planner role 'executor' to 'coder'" in warning for warning in warnings)
-
-
-@pytest.mark.parametrize(
-    ("agent_profile_id", "expected_profile_id", "expect_warning"),
-    [
-        (None, "tester-default", False),
-        ("", "tester-default", True),
-        ("writer-default", "tester-default", True),
-    ],
-)
-def test_build_subtasks_from_plan_normalizes_agent_profile_variants(
-    agent_profile_id: str | None,
-    expected_profile_id: str,
-    expect_warning: bool,
-) -> None:
-    planner = Planner(agent_profile_store=AgentProfileStore())
-    task = Task(id="task-7", goal="验证输出", metadata={"profile": "py-basic"})
-    run = Run(id="run-7", task_id=task.id, session_id="session-7")
-    plan_result = _PlanResult(
-        subtasks=[
-            _PlanSubtaskSpec(
-                name="verify-output",
-                description="Verify the output.",
-                role="tester",
-                agent_profile_id=agent_profile_id,
-                preferred_strategy="verification",
-                required_tool_groups=[],
-            )
-        ]
-    )
-
-    subtasks = planner._build_subtasks_from_plan(task, run, plan_result)
-
-    assert len(subtasks) == 1
-    subtask = subtasks[0]
-    assert subtask.agent_profile_id == expected_profile_id
-    warnings = subtask.metadata.get("planner_validation_warnings") or []
-    if expect_warning:
-        assert warnings
-    else:
-        assert all("agent profile" not in warning for warning in warnings)
+    assert len(merged) == 1
+    execution_configuration = merged[0].execution_configuration
+    assert execution_configuration is not None
+    assert execution_configuration.runtime_kind == RuntimeKind.HOST_TOOLS
+    assert execution_configuration.tool_requirements == [ToolGroup.WORKSPACE, ToolGroup.ARTIFACT]
+    assert execution_configuration.skill_profiles == ["write_report"]
 
 
 def test_agent_factory_registers_native_agentscope_skills() -> None:
@@ -256,7 +191,5 @@ def test_agent_factory_registers_native_agentscope_skills() -> None:
     )
 
     toolkit = factory.create_toolkit([])
-    prompt = toolkit.get_agent_skill_prompt()
-
-    assert resolve_agent_skill_dirs(["task_planning", "build_app"])
-
+    assert toolkit is not None
+    assert resolve_agent_skill_dirs(["build_app"]) == []

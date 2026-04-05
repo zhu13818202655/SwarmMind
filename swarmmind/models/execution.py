@@ -4,8 +4,18 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from swarmmind.models.agent_profile import HandoffPolicy, SkillsMode
+from swarmmind.models.agent_profile import SkillsMode
 from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
+
+
+class ExecutionConfiguration(BaseModel):
+    """Planner-provided execution configuration for a subtask."""
+
+    runtime_kind: RuntimeKind | None = Field(default=None)
+    tool_requirements: list[ToolGroup] = Field(default_factory=list)
+    sandbox_profile: str | None = Field(default=None)
+    skill_profiles: list[str] = Field(default_factory=list)
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class ExecutionProfile(BaseModel):
@@ -15,14 +25,10 @@ class ExecutionProfile(BaseModel):
 
     role: AgentRole = Field(..., description="Logical role assigned to the executor")
     agent_profile_id: str | None = Field(default=None, description="Resolved agent profile identifier")
-    preferred_strategy: str | None = Field(default=None, description="Preferred runtime strategy profile for the subtask")
+    execution_configuration: ExecutionConfiguration | None = Field(default=None)
     required_tool_groups: list[ToolGroup] = Field(
         default_factory=list,
         description="Tool groups that should be equipped for this subtask",
-    )
-    candidate_runtime_kinds: list[RuntimeKind] = Field(
-        default_factory=list,
-        description="Candidate runtime kinds considered for this subtask",
     )
     resolved_runtime_kind: RuntimeKind | None = Field(
         default=None,
@@ -34,7 +40,7 @@ class ExecutionProfile(BaseModel):
     )
     runtime_fallback_chain: list[RuntimeKind] = Field(
         default_factory=list,
-        description="Ordered runtime candidates considered while resolving execution",
+        description="Ordered backup runtimes kept after the resolved runtime is selected",
     )
     allowed_tool_groups: list[ToolGroup] = Field(
         default_factory=list,
@@ -45,13 +51,9 @@ class ExecutionProfile(BaseModel):
         description="Explicit tool allowlist enforced at runtime",
     )
     skill_mode: SkillsMode = Field(default=SkillsMode.ALL, description="How agent skill profiles should be interpreted")
-    preferred_skill_profiles: list[str] = Field(
-        default_factory=list,
-        description="Preferred reusable skill packages selected for the subtask",
-    )
     skill_profiles: list[str] = Field(
         default_factory=list,
-        description="Backward-compatible mirror of preferred skill packages exposed to agent-backed execution",
+        description="Skill packages selected for the subtask",
     )
     allowed_skill_scripts: list[str] = Field(
         default_factory=list,
@@ -61,13 +63,6 @@ class ExecutionProfile(BaseModel):
         default=None,
         description="Sandbox profile selected for this execution",
     )
-    handoff_policy: HandoffPolicy = Field(
-        default_factory=HandoffPolicy,
-        description="Controlled handoff policy for future delegated execution",
-    )
-
-
-
 class VerificationCriterionResult(BaseModel):
     """Per-criterion verification evidence."""
 
