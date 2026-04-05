@@ -40,7 +40,6 @@ from swarmmind.repositories import (
     SubTaskRepository,
     TaskRepository,
 )
-from swarmmind.execution_strategies import ExecutionStrategyRegistry
 from swarmmind.skill_system import SkillExecutionService, SkillScriptExecutor
 from swarmmind.sandbox import ArtifactCollector, LocalSandboxAdapter, ReplayRecorder, SandboxManager
 from swarmmind.sandbox.opensandbox_adapter import OpenSandboxAdapter
@@ -70,7 +69,6 @@ class AppContainer:
     skill_execution_service: SkillExecutionService
     run_state_service: RunStateService
     execution_runner: ExecutionRunner
-    execution_strategy_registry: ExecutionStrategyRegistry
     tool_registry: ToolRegistry
     gateway: Gateway
     orchestrator: TaskOrchestrator
@@ -97,7 +95,6 @@ class AppContainer:
         "skill_execution_service",
         "run_state_service",
         "execution_runner",
-        "execution_strategy_registry",
         "tool_registry",
         "gateway",
         "orchestrator",
@@ -126,7 +123,6 @@ class AppContainer:
         skill_execution_service: SkillExecutionService,
         run_state_service: RunStateService,
         execution_runner: ExecutionRunner,
-        execution_strategy_registry: ExecutionStrategyRegistry,
         tool_registry: ToolRegistry,
         gateway: Gateway,
         orchestrator: TaskOrchestrator,
@@ -152,7 +148,6 @@ class AppContainer:
         self.skill_execution_service = skill_execution_service
         self.run_state_service = run_state_service
         self.execution_runner = execution_runner
-        self.execution_strategy_registry = execution_strategy_registry
         self.tool_registry = tool_registry
         self.gateway = gateway
         self.orchestrator = orchestrator
@@ -188,7 +183,6 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
     sandbox_manager = SandboxManager(_build_sandbox_provider(settings))
     artifact_collector = ArtifactCollector()
     replay_recorder = ReplayRecorder(replay_repository)
-    execution_strategy_registry = ExecutionStrategyRegistry()
     tool_registry = ToolRegistry()
     skill_execution_service = SkillExecutionService(
         executor=SkillScriptExecutor(sandbox_manager),
@@ -235,7 +229,6 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         sandbox_manager=sandbox_manager,
         artifact_collector=artifact_collector,
         run_state_service=run_state_service,
-        execution_strategy_registry=execution_strategy_registry,
         tool_registry=tool_registry,
         skill_execution_service=skill_execution_service,
         agent_profile_store=agent_profile_store,
@@ -297,7 +290,6 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         skill_execution_service=skill_execution_service,
         run_state_service=run_state_service,
         execution_runner=execution_runner,
-        execution_strategy_registry=execution_strategy_registry,
         tool_registry=tool_registry,
         gateway=gateway,
         orchestrator=orchestrator,

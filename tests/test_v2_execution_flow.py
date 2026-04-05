@@ -77,7 +77,7 @@ async def test_submit_task_executes_subtasks_and_collects_artifacts() -> None:
     assert "subtask.started" in event_types
     assert "artifact.created" in event_types
     assert "run.updated" in event_types
-    assert "strategy.started" in event_types
+    assert "execution.started" in event_types
     assert "tool.completed" in event_types
 
 
