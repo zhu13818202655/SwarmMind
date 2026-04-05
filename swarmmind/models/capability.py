@@ -33,7 +33,7 @@ ROLE_SPECS = {
         name="coordinator",
         description="协调分配者，负责为已就绪子任务补全执行配置，并在关键节点决定任务如何继续流转。",
         typical_responsibilities=[
-            "为子任务解析 agent profile、strategy、runtime 和 sandbox 配置",
+            "为子任务解析 agent profile、runtime 和 sandbox 配置",
             "补全技能、工具权限与执行元数据，确保下游执行器具备正确上下文",
             "根据评审或失败结果决定是否进入修复、验证、升级等后续流程"
         ],

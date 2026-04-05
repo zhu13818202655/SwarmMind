@@ -4,10 +4,10 @@ import json
 import re
 import shlex
 import uuid
+from collections.abc import Mapping
 from typing import Any
 
 from swarmmind.agents import AgentProfileStore, OmniAgentRequest, OmniAgentRunner
-from swarmmind.execution_strategies import CallbackStrategy, ExecutionStrategyRegistry, StrategyResult
 from swarmmind.events import EventBus
 from swarmmind.memory import LongTermMemoryBase
 from swarmmind.models.artifact import Artifact, ArtifactType
@@ -50,7 +50,7 @@ from swarmmind.tools.builtin import (
 
 
 class ExecutionRunner:
-    """Consume assigned subtasks and execute them via runtime strategies and tools."""
+    """Consume assigned subtasks and execute them via resolved runtimes and tools."""
 
     def __init__(
         self,
@@ -62,7 +62,6 @@ class ExecutionRunner:
         sandbox_manager: SandboxManager,
         artifact_collector: ArtifactCollector,
         run_state_service: RunStateService,
-        execution_strategy_registry: ExecutionStrategyRegistry,
         tool_registry: ToolRegistry,
         agent_profile_store: AgentProfileStore,
         skill_execution_service: SkillExecutionService | None = None,
@@ -84,7 +83,6 @@ class ExecutionRunner:
         self._sandbox_manager = sandbox_manager
         self._artifact_collector = artifact_collector
         self._run_state_service = run_state_service
-        self._execution_strategy_registry = execution_strategy_registry
         self._tool_registry = tool_registry
         self._agent_profile_store = agent_profile_store
         self._skill_execution_service = skill_execution_service
@@ -105,7 +103,6 @@ class ExecutionRunner:
             max_tokens=model_max_tokens,
         )
         self._register_default_tools()
-        self._register_default_strategies()
 
     async def handle_subtask_assigned(self, event: DomainEvent) -> None:
         """Execute an assigned subtask and persist its evidence."""
@@ -131,7 +128,7 @@ class ExecutionRunner:
 
         try:
             execution_profile = self._load_execution_profile(subtask)
-            execution_label = self._resolve_strategy_name(subtask)
+            execution_label = self._resolve_execution_label(subtask)
             subtask.metadata["execution_label"] = execution_label
             if execution_profile.resolved_runtime_kind is not None:
                 subtask.metadata["resolved_runtime_kind"] = execution_profile.resolved_runtime_kind.value
@@ -142,8 +139,8 @@ class ExecutionRunner:
             subtask.metadata["selected_tools"] = self._select_tool_names(subtask)
             await self._subtask_repository.save(subtask)
 
-            await self._publish_strategy_event(
-                topic="strategy.started",
+            await self._publish_execution_event(
+                topic="execution.started",
                 task=task,
                 run=run,
                 subtask=subtask,
@@ -157,10 +154,10 @@ class ExecutionRunner:
                 },
             )
 
-            await self._execute_subtask_via_strategy(task, run, subtask, event)
+            await self._execute_subtask(task, run, subtask, event)
 
-            await self._publish_strategy_event(
-                topic="strategy.completed",
+            await self._publish_execution_event(
+                topic="execution.completed",
                 task=task,
                 run=run,
                 subtask=subtask,
@@ -173,12 +170,12 @@ class ExecutionRunner:
         except Exception as exc:
             subtask.fail(str(exc))
             await self._subtask_repository.save(subtask)
-            await self._publish_strategy_event(
-                topic="strategy.failed",
+            await self._publish_execution_event(
+                topic="execution.failed",
                 task=task,
                 run=run,
                 subtask=subtask,
-                payload={"execution_label": self._resolve_strategy_name(subtask), "error": str(exc)},
+                payload={"execution_label": self._resolve_execution_label(subtask), "error": str(exc)},
             )
             await self._event_bus.publish(
                 DomainEvent(
@@ -197,8 +194,7 @@ class ExecutionRunner:
         finally:
             await self._run_state_service.reconcile(run.id)
 
-    async def _execute_subtask_via_strategy(self, task, run, subtask, event: DomainEvent) -> StrategyResult:
-        strategy_name = self._resolve_strategy_name(subtask)
+    async def _execute_subtask(self, task, run, subtask, event: DomainEvent) -> None:
         execution_profile = self._load_execution_profile(subtask)
         resolved_runtime_kind = execution_profile.resolved_runtime_kind or RuntimeKind.HOST_TOOLS
 
@@ -209,14 +205,7 @@ class ExecutionRunner:
         else:
             await self._execute_inline_runtime_subtask(task, run, subtask, event, resolved_runtime_kind)
 
-        return StrategyResult(
-            success=subtask.status == SubTaskStatus.SUCCEEDED,
-            output=subtask.result,
-            error=subtask.error,
-            metadata={"runtime": resolved_runtime_kind.value, "strategy": strategy_name},
-        )
-
-    def _resolve_strategy_name(self, subtask) -> str:
+    def _resolve_execution_label(self, subtask) -> str:
         execution_profile = self._load_execution_profile(subtask)
         if execution_profile.skill_profiles:
             return execution_profile.skill_profiles[0]
@@ -450,31 +439,6 @@ class ExecutionRunner:
                         sandbox_only=True,
                     ),
                 )
-
-    def _register_default_strategies(self) -> None:
-        defaults = {
-            "build_app": ("Build application artifacts inside a sandbox.", self._strategy_execute_sandbox),
-            "research": ("Research or summarize work inside a sandbox.", self._strategy_execute_sandbox),
-            "write_report": ("Write a structured report artifact.", self._strategy_execute_sandbox),
-            "task_planning": ("Analyze and summarize requirements as a task artifact.", self._strategy_execute_sandbox),
-            "verification": ("Verify dependency outputs against acceptance criteria.", self._strategy_execute_verification),
-            "review": ("Review verification evidence and decide accept/rework/escalate.", self._strategy_execute_review),
-        }
-        for name, (description, handler) in defaults.items():
-            if self._execution_strategy_registry.get(name) is None:
-                self._execution_strategy_registry.register(CallbackStrategy(name=name, description=description, handler=handler))
-
-    async def _strategy_execute_sandbox(self, **kwargs: Any) -> StrategyResult:
-        await self._execute_sandbox_subtask(kwargs["task"], kwargs["run"], kwargs["subtask"], kwargs["event"])
-        return StrategyResult(success=True, output=kwargs["subtask"].result, metadata={"runtime": "sandbox"})
-
-    async def _strategy_execute_verification(self, **kwargs: Any) -> StrategyResult:
-        await self._execute_validation_subtask(kwargs["task"], kwargs["run"], kwargs["subtask"], kwargs["event"])
-        return StrategyResult(success=True, output=kwargs["subtask"].result, metadata={"runtime": "verification"})
-
-    async def _strategy_execute_review(self, **kwargs: Any) -> StrategyResult:
-        await self._execute_validation_subtask(kwargs["task"], kwargs["run"], kwargs["subtask"], kwargs["event"])
-        return StrategyResult(success=True, output=kwargs["subtask"].result, metadata={"runtime": "review"})
 
     async def _execute_sandbox_subtask(self, task, run, subtask, event: DomainEvent) -> None:
         lease = None
@@ -742,7 +706,6 @@ class ExecutionRunner:
         subtask,
         event: DomainEvent,
         runtime_kind: RuntimeKind,
-        strategy_backend: str | None = None,
     ) -> None:
         subtask.start_execution()
         await self._subtask_repository.save(subtask)
@@ -778,7 +741,7 @@ class ExecutionRunner:
             metadata={
                 "content": content,
                 "runtime_kind": runtime_kind.value,
-                "execution_label": self._resolve_strategy_name(subtask),
+                "execution_label": self._resolve_execution_label(subtask),
                 "skill_profiles": skill_profiles,
                 "execution_backend": "omni_agent",
                 "omni_agent": {
@@ -821,7 +784,7 @@ class ExecutionRunner:
         run,
         subtask,
         sandbox_id: str | None = None,
-        payload: dict[str, object] | None = None,
+        payload: Mapping[str, object] | None = None,
     ) -> None:
         summary_payload = {
             "name": subtask.name,
@@ -884,7 +847,7 @@ class ExecutionRunner:
         if not prompt:
             return None
 
-        await self._publish_strategy_event(
+        await self._publish_execution_event(
             topic="validation.agent.started",
             task=task,
             run=run,
@@ -904,7 +867,7 @@ class ExecutionRunner:
             run=run,
         )
         if not text:
-            await self._publish_strategy_event(
+            await self._publish_execution_event(
                 topic="validation.agent.fallback",
                 task=task,
                 run=run,
@@ -915,7 +878,7 @@ class ExecutionRunner:
 
         payload = self._extract_json_payload(text)
         if payload is None:
-            await self._publish_strategy_event(
+            await self._publish_execution_event(
                 topic="validation.agent.fallback",
                 task=task,
                 run=run,
@@ -930,7 +893,7 @@ class ExecutionRunner:
             else:
                 result = ReviewDecision.model_validate(payload)
         except Exception as exc:
-            await self._publish_strategy_event(
+            await self._publish_execution_event(
                 topic="validation.agent.fallback",
                 task=task,
                 run=run,
@@ -939,7 +902,7 @@ class ExecutionRunner:
             )
             return None
 
-        await self._publish_strategy_event(
+        await self._publish_execution_event(
             topic="validation.agent.completed",
             task=task,
             run=run,
@@ -1098,7 +1061,7 @@ class ExecutionRunner:
             follow_up_actions=actions,
         )
 
-    async def _publish_strategy_event(self, topic: str, task, run, subtask, payload: dict[str, object]) -> None:
+    async def _publish_execution_event(self, topic: str, task, run, subtask, payload: dict[str, object]) -> None:
         await self._event_bus.publish(
             DomainEvent(
                 event_id=str(uuid.uuid4()),
