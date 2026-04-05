@@ -57,7 +57,7 @@ class AgentFactory:
     ) -> Toolkit:
         """Create toolkit and register plain tool functions."""
         """
-        # TODO 需要区分 
+        # TODO 需要区分
         # [ ] 1. tool_function
         # [ ] 2. tool_group, 这里是包装，一个完整的能力：包含多个工具函数
             - [ ] 文件操作能力
@@ -257,8 +257,6 @@ class AgentFactory:
     ) -> list[str]:
         if explicit_skill_profiles:
             return list(explicit_skill_profiles)
-        if execution_profile is not None and execution_profile.preferred_skill_profiles:
-            return list(execution_profile.preferred_skill_profiles)
         if execution_profile is not None and execution_profile.skill_profiles:
             return list(execution_profile.skill_profiles)
         return list(fallback_skill_profiles or [])

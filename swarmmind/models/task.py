@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
+from swarmmind.models.execution import ExecutionConfiguration
 from swarmmind.utils import utc_now
 
 
@@ -94,24 +95,12 @@ class SubTask(BaseModel):
     agent_id: str | None = Field(default=None, description="Agent assigned to this sub-task")
     agent_profile_id: str | None = Field(default=None, description="Preferred agent profile for this sub-task")
     role: AgentRole = Field(default=AgentRole.CODER, description="Logical agent role")
-    preferred_strategy: str | None = Field(default=None, description="Preferred runtime strategy profile")
-    required_tool_groups: list[ToolGroup] = Field(
-        default_factory=list,
-        description="Tool groups required by this sub-task",
-    )
-    candidate_runtime_kinds: list[RuntimeKind] = Field(
-        default_factory=list,
-        description="Candidate runtime kinds that may satisfy this sub-task",
-    )
-    preferred_skill_profiles: list[str] = Field(
-        default_factory=list,
-        description="Preferred reusable skill packages for this sub-task",
-    )
-    sandbox_profile: str | None = Field(default=None, description="Sandbox profile")
     acceptance_criteria: list[str] = Field(
         default_factory=list,
         description="Acceptance criteria for validation and review",
     )
+    expected_artifacts: list[str] = Field(default_factory=list, description="Expected artifact kinds")
+    execution_configuration: ExecutionConfiguration | None = Field(default=None)
     result: dict[str, Any] | None = Field(default=None)
     error: str | None = Field(default=None)
     dependencies: list[str] = Field(default_factory=list, description="Sub-task IDs this depends on")
@@ -129,6 +118,7 @@ class SubTask(BaseModel):
     def assign(self, execution_profile: dict[str, Any], run_id: str) -> None:
         """Assign execution metadata and transition to assigned state."""
         self.status = SubTaskStatus.ASSIGNED
+        self.metadata["assigned_execution"] = execution_profile
         self.metadata["execution_profile"] = execution_profile
         self.metadata["assigned_run_id"] = run_id
         self.metadata["assigned_at"] = utc_now().isoformat()
@@ -177,7 +167,6 @@ class TaskRequest(BaseModel):
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
     profile: str = Field(default="py-basic", description="Sandbox profile")
     agent_profile_id: str | None = Field(default=None, description="Default agent profile for generated subtasks")
-    preferred_strategy: str | None = Field(default=None, description="Preferred top-level runtime strategy")
     required_tool_groups: list[ToolGroup] = Field(
         default_factory=list,
         description="Tool groups required for the task by policy or user request",

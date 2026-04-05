@@ -131,13 +131,13 @@ class ExecutionRunner:
 
         try:
             execution_profile = self._load_execution_profile(subtask)
-            resolved_strategy_name = self._resolve_strategy_name(subtask)
-            subtask.metadata["resolved_strategy_name"] = resolved_strategy_name
+            execution_label = self._resolve_strategy_name(subtask)
+            subtask.metadata["execution_label"] = execution_label
             if execution_profile.resolved_runtime_kind is not None:
                 subtask.metadata["resolved_runtime_kind"] = execution_profile.resolved_runtime_kind.value
             if execution_profile.runtime_resolution_reason:
                 subtask.metadata["runtime_resolution_reason"] = execution_profile.runtime_resolution_reason
-            if execution_profile.runtime_fallback_chain:  # TODO 需要去除fallback_chain
+            if execution_profile.runtime_fallback_chain:
                 subtask.metadata["runtime_fallback_chain"] = [item.value for item in execution_profile.runtime_fallback_chain]
             subtask.metadata["selected_tools"] = self._select_tool_names(subtask)
             await self._subtask_repository.save(subtask)
@@ -148,7 +148,7 @@ class ExecutionRunner:
                 run=run,
                 subtask=subtask,
                 payload={
-                    "strategy_name": resolved_strategy_name,
+                    "execution_label": execution_label,
                     "role": subtask.role,
                     "resolved_runtime_kind": subtask.metadata.get("resolved_runtime_kind"),
                     "runtime_resolution_reason": subtask.metadata.get("runtime_resolution_reason"),
@@ -165,7 +165,7 @@ class ExecutionRunner:
                 run=run,
                 subtask=subtask,
                 payload={
-                    "strategy_name": resolved_strategy_name,
+                    "execution_label": execution_label,
                     "role": subtask.role,
                     "status": subtask.status,
                 },
@@ -178,7 +178,7 @@ class ExecutionRunner:
                 task=task,
                 run=run,
                 subtask=subtask,
-                payload={"strategy_name": self._resolve_strategy_name(subtask), "error": str(exc)},
+                payload={"execution_label": self._resolve_strategy_name(subtask), "error": str(exc)},
             )
             await self._event_bus.publish(
                 DomainEvent(
@@ -199,15 +199,13 @@ class ExecutionRunner:
 
     async def _execute_subtask_via_strategy(self, task, run, subtask, event: DomainEvent) -> StrategyResult:
         strategy_name = self._resolve_strategy_name(subtask)
-        execution_profile = self._load_execution_profile(subtask)  # TODO - 需要修改， strategy 分配 runtime_kind
+        execution_profile = self._load_execution_profile(subtask)
         resolved_runtime_kind = execution_profile.resolved_runtime_kind or RuntimeKind.HOST_TOOLS
 
-        if strategy_name in {"verification", "review"}:
+        if subtask.role in {AgentRole.VERIFIER, AgentRole.TESTER, AgentRole.REVIEWER}:
             await self._execute_validation_subtask(task, run, subtask, event)
         elif resolved_runtime_kind == RuntimeKind.SANDBOX:
             await self._execute_sandbox_subtask(task, run, subtask, event)
-        elif resolved_runtime_kind == RuntimeKind.AGENT_BACKED:
-            await self._execute_agent_backed_subtask(task, run, subtask, event)
         else:
             await self._execute_inline_runtime_subtask(task, run, subtask, event, resolved_runtime_kind)
 
@@ -219,8 +217,11 @@ class ExecutionRunner:
         )
 
     def _resolve_strategy_name(self, subtask) -> str:
-        if subtask.preferred_strategy:
-            return subtask.preferred_strategy
+        execution_profile = self._load_execution_profile(subtask)
+        if execution_profile.skill_profiles:
+            return execution_profile.skill_profiles[0]
+        if subtask.execution_configuration and subtask.execution_configuration.skill_profiles:
+            return subtask.execution_configuration.skill_profiles[0]
         defaults = {
             AgentRole.VERIFIER: "verification",
             AgentRole.TESTER: "verification",
@@ -234,7 +235,7 @@ class ExecutionRunner:
     def _select_tool_names(self, subtask) -> list[str]:
         execution_profile = self._load_execution_profile(subtask)
         names: list[str] = []
-        required_groups = {group.value for group in execution_profile.required_tool_groups or subtask.required_tool_groups}
+        required_groups = {group.value for group in execution_profile.required_tool_groups}
         allowed_groups = {group.value for group in execution_profile.allowed_tool_groups}
         explicit_allowed_names = set(execution_profile.allowed_tool_names)
         for metadata in self._tool_registry.get_tool_metadata():
@@ -254,12 +255,11 @@ class ExecutionRunner:
 
     def _runtime_required_tool_names(self, subtask) -> set[str]:
         execution_profile = self._load_execution_profile(subtask)
-        strategy_name = self._resolve_strategy_name(subtask)
         role = subtask.role
         required: set[str] = set()
         if execution_profile.resolved_runtime_kind == RuntimeKind.SANDBOX:
             required.add("sandbox_exec")
-        if strategy_name in {"verification", "review"}:
+        if role in {AgentRole.VERIFIER, AgentRole.TESTER, AgentRole.REVIEWER}:
             required.add("artifact_read")
         if self._long_term_memory is not None and role in {
             AgentRole.PLANNER,
@@ -290,7 +290,7 @@ class ExecutionRunner:
                 self._tool_sandbox_exec,
                 name="sandbox_exec",
                 description="Execute a command inside an acquired sandbox lease.",
-                groups=["sandbox_exec"],
+                groups=["code_exec"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.SANDBOX,
                     allowed_runtimes=[RuntimeKind.SANDBOX],
@@ -304,7 +304,7 @@ class ExecutionRunner:
                 self._tool_artifact_read,
                 name="artifact_read",
                 description="Read artifacts associated with dependency subtasks.",
-                groups=["artifact_read"],
+                groups=["artifact"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
                     allowed_runtimes=[RuntimeKind.HOST_TOOLS],
@@ -316,7 +316,7 @@ class ExecutionRunner:
                 self._tool_memory_lookup,
                 name="memory_lookup",
                 description="Retrieve related long-term memory items.",
-                groups=["memory_lookup"],
+                groups=["memory"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
                     allowed_runtimes=[RuntimeKind.HOST_TOOLS],
@@ -328,7 +328,7 @@ class ExecutionRunner:
                 self._tool_memory_write,
                 name="memory_write",
                 description="Store a concise long-term memory summary.",
-                groups=["memory_lookup"],
+                groups=["memory"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
                     allowed_runtimes=[RuntimeKind.HOST_TOOLS],
@@ -340,7 +340,7 @@ class ExecutionRunner:
                 read_file,
                 name="project_read",
                 description="Read a project file.",
-                groups=["project_read"],
+                groups=["workspace", "file_system"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
                     allowed_runtimes=[RuntimeKind.HOST_TOOLS],
@@ -352,7 +352,7 @@ class ExecutionRunner:
                 write_file,
                 name="project_write",
                 description="Write a project file.",
-                groups=["project_write"],
+                groups=["workspace", "file_system"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
                     allowed_runtimes=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
@@ -364,7 +364,7 @@ class ExecutionRunner:
                 list_files,
                 name="project_list",
                 description="List project files.",
-                groups=["project_read"],
+                groups=["workspace", "file_system"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
                     allowed_runtimes=[RuntimeKind.HOST_TOOLS],
@@ -376,7 +376,7 @@ class ExecutionRunner:
                 file_exists,
                 name="project_exists",
                 description="Check whether a project file exists.",
-                groups=["project_read"],
+                groups=["workspace", "file_system"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
                     allowed_runtimes=[RuntimeKind.HOST_TOOLS],
@@ -401,7 +401,7 @@ class ExecutionRunner:
                 browser_get,
                 name="browser_read",
                 description="Fetch and summarize a webpage.",
-                groups=["browser_read"],
+                groups=["browser"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
                     allowed_runtimes=[RuntimeKind.HOST_TOOLS],
@@ -416,7 +416,7 @@ class ExecutionRunner:
                     skill_tool.list_skill_scripts,
                     name="list_skill_scripts",
                     description="List declared scripts for a skill package.",
-                    groups=["project_read"],
+                    groups=["workspace"],
                     contract=ToolExecutionContract(
                         default_runtime=RuntimeKind.HOST_TOOLS,
                         allowed_runtimes=[RuntimeKind.HOST_TOOLS],
@@ -428,7 +428,7 @@ class ExecutionRunner:
                     skill_tool.get_skill_details,
                     name="get_skill_details",
                     description="Inspect expanded metadata and resources for a skill package.",
-                    groups=["project_read"],
+                    groups=["workspace"],
                     contract=ToolExecutionContract(
                         default_runtime=RuntimeKind.HOST_TOOLS,
                         allowed_runtimes=[RuntimeKind.HOST_TOOLS],
@@ -440,7 +440,7 @@ class ExecutionRunner:
                     skill_tool.run_skill_script,
                     name="run_skill_script",
                     description="Execute a declared skill script inside a sandbox with audit context.",
-                    groups=["sandbox_exec"],
+                    groups=["code_exec"],
                     contract=ToolExecutionContract(
                         default_runtime=RuntimeKind.SANDBOX,
                         allowed_runtimes=[RuntimeKind.SANDBOX],
@@ -459,7 +459,6 @@ class ExecutionRunner:
             "task_planning": ("Analyze and summarize requirements as a task artifact.", self._strategy_execute_sandbox),
             "verification": ("Verify dependency outputs against acceptance criteria.", self._strategy_execute_verification),
             "review": ("Review verification evidence and decide accept/rework/escalate.", self._strategy_execute_review),
-            "agent_backed": ("Run a controlled agent runtime backend with AgentProfile constraints.", self._strategy_execute_agent_backed),
         }
         for name, (description, handler) in defaults.items():
             if self._execution_strategy_registry.get(name) is None:
@@ -476,10 +475,6 @@ class ExecutionRunner:
     async def _strategy_execute_review(self, **kwargs: Any) -> StrategyResult:
         await self._execute_validation_subtask(kwargs["task"], kwargs["run"], kwargs["subtask"], kwargs["event"])
         return StrategyResult(success=True, output=kwargs["subtask"].result, metadata={"runtime": "review"})
-
-    async def _strategy_execute_agent_backed(self, **kwargs: Any) -> StrategyResult:
-        await self._execute_agent_backed_subtask(kwargs["task"], kwargs["run"], kwargs["subtask"], kwargs["event"])
-        return StrategyResult(success=True, output=kwargs["subtask"].result, metadata={"runtime": "agent_backed"})
 
     async def _execute_sandbox_subtask(self, task, run, subtask, event: DomainEvent) -> None:
         lease = None
@@ -730,16 +725,6 @@ class ExecutionRunner:
         )
         await self._publish_subtask_terminal_events(task, run, subtask, payload=subtask.result or {})
 
-    async def _execute_agent_backed_subtask(self, task, run, subtask, event: DomainEvent) -> None:
-        await self._execute_omni_agent_subtask(
-            task=task,
-            run=run,
-            subtask=subtask,
-            event=event,
-            runtime_kind=RuntimeKind.AGENT_BACKED,
-            strategy_backend="agent_backed",
-        )
-
     async def _execute_inline_runtime_subtask(self, task, run, subtask, event: DomainEvent, runtime_kind: RuntimeKind) -> None:
         await self._execute_omni_agent_subtask(
             task=task,
@@ -766,8 +751,6 @@ class ExecutionRunner:
             "role": subtask.role,
             "runtime_kind": runtime_kind.value,
         }
-        if strategy_backend == "agent_backed":
-            start_payload["agent_profile_id"] = subtask.agent_profile_id
         await self._event_bus.publish(
             DomainEvent(
                 event_id=str(uuid.uuid4()),
@@ -781,12 +764,8 @@ class ExecutionRunner:
             )
         )
 
-        if strategy_backend == "agent_backed":
-            content = await self._render_agent_backed_content(task, run, subtask)
-            artifact_name = f"{subtask.name}-agent-backed.md"
-        else:
-            content = await self._render_subtask_content(task, subtask, run=run)
-            artifact_name = f"{subtask.name}-{runtime_kind.value}.md"
+        content = await self._render_subtask_content(task, subtask, run=run)
+        artifact_name = f"{subtask.name}-{runtime_kind.value}.md"
 
         execution_profile = self._load_execution_profile(subtask)
         skill_profiles = self._effective_skill_profiles(execution_profile, subtask)
@@ -799,14 +778,14 @@ class ExecutionRunner:
             metadata={
                 "content": content,
                 "runtime_kind": runtime_kind.value,
-                "strategy": self._resolve_strategy_name(subtask),
+                "execution_label": self._resolve_strategy_name(subtask),
                 "skill_profiles": skill_profiles,
                 "execution_backend": "omni_agent",
                 "omni_agent": {
                     "tool_names": [getattr(tool, "__name__", repr(tool)) for tool in self._build_agent_tool_functions(task, run, subtask)],
                     "skill_profiles": skill_profiles,
                 },
-                **({"agent_profile_id": subtask.agent_profile_id, "handoff": subtask.metadata.get("handoff"), "strategy_backend": strategy_backend} if strategy_backend else {}),
+                **({"agent_profile_id": subtask.agent_profile_id, "handoff": subtask.metadata.get("handoff")} if subtask.agent_profile_id else {}),
             },
         )
         result_payload = {
@@ -815,14 +794,8 @@ class ExecutionRunner:
             "artifact_count": 1,
             "execution_backend": "omni_agent",
         }
-        if strategy_backend == "agent_backed":
-            result_payload.update(
-                {
-                    "agent_profile_id": subtask.agent_profile_id,
-                    "strategy_backend": "agent_backed",
-                    "handoff": subtask.metadata.get("handoff"),
-                }
-            )
+        if subtask.agent_profile_id:
+            result_payload.update({"agent_profile_id": subtask.agent_profile_id, "handoff": subtask.metadata.get("handoff")})
         subtask.complete(result_payload)
 
         await self._subtask_repository.save(subtask)
@@ -887,118 +860,6 @@ class ExecutionRunner:
             )
         )
 
-    async def _render_agent_backed_content(self, task, run, subtask) -> str:
-        execution_profile = self._load_execution_profile(subtask)
-        source_profile = self._resolve_agent_profile_for_execution(execution_profile, subtask)
-        target_profile = await self._resolve_handoff_profile(task, run, subtask, source_profile, execution_profile)
-        active_profile = target_profile or source_profile
-
-        prompt = await self._compose_subtask_prompt(task, subtask)
-        result = await self._run_omni_agent_prompt(
-            task=task,
-            subtask=subtask,
-            prompt=prompt,
-            system_prompt=render_prompt(self._system_prompt_template),
-            run=run,
-            step_kind="execution.agent_backed",
-            agent_profile_override=active_profile,
-        )
-        if result.content:
-            await self._complete_handoff_if_needed(task, run, subtask, active_profile)
-            return result.content
-        return await self._render_agent_backed_fallback_content(task, run, subtask, source_profile, active_profile)
-
-    def _resolve_agent_profile_for_execution(self, execution_profile: ExecutionProfile, subtask) -> AgentProfile:
-        profile = self._agent_profile_store.get(execution_profile.agent_profile_id)
-        if profile is not None:
-            return profile
-        return self._agent_profile_store.resolve_for_subtask(
-            profile_id=subtask.agent_profile_id,
-            role=subtask.role,
-            preferred_strategy=self._resolve_strategy_name(subtask),
-        )
-
-    async def _resolve_handoff_profile(self, task, run, subtask, source_profile: AgentProfile, execution_profile: ExecutionProfile) -> AgentProfile | None:
-        requested_target_id = self._resolve_handoff_target_profile_id(task, subtask)
-        if not requested_target_id:
-            return None
-
-        handoff_policy = execution_profile.handoff_policy
-        depth = int(subtask.metadata.get("handoff_depth") or 0)
-        deny_reason: str | None = None
-        if not handoff_policy.allow_handoff:
-            deny_reason = "handoff_disabled"
-        elif handoff_policy.allowed_targets and requested_target_id not in handoff_policy.allowed_targets:
-            deny_reason = "handoff_target_not_allowed"
-        elif depth >= handoff_policy.max_depth:
-            deny_reason = "handoff_depth_exceeded"
-
-        target_profile = self._agent_profile_store.get(requested_target_id)
-        if target_profile is None:
-            deny_reason = deny_reason or "handoff_target_not_found"
-
-        if deny_reason is not None:
-            await self._publish_handoff_denied(
-                task=task,
-                run=run,
-                subtask=subtask,
-                source_profile=source_profile,
-                target_profile_id=requested_target_id,
-                reason=deny_reason,
-            )
-            return None
-
-        assert target_profile is not None
-
-        await self._publish_handoff_event(
-            topic="agent.handoff.started",
-            task=task,
-            run=run,
-            subtask=subtask,
-            payload={
-                "from_agent_profile_id": source_profile.id,
-                "to_agent_profile_id": target_profile.id,
-                "depth": depth + 1,
-                "context_mode": handoff_policy.context_mode.value,
-            },
-        )
-        subtask.metadata["handoff"] = {
-            "from_agent_profile_id": source_profile.id,
-            "to_agent_profile_id": target_profile.id,
-            "depth": depth + 1,
-            "context_mode": handoff_policy.context_mode.value,
-            "status": "started",
-        }
-        subtask.metadata["handoff_depth"] = depth + 1
-        await self._subtask_repository.save(subtask)
-        return target_profile
-
-    def _resolve_handoff_target_profile_id(self, task, subtask) -> str | None:
-        handoff_requests = task.constraints.get("handoff_requests") or {}
-        if isinstance(handoff_requests, dict):
-            target = handoff_requests.get(subtask.name) or handoff_requests.get(subtask.id) or handoff_requests.get("*")
-            if isinstance(target, str) and target.strip():
-                return target.strip()
-        direct_target = task.constraints.get("handoff_target_profile_id")
-        if isinstance(direct_target, str) and direct_target.strip():
-            return direct_target.strip()
-        return None
-
-    async def _publish_handoff_denied(self, task, run, subtask, source_profile: AgentProfile, target_profile_id: str, reason: str) -> None:
-        payload: dict[str, object] = {
-            "from_agent_profile_id": source_profile.id,
-            "to_agent_profile_id": target_profile_id,
-            "reason": reason,
-        }
-        await self._publish_handoff_event(
-            topic="agent.handoff.denied",
-            task=task,
-            run=run,
-            subtask=subtask,
-            payload=payload,
-        )
-        await self._publish_policy_denied(task=task, run=run, subtask=subtask, payload={"reason": reason, **payload})
-
     async def _publish_handoff_event(self, topic: str, task, run, subtask, payload: dict[str, object]) -> None:
         await self._event_bus.publish(
             DomainEvent(
@@ -1011,45 +872,6 @@ class ExecutionRunner:
                 subtask_id=subtask.id,
                 payload=payload,
             )
-        )
-
-    async def _render_agent_backed_fallback_content(self, task, run, subtask, source_profile: AgentProfile, active_profile: AgentProfile) -> str:
-        handoff = subtask.metadata.get("handoff") if isinstance(subtask.metadata.get("handoff"), dict) else None
-        if handoff and handoff.get("status") == "started":
-            handoff["status"] = "completed"
-            await self._subtask_repository.save(subtask)
-            await self._publish_handoff_event(
-                topic="agent.handoff.completed",
-                task=task,
-                run=run,
-                subtask=subtask,
-                payload={
-                    "from_agent_profile_id": source_profile.id,
-                    "to_agent_profile_id": active_profile.id,
-                    "depth": handoff.get("depth", 1),
-                    "context_mode": handoff.get("context_mode", HandoffContextMode.SUMMARY.value),
-                },
-            )
-        handoff_lines: list[str] = []
-        if handoff:
-            handoff_lines = [
-                "Delegation:",
-                f"- Source Profile: {source_profile.id}",
-                f"- Active Profile: {active_profile.id}",
-                f"- Handoff Depth: {handoff.get('depth', 0)}",
-                f"- Context Mode: {handoff.get('context_mode', HandoffContextMode.SUMMARY.value)}",
-            ]
-        return "\n".join(
-            [
-                f"# Agent-Backed Execution: {subtask.name}",
-                f"Task Goal: {task.goal}",
-                f"Subtask Description: {subtask.description}",
-                f"Source Agent Profile: {source_profile.id}",
-                f"Active Agent Profile: {active_profile.id}",
-                *(handoff_lines or []),
-                "Acceptance Criteria:",
-                *[f"- {criterion}" for criterion in subtask.acceptance_criteria],
-            ]
         )
 
     async def _load_dependency_subtasks(self, run_id: str, subtask) -> list:
@@ -1448,12 +1270,11 @@ class ExecutionRunner:
 
     @staticmethod
     def _effective_skill_profiles(execution_profile: ExecutionProfile, subtask) -> list[str]:
-        if execution_profile.preferred_skill_profiles:
-            return list(execution_profile.preferred_skill_profiles)
         if execution_profile.skill_profiles:
             return list(execution_profile.skill_profiles)
-        strategy_name = subtask.preferred_strategy
-        return [strategy_name] if strategy_name else []
+        if subtask.execution_configuration and subtask.execution_configuration.skill_profiles:
+            return list(subtask.execution_configuration.skill_profiles)
+        return []
 
     @staticmethod
     def _summarize_tool_payload(value: Any) -> Any:
@@ -1587,7 +1408,9 @@ class ExecutionRunner:
             sandbox_profile = execution_profile.get("sandbox_profile")
             if isinstance(sandbox_profile, str) and sandbox_profile:
                 return sandbox_profile
-        return subtask.sandbox_profile or task.metadata.get("profile", "py-basic")
+        if subtask.execution_configuration and subtask.execution_configuration.sandbox_profile:
+            return subtask.execution_configuration.sandbox_profile
+        return task.metadata.get("profile", "py-basic")
 
     async def _build_command_request(self, task, subtask) -> CommandRequest:
         should_fail = task.constraints.get("force_fail_subtask") == subtask.name
@@ -1599,7 +1422,7 @@ class ExecutionRunner:
             "subtask": subtask.name,
             "description": subtask.description,
             "acceptance_criteria": subtask.acceptance_criteria,
-            "tool_groups": [str(group) for group in subtask.required_tool_groups],
+            "tool_groups": [group.value for group in self._load_execution_profile(subtask).required_tool_groups],
             "content": content,
         }
         payload_json = json.dumps(payload, ensure_ascii=False)
@@ -1856,7 +1679,7 @@ class ExecutionRunner:
                 "acceptance_criteria_json": json.dumps(subtask.acceptance_criteria, ensure_ascii=False),
                 "constraints_json": json.dumps(task.constraints, ensure_ascii=False),
                 "tool_groups_json": json.dumps(
-                    [str(group) for group in subtask.required_tool_groups],
+                    [group.value for group in self._load_execution_profile(subtask).required_tool_groups],
                     ensure_ascii=False,
                 ),
             },

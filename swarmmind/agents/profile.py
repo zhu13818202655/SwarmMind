@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from swarmmind.models.agent_profile import AgentProfile, HandoffPolicy, SkillsMode
-from swarmmind.models.capability import AgentRole, ToolGroup
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 
 DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
     "planner-default": AgentProfile(
@@ -10,8 +10,10 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         role=AgentRole.PLANNER,
         description="Default planning profile for decomposition and requirement analysis.",
         skill_mode=SkillsMode.INCLUSIVE,
-        allowed_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP, ToolGroup.SANDBOX_EXEC],
-        default_strategy="task_planning",
+        skill_profiles=["task_planning"],
+        default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.MEMORY],
+        recommended_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
+        allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.MEMORY],
     ),
     "researcher-default": AgentProfile(
         id="researcher-default",
@@ -20,14 +22,16 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         description="Research profile for web-backed information gathering.",
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=["research"],
+        default_tool_groups=[ToolGroup.WEB_SEARCH, ToolGroup.BROWSER, ToolGroup.WORKSPACE, ToolGroup.ARTIFACT],
+        recommended_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
         allowed_tool_groups=[
             ToolGroup.WEB_SEARCH,
-            ToolGroup.BROWSER_READ,
-            ToolGroup.PROJECT_READ,
-            ToolGroup.SANDBOX_EXEC,
-            ToolGroup.MEMORY_LOOKUP,
+            ToolGroup.BROWSER,
+            ToolGroup.WORKSPACE,
+            ToolGroup.CODE_EXEC,
+            ToolGroup.MEMORY,
+            ToolGroup.ARTIFACT,
         ],
-        default_strategy="research",
         default_sandbox_profile="research-net",
     ),
     "coder-default": AgentProfile(
@@ -37,12 +41,13 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         description="Default coding profile for implementation subtasks.",
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=["build_app"],
+        default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.MEMORY],
+        recommended_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
         allowed_tool_groups=[
-            ToolGroup.PROJECT_READ,
-            ToolGroup.PROJECT_WRITE,
-            ToolGroup.SANDBOX_EXEC,
-            ToolGroup.ARTIFACT_READ,
-            ToolGroup.MEMORY_LOOKUP,
+            ToolGroup.WORKSPACE,
+            ToolGroup.CODE_EXEC,
+            ToolGroup.ARTIFACT,
+            ToolGroup.MEMORY,
         ],
         default_sandbox_profile="py-basic",
     ),
@@ -53,8 +58,9 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         description="Verification-focused profile for structured acceptance checks.",
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=["verification"],
-        allowed_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
-        default_strategy="verification",
+        default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        recommended_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
+        allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
         default_sandbox_profile="py-basic",
     ),
     "tester-default": AgentProfile(
@@ -64,8 +70,9 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         description="Verification-focused profile with restricted artifact and sandbox access.",
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=["verification"],
-        allowed_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
-        default_strategy="verification",
+        default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        recommended_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
+        allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
         default_sandbox_profile="py-basic",
     ),
     "reviewer-default": AgentProfile(
@@ -75,8 +82,9 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         description="Review-focused profile for structured accept/rework decisions.",
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=["review"],
-        allowed_tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
-        default_strategy="review",
+        default_tool_groups=[ToolGroup.ARTIFACT, ToolGroup.MEMORY, ToolGroup.WORKSPACE],
+        recommended_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
+        allowed_tool_groups=[ToolGroup.ARTIFACT, ToolGroup.MEMORY, ToolGroup.WORKSPACE],
     ),
     "writer-default": AgentProfile(
         id="writer-default",
@@ -85,24 +93,16 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         description="Writing profile for structured reports and summaries.",
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=["write_report"],
+        default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.ARTIFACT, ToolGroup.WEB_SEARCH, ToolGroup.BROWSER],
+        recommended_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
         allowed_tool_groups=[
             ToolGroup.WEB_SEARCH,
-            ToolGroup.BROWSER_READ,
-            ToolGroup.PROJECT_WRITE,
-            ToolGroup.SANDBOX_EXEC,
-            ToolGroup.MEMORY_LOOKUP,
+            ToolGroup.BROWSER,
+            ToolGroup.WORKSPACE,
+            ToolGroup.CODE_EXEC,
+            ToolGroup.MEMORY,
+            ToolGroup.ARTIFACT,
         ],
-        default_strategy="write_report",
-    ),
-    "agent-backed-default": AgentProfile(
-        id="agent-backed-default",
-        name="Agent Backed Default",
-        role=AgentRole.CODER,
-        description="Controlled profile for the reserved agent-backed execution strategy.",
-        skill_mode=SkillsMode.ALL,
-        allowed_tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
-        default_strategy="agent_backed",
-        handoff_policy=HandoffPolicy(allow_handoff=False, max_depth=0),
     ),
 }
 
@@ -142,7 +142,6 @@ class AgentProfileStore:
         *,
         profile_id: str | None,
         role: AgentRole,
-        preferred_strategy: str | None = None,
     ) -> AgentProfile:
         if profile_id:
             profile = self.get(profile_id)
@@ -150,11 +149,6 @@ class AgentProfileStore:
                 raise ValueError(f"Agent profile not found: {profile_id}")
             if profile.role == role:
                 return profile
-
-        if preferred_strategy == "agent_backed":
-            profile = self.get("agent-backed-default")
-            if profile is not None:
-                return profile.model_copy(update={"role": role})
 
         default_profile_id = DEFAULT_ROLE_PROFILE_IDS.get(role)
         profile = self.get(default_profile_id)

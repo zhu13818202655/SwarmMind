@@ -1,4 +1,4 @@
-"""Capability models for agent roles, strategy profiles, and tool groups."""
+"""Capability models for agent roles, runtime kinds, and tool groups."""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -147,18 +147,36 @@ class AgentRole(str, Enum):
 
 
 class ToolGroup(str, Enum):
-    """Groups of atomic tools equipped per subtask."""
+    """
+    基础工具能力组，按「操作介质/环境」划分。
+    每个子任务通过组合这些基础组来获得操作物理/数字世界的能力。
+    """
 
-    PROJECT_READ = "project_read"
-    PROJECT_WRITE = "project_write"
+    FILE_SYSTEM = "file_system"
+    """本地文件系统操作：读文件、写文件、文件存在性检查、目录遍历、文件重命名/删除。"""
+
+    WORKSPACE = "workspace"
+    """项目工作区语义操作：基于项目路径的代码搜索(Grep/Glob)、批量编辑、跨文件重构、项目级读写。"""
+
     WEB_SEARCH = "web_search"
-    BROWSER_READ = "browser_read"
-    SANDBOX_EXEC = "sandbox_exec"
-    ARTIFACT_READ = "artifact_read"
-    MEMORY_LOOKUP = "memory_lookup"
-    TASK_ADMIN = "task_admin"
-    MAIL = "mail"
-    PRESENTATION = "presentation"
+    """公开网络信息检索：搜索引擎查询、获取搜索结果摘要。只负责找信息，不负责浏览详情页。"""
+
+    BROWSER = "browser"
+    """浏览器环境操作：打开网页、页面导航、DOM 交互、表单填写、截图、获取页面详情内容。
+    与 WEB_SEARCH 的区别：WEB_SEARCH 是『找』，BROWSER 是『看和交互』。"""
+
+    CODE_EXEC = "code_exec"
+    """代码执行环境：在隔离沙箱或宿主环境中运行代码/命令、安装依赖、查看执行输出。
+    不包含文件读写（需要配合 FILE_SYSTEM 或 WORKSPACE）。"""
+
+    MEMORY = "memory"
+    """持久化记忆操作：读取/写入跨会话记忆、读取 CLAUDE.md、获取历史上下文摘要。"""
+
+    ARTIFACT = "artifact"
+    """产物/附件操作：读取用户上传的文件、解析 PDF/图片、下载远程资源。"""
+
+    COMMUNICATION = "communication"
+    """基础通信能力：发送邮件、调用 Webhook、发送 Slack/IM 消息。"""
 
 
 class RuntimeKind(str, Enum):
@@ -167,8 +185,6 @@ class RuntimeKind(str, Enum):
     LLM_ONLY = "llm_only"
     HOST_TOOLS = "host_tools"
     SANDBOX = "sandbox"
-    BROWSER_AUTOMATION = "browser_automation"
-    AGENT_BACKED = "agent_backed"
 
 
 class ToolExecutionContract(BaseModel):
@@ -189,122 +205,13 @@ class ToolExecutionContract(BaseModel):
     sandbox_only: bool = Field(default=False, description="Whether the tool must run inside a sandbox runtime.")
 
 
-class StrategyProfile(BaseModel):
-    """Structured runtime strategy profile used to equip a subtask."""
-
-    name: str = Field(..., description="Unique skill profile name")
-    description: str = Field(..., description="What this profile is for")
-    tool_groups: list[ToolGroup] = Field(
-        default_factory=list,
-        description="Tool groups required by the skill profile",
-    )
-    recommended_roles: list[AgentRole] = Field(
-        default_factory=list,
-        description="Roles that commonly use this profile",
-    )
-    candidate_runtime_kinds: list[RuntimeKind] = Field(
-        default_factory=list,
-        description="Candidate execution backends that may satisfy the workflow",
-    )
-    default_skill_profiles: list[str] = Field(
-        default_factory=list,
-        description="Reusable skill packages commonly attached to the workflow",
-    )
-    sandbox_profile: str | None = Field(
-        default=None,
-        description="Preferred sandbox profile for this skill profile",
-    )
-
-
-DEFAULT_STRATEGY_PROFILES: dict[str, StrategyProfile] = {
-    "task_planning": StrategyProfile(
-        name="task_planning",
-        description="Decompose user goals into executable task graphs.",
-        tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
-        recommended_roles=[AgentRole.PLANNER, AgentRole.COORDINATOR],
-        candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
-        default_skill_profiles=["task_planning"],
-    ),
-    "research": StrategyProfile(
-        name="research",
-        description="Research external information and summarize findings.",
-        tool_groups=[ToolGroup.WEB_SEARCH, ToolGroup.BROWSER_READ, ToolGroup.PROJECT_READ],
-        recommended_roles=[AgentRole.RESEARCHER, AgentRole.WRITER],
-        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.BROWSER_AUTOMATION],
-    ),
-    "build_app": StrategyProfile(
-        name="build_app",
-        description="Implement application code, write files, and run local validation.",
-        tool_groups=[
-            ToolGroup.PROJECT_READ,
-            ToolGroup.PROJECT_WRITE,
-            ToolGroup.SANDBOX_EXEC,
-            ToolGroup.ARTIFACT_READ,
-        ],
-        recommended_roles=[AgentRole.CODER],
-        candidate_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
-        default_skill_profiles=["build_app"],
-        sandbox_profile="py-basic",
-    ),
-    "verification": StrategyProfile(
-        name="verification",
-        description="Run tests and verify outputs against acceptance criteria.",
-        tool_groups=[
-            ToolGroup.PROJECT_READ,
-            ToolGroup.SANDBOX_EXEC,
-            ToolGroup.ARTIFACT_READ,
-        ],
-        recommended_roles=[AgentRole.VERIFIER, AgentRole.TESTER, AgentRole.REVIEWER],
-        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS],
-        default_skill_profiles=["verification"],
-    ),
-    "review": StrategyProfile(
-        name="review",
-        description="Review results and decide whether to accept or rework.",
-        tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
-        recommended_roles=[AgentRole.REVIEWER, AgentRole.COORDINATOR],
-        candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
-        default_skill_profiles=["review"],
-    ),
-    "write_report": StrategyProfile(
-        name="write_report",
-        description="Research, draft, and save a structured report.",
-        tool_groups=[
-            ToolGroup.WEB_SEARCH,
-            ToolGroup.BROWSER_READ,
-            ToolGroup.PROJECT_WRITE,
-        ],
-        recommended_roles=[AgentRole.WRITER, AgentRole.RESEARCHER],
-        candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
-        default_skill_profiles=["write_report"],
-    ),
-    "presentation_delivery": StrategyProfile(
-        name="presentation_delivery",
-        description="Turn researched material into a presentation delivery artifact.",
-        tool_groups=[ToolGroup.PRESENTATION, ToolGroup.ARTIFACT_READ, ToolGroup.PROJECT_WRITE],
-        recommended_roles=[AgentRole.WRITER, AgentRole.REVIEWER],
-        candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
-        default_skill_profiles=["pptx"],
-        sandbox_profile="py-basic",
-    ),
-    "agent_backed": StrategyProfile(
-        name="agent_backed",
-        description="Run a controlled agent runtime backend instead of the default sandbox strategy.",
-        tool_groups=[ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
-        recommended_roles=[AgentRole.PLANNER, AgentRole.RESEARCHER, AgentRole.WRITER, AgentRole.CODER],
-        candidate_runtime_kinds=[RuntimeKind.AGENT_BACKED],
-    ),
-}
-
-
-
 DEFAULT_ROLE_TOOL_GROUPS: dict[AgentRole, list[ToolGroup]] = {
-    AgentRole.PLANNER: [ToolGroup.PROJECT_READ, ToolGroup.MEMORY_LOOKUP],
-    AgentRole.COORDINATOR: [ToolGroup.TASK_ADMIN, ToolGroup.MEMORY_LOOKUP, ToolGroup.ARTIFACT_READ],
-    AgentRole.RESEARCHER: [ToolGroup.WEB_SEARCH, ToolGroup.BROWSER_READ, ToolGroup.PROJECT_READ],
-    AgentRole.CODER: [ToolGroup.PROJECT_READ, ToolGroup.PROJECT_WRITE, ToolGroup.SANDBOX_EXEC],
-    AgentRole.VERIFIER: [ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
-    AgentRole.TESTER: [ToolGroup.PROJECT_READ, ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
-    AgentRole.REVIEWER: [ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
-    AgentRole.WRITER: [ToolGroup.WEB_SEARCH, ToolGroup.BROWSER_READ, ToolGroup.PROJECT_WRITE],
+    AgentRole.PLANNER: [ToolGroup.WORKSPACE, ToolGroup.MEMORY],
+    AgentRole.COORDINATOR: [ToolGroup.WORKSPACE, ToolGroup.MEMORY, ToolGroup.ARTIFACT],
+    AgentRole.RESEARCHER: [ToolGroup.WEB_SEARCH, ToolGroup.BROWSER, ToolGroup.WORKSPACE, ToolGroup.ARTIFACT],
+    AgentRole.CODER: [ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.MEMORY],
+    AgentRole.VERIFIER: [ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+    AgentRole.TESTER: [ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+    AgentRole.REVIEWER: [ToolGroup.ARTIFACT, ToolGroup.MEMORY, ToolGroup.WORKSPACE],
+    AgentRole.WRITER: [ToolGroup.WORKSPACE, ToolGroup.ARTIFACT, ToolGroup.WEB_SEARCH, ToolGroup.BROWSER],
 }

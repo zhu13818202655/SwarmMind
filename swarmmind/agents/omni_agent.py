@@ -181,9 +181,7 @@ class CapabilityResolver:
             runtime_policy=runtime_policy,
             memory_policy=MemoryPolicy(enable_long_term_memory=False),
             handoff_policy=(
-                execution_profile.handoff_policy
-                if execution_profile is not None
-                else agent_profile.handoff_policy
+                agent_profile.handoff_policy
                 if agent_profile is not None
                 else HandoffPolicy()
             ),
@@ -215,7 +213,8 @@ class CapabilityResolver:
     ) -> RuntimePolicy:
         if execution_profile is not None and execution_profile.resolved_runtime_kind is not None:
             default_runtime = execution_profile.resolved_runtime_kind
-            fallback_chain = list(execution_profile.runtime_fallback_chain) or [default_runtime]
+            backup_runtimes = list(execution_profile.runtime_fallback_chain)
+            fallback_chain = [default_runtime, *backup_runtimes]
             sandbox_profile = execution_profile.sandbox_profile
         elif agent_profile is not None and agent_profile.default_sandbox_profile:
             default_runtime = RuntimeKind.SANDBOX

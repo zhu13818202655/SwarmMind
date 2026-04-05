@@ -27,6 +27,7 @@ PLANNER_EXAMPLE_JSON = """{
         "包含模块关系图或接口定义文档。",
         "技术选型说明了对比理由。"
       ],
+      "expected_artifacts": ["design_doc"],
       "dependencies": []
     },
     {
@@ -37,6 +38,7 @@ PLANNER_EXAMPLE_JSON = """{
         "代码通过编译/解释且无运行时错误。",
         "关键路径包含基础异常处理。"
       ],
+      "expected_artifacts": ["code_changes"],
       "dependencies": ["design-system-architecture"]
     },
     {
@@ -47,6 +49,7 @@ PLANNER_EXAMPLE_JSON = """{
         "CI 配置文件已提交到仓库。",
         "在测试分支上触发构建成功。"
       ],
+      "expected_artifacts": ["ci_config"],
       "dependencies": ["implement-core-module"]
     },
     {
@@ -57,6 +60,7 @@ PLANNER_EXAMPLE_JSON = """{
         "覆盖正常路径与至少 2 种异常路径。",
         "测试用例在本地可直接运行。"
       ],
+      "expected_artifacts": ["test_code", "test_report"],
       "dependencies": ["implement-core-module"]
     },
     {
@@ -67,7 +71,28 @@ PLANNER_EXAMPLE_JSON = """{
         "所有子任务的验收标准已满足。",
         "未发现阻塞性缺陷。"
       ],
+      "expected_artifacts": ["verification_report"],
       "dependencies": ["write-module-tests", "setup-ci-pipeline"]
+    }
+  ]
+}"""
+
+
+PLANNER_EXECUTION_CONFIGURATION_EXAMPLE_JSON = """{
+  "subtasks": [
+    {
+      "name": "design-system-architecture",
+      "runtime_kind": "host_tools",
+      "tool_requirements": ["workspace", "memory"],
+      "sandbox_profile": null,
+      "skill_profiles": ["task_planning"]
+    },
+    {
+      "name": "implement-core-module",
+      "runtime_kind": "sandbox",
+      "tool_requirements": ["workspace", "code_exec"],
+      "sandbox_profile": "py-basic",
+      "skill_profiles": ["build_app"]
     }
   ]
 }"""
@@ -90,6 +115,7 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
       "description": "string",
       "role": "{PLANNER_ROLE_ENUM}",
       "acceptance_criteria": ["string"],
+      "expected_artifacts": ["string"],
       "dependencies": ["subtask-name"]
     }}
   ]
@@ -101,6 +127,7 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
   注意：当 `role` 为 `coder` 时，请在这里明确说明它负责的是**架构设计**、**核心编码**、**Bug 排查**还是 **CI/CD/部署脚本**。不同 coder 子任务各司其职即可，无需拆成多个不同 `role`。
 - `role`: 只能是 {PLANNER_ROLE_ENUM} 之一。
 - `acceptance_criteria`: 明确的验收标准，供下游验证者判断任务完成质量。
+- `expected_artifacts`: 该子任务完成后应产出的可验证交付物类型。
 - `dependencies`: 依赖的其它子任务 `name` 列表。必须无环，且只能引用真实存在的子任务。
 
 
@@ -110,7 +137,8 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
 3. 任务需要测试时，必须显式产出 `tester` 子任务；需要验证时，必须显式产出 `verifier` 子任务。
 4. 简单目标（5 分钟内可完成）优先不拆；复杂目标再展开为丰富 DAG，子任务总数建议 2-6 个，不要超过 8 个。
 5. 每个子任务必须有具体且无歧义的验收标准。
-6. 不需要的字段请使用 `null` 或省略，绝不要使用空字符串。
+6. 每个子任务必须提供 `expected_artifacts`。
+7. 不需要的字段请使用 `null` 或省略，绝不要使用空字符串。
 
 合法 JSON 示例：
 {PLANNER_EXAMPLE_JSON}
@@ -121,5 +149,48 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
 3. 输出是否只有纯 JSON，没有任何 Markdown 标记？
 
 输入：
-- 目标：{{{{ task_goal }}}}"""  # TODO 后续添加用户上传skill，知识库等上下文输入
+- 目标：{{{{ task_goal }}}}
+- 约束：{{{{ constraints_json }}}}
+- 可用 Agent Profiles JSON：{{{{ agent_profiles_json }}}}
+- 角色定义：
+{{{{ role_definitions }}}}"""  # TODO 后续添加用户上传skill，知识库等上下文输入
+)
+
+
+PLANNER_EXECUTION_CONFIGURATION_PROMPT = PromptTemplate(
+    name="planner_execution_configuration",
+    template=f"""请基于已经生成的子任务 DAG，为每个子任务生成 execution configuration。
+
+输出 Schema：
+{{
+  "subtasks": [
+    {{
+      "name": "string-kebab-case",
+      "runtime_kind": "llm_only|host_tools|sandbox|null",
+      "tool_requirements": ["file_system|workspace|web_search|browser|code_exec|memory|artifact|communication"],
+      "sandbox_profile": "string|null",
+      "skill_profiles": ["string"]
+    }}
+  ]
+}}
+
+规则：
+1. `name` 必须与输入子任务名称一一对应。
+2. `runtime_kind` 只能使用 `llm_only`、`host_tools`、`sandbox`。
+3. `tool_requirements` 必须从基础 ToolGroup 中选择，不允许输出 capability bundle 或内部执行器字段。
+4. 仅当子任务确实需要隔离执行环境时才输出 `sandbox`。
+5. `sandbox_profile` 仅在 `runtime_kind` 为 `sandbox` 时提供。
+6. `skill_profiles` 只输出受控的技能名，不要自由发明实现细节。
+
+合法 JSON 示例：
+{PLANNER_EXECUTION_CONFIGURATION_EXAMPLE_JSON}
+
+输入：
+- 用户目标：{{{{ task_goal }}}}
+- 任务约束：{{{{ constraints_json }}}}
+- 默认 sandbox profile：{{{{ profile }}}}
+- 子任务 DAG JSON：{{{{ subtasks_json }}}}
+- 可用 Agent Profiles JSON：{{{{ agent_profiles_json }}}}
+- 角色定义：
+{{{{ role_definitions }}}}"""
 )

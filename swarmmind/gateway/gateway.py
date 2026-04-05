@@ -97,7 +97,6 @@ class Gateway:
                 "session_id": session.id,
                 "profile": normalized_request.profile,
                 "agent_profile_id": normalized_request.agent_profile_id,
-                "preferred_strategy": normalized_request.preferred_strategy,
             },
         )
         await self._task_repository.create(task)
@@ -140,7 +139,6 @@ class Gateway:
                 priority=request.priority,
                 profile=request.profile,
                 agent_profile_id=request.agent_profile_id,
-                preferred_strategy=request.preferred_strategy,
                 metadata=request.metadata,
             ),
             identity=identity,

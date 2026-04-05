@@ -7,8 +7,8 @@ import uuid
 from swarmmind.events.bus import EventBus
 from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.models.event import DomainEvent
+from swarmmind.models.execution import ExecutionConfiguration, ReviewDecisionType
 from swarmmind.models.run import RunPhase
-from swarmmind.models.execution import ReviewDecisionType
 from swarmmind.models.task import SubTask, SubTaskStatus, TaskStatus
 from swarmmind.utils import utc_now
 from swarmmind.orchestration.coordinator import Coordinator
@@ -119,7 +119,11 @@ class TaskOrchestrator:
                     payload={
                         "name": subtask.name,
                         "role": subtask.role,
-                        "preferred_strategy": subtask.preferred_strategy,
+                        "runtime_kind": (
+                            subtask.execution_configuration.runtime_kind.value
+                            if subtask.execution_configuration and subtask.execution_configuration.runtime_kind is not None
+                            else None
+                        ),
                     },
                 )
             )
@@ -149,16 +153,13 @@ class TaskOrchestrator:
             name=f"repair-{target.name}-attempt-{attempt}",
             description=f"Repair issues identified during review for {target.name}.",
             role=target.role,
-            preferred_strategy=target.preferred_strategy,
-            required_tool_groups=target.required_tool_groups or [
-                ToolGroup.PROJECT_READ,
-                ToolGroup.PROJECT_WRITE,
-                ToolGroup.SANDBOX_EXEC,
-            ],
-            candidate_runtime_kinds=target.candidate_runtime_kinds,
-            preferred_skill_profiles=target.preferred_skill_profiles,
-            sandbox_profile=target.sandbox_profile or task.metadata.get("profile", "py-basic"),
             acceptance_criteria=target.acceptance_criteria,
+            expected_artifacts=list(target.expected_artifacts),
+            execution_configuration=self._clone_execution_configuration(
+                target.execution_configuration,
+                task=task,
+                role=target.role,
+            ),
             dependencies=[subtask.id],
             metadata={
                 "run_id": run.id,
@@ -174,12 +175,13 @@ class TaskOrchestrator:
             name=f"verify-repair-{target.name}-attempt-{attempt}",
             description=f"Verify the repair result for {target.name}.",
             role=AgentRole.TESTER,
-            preferred_strategy="verification",
-            required_tool_groups=[ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
-            candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS],
-            preferred_skill_profiles=["verification"],
-            sandbox_profile=task.metadata.get("profile", "py-basic"),
             acceptance_criteria=["Repair evidence is attached and satisfies the review feedback."],
+            expected_artifacts=["verification_report"],
+            execution_configuration=ExecutionConfiguration(
+                runtime_kind=RuntimeKind.HOST_TOOLS,
+                tool_requirements=[ToolGroup.ARTIFACT, ToolGroup.MEMORY],
+                skill_profiles=["verification"],
+            ),
             dependencies=[repair_subtask.id],
             metadata={
                 "run_id": run.id,
@@ -195,11 +197,13 @@ class TaskOrchestrator:
             name=f"review-repair-{target.name}-attempt-{attempt}",
             description=f"Review the repaired result for {target.name}.",
             role=AgentRole.REVIEWER,
-            preferred_strategy="review",
-            required_tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
-            candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
-            preferred_skill_profiles=["review"],
             acceptance_criteria=["A final accept or escalate decision is recorded."],
+            expected_artifacts=["review_decision"],
+            execution_configuration=ExecutionConfiguration(
+                runtime_kind=RuntimeKind.HOST_TOOLS,
+                tool_requirements=[ToolGroup.ARTIFACT, ToolGroup.MEMORY],
+                skill_profiles=["review"],
+            ),
             dependencies=[verify_subtask.id],
             metadata={
                 "run_id": run.id,
@@ -258,16 +262,13 @@ class TaskOrchestrator:
             name=f"repair-{subtask.name}-failure-attempt-{attempt}",
             description=f"Retry and repair failed subtask {subtask.name} using failure evidence.",
             role=subtask.role,
-            preferred_strategy=subtask.preferred_strategy,
-            required_tool_groups=subtask.required_tool_groups or [
-                ToolGroup.PROJECT_READ,
-                ToolGroup.PROJECT_WRITE,
-                ToolGroup.SANDBOX_EXEC,
-            ],
-            candidate_runtime_kinds=subtask.candidate_runtime_kinds,
-            preferred_skill_profiles=subtask.preferred_skill_profiles,
-            sandbox_profile=subtask.sandbox_profile or task.metadata.get("profile", "py-basic"),
             acceptance_criteria=subtask.acceptance_criteria,
+            expected_artifacts=list(subtask.expected_artifacts),
+            execution_configuration=self._clone_execution_configuration(
+                subtask.execution_configuration,
+                task=task,
+                role=subtask.role,
+            ),
             dependencies=list(subtask.dependencies),
             metadata={
                 "run_id": run.id,
@@ -283,12 +284,13 @@ class TaskOrchestrator:
             name=f"verify-repair-{subtask.name}-failure-attempt-{attempt}",
             description=f"Verify the repaired execution result for failed subtask {subtask.name}.",
             role=AgentRole.TESTER,
-            preferred_strategy="verification",
-            required_tool_groups=[ToolGroup.SANDBOX_EXEC, ToolGroup.ARTIFACT_READ],
-            candidate_runtime_kinds=[RuntimeKind.HOST_TOOLS],
-            preferred_skill_profiles=["verification"],
-            sandbox_profile=task.metadata.get("profile", "py-basic"),
             acceptance_criteria=["Failure repair evidence is attached to the run."],
+            expected_artifacts=["verification_report"],
+            execution_configuration=ExecutionConfiguration(
+                runtime_kind=RuntimeKind.HOST_TOOLS,
+                tool_requirements=[ToolGroup.ARTIFACT, ToolGroup.MEMORY],
+                skill_profiles=["verification"],
+            ),
             dependencies=[repair_subtask.id],
             metadata={
                 "run_id": run.id,
@@ -303,11 +305,13 @@ class TaskOrchestrator:
             name=f"review-repair-{subtask.name}-failure-attempt-{attempt}",
             description=f"Review the failure repair result for {subtask.name}.",
             role=AgentRole.REVIEWER,
-            preferred_strategy="review",
-            required_tool_groups=[ToolGroup.ARTIFACT_READ, ToolGroup.MEMORY_LOOKUP],
-            candidate_runtime_kinds=[RuntimeKind.LLM_ONLY, RuntimeKind.HOST_TOOLS],
-            preferred_skill_profiles=["review"],
             acceptance_criteria=["A final review decision is recorded for the failure repair."],
+            expected_artifacts=["review_decision"],
+            execution_configuration=ExecutionConfiguration(
+                runtime_kind=RuntimeKind.HOST_TOOLS,
+                tool_requirements=[ToolGroup.ARTIFACT, ToolGroup.MEMORY],
+                skill_profiles=["review"],
+            ),
             dependencies=[verify_subtask.id],
             metadata={
                 "run_id": run.id,
@@ -388,4 +392,24 @@ class TaskOrchestrator:
                 return dependency
             pending_ids.extend(dependency.dependencies)
         return None
+
+    @staticmethod
+    def _clone_execution_configuration(
+        execution_configuration: ExecutionConfiguration | None,
+        *,
+        task,
+        role: AgentRole,
+    ) -> ExecutionConfiguration:
+        if execution_configuration is not None:
+            return execution_configuration.model_copy(deep=True)
+        tool_requirements = [ToolGroup.WORKSPACE]
+        runtime_kind = RuntimeKind.HOST_TOOLS
+        if role in {AgentRole.CODER, AgentRole.TESTER}:
+            tool_requirements = [ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC]
+            runtime_kind = RuntimeKind.SANDBOX
+        return ExecutionConfiguration(
+            runtime_kind=runtime_kind,
+            tool_requirements=tool_requirements,
+            sandbox_profile=(str(task.metadata.get("profile", "py-basic")) if runtime_kind == RuntimeKind.SANDBOX else None),
+        )
 
