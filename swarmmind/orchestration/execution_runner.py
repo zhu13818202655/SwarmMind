@@ -128,7 +128,7 @@ class ExecutionRunner:
 
         try:
             execution_profile = self._load_execution_profile(subtask)
-            execution_label = self._resolve_execution_label(subtask)
+            execution_label = self._resolve_execution_label(subtask)  # TODO 需要删除
             subtask.metadata["execution_label"] = execution_label
             if execution_profile.resolved_runtime_kind is not None:
                 subtask.metadata["resolved_runtime_kind"] = execution_profile.resolved_runtime_kind.value

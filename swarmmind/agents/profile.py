@@ -140,16 +140,8 @@ class AgentProfileStore:
     def resolve_for_subtask(
         self,
         *,
-        profile_id: str | None,
         role: AgentRole,
     ) -> AgentProfile:
-        if profile_id:
-            profile = self.get(profile_id)
-            if profile is None:
-                raise ValueError(f"Agent profile not found: {profile_id}")
-            if profile.role == role:
-                return profile
-
         default_profile_id = DEFAULT_ROLE_PROFILE_IDS.get(role)
         profile = self.get(default_profile_id)
         if profile is None:

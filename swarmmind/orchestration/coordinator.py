@@ -57,9 +57,7 @@ class Coordinator:
         return assigned
 
     def _resolve_agent_profile(self, task: Task, subtask: SubTask) -> AgentProfile:
-        requested_profile_id = subtask.agent_profile_id or task.metadata.get("agent_profile_id")
         return self._agent_profile_store.resolve_for_subtask(
-            profile_id=requested_profile_id,
             role=subtask.role,
         )
 

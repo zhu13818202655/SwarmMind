@@ -63,7 +63,7 @@ class AgentFactory:
             - [ ] 文件操作能力
             - [ ] 搜索能力
         # [ ] 3. agent_skill
-        """
+        """  # TODO 这里面没有tool_group -> tool, Toolkit().create_tool_group
         toolkit = Toolkit()
         effective_skill_profiles = list(skill_profiles or self.config.skill_profiles)
         registered_tools = self._collect_registered_tools(tools, effective_skill_profiles)
@@ -73,7 +73,7 @@ class AgentFactory:
             tool_name = getattr(tool, "__name__", repr(tool))
             if tool_name in seen_names:
                 continue
-            toolkit.register_tool_function(tool)
+            toolkit.register_tool_function(tool)  # TODO 需要有：group_name
             seen_names.add(tool_name)
 
         skill_entries = resolve_agent_skill_entries(effective_skill_profiles, seen_names)

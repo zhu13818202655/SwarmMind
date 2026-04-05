@@ -128,10 +128,13 @@ class AgentRole(str, Enum):
         return ROLE_SPECS[self.value]
 
     @classmethod
-    def to_prompt_definitions(cls) -> str:
+    def to_prompt_definitions(cls, remove_role_names: List[str]) -> str:
         """生成供 Prompt 注入的角色定义文本。"""
         lines = []
         for role in cls:
+            if role.value in remove_role_names:
+                continue
+
             sp = role.spec
             lines.append(f"【{role.value}】{sp.description}")
             lines.append(f"  典型职责：{' / '.join(sp.typical_responsibilities)}")

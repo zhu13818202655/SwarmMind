@@ -89,7 +89,7 @@ class OmniAgentRunner:
             "sandbox_profile": request.execution_profile.sandbox_profile if request.execution_profile is not None else None,
         }
 
-        if not self._model_name or (not self._api_key and not self._base_url):
+        if not self._model_name or (not self._api_key and not self._base_url):  # TODO fallback处理，这个是否还需要
             result = OmniAgentResult(
                 status="fallback",
                 reason="model_unavailable",

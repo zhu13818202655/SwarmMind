@@ -109,9 +109,13 @@ class Planner:
             )
             agent = agent_factory.create_main_agent(tools=[])
             prompt = await self._compose_planning_prompt(task)
+            with open("planner_composed_prompt.txt", "w", encoding="utf-8") as f:
+                f.write(prompt)
             result = await agent(Msg(name="user", role="user", content=prompt))
             text = result.get_text_content() or json.dumps(result.to_dict(), ensure_ascii=False)
             payload = self._extract_json_payload(text)
+            with open("planner_raw_output.json", "w", encoding="utf-8") as f:
+                json.dump({"text": text, "payload": payload}, f, ensure_ascii=False, indent=2)
             if payload is None:
                 return []
 
@@ -124,13 +128,13 @@ class Planner:
             return []
 
     async def _compose_planning_prompt(self, task: Task) -> str:
+        # TODO 是不是需要memory上下文？如果有的话，prompt里应该怎么组织呈现比较好
         prompt = render_prompt(
             self._user_prompt_template,
             {
                 "task_goal": task.goal,
                 "constraints_json": json.dumps(task.constraints, ensure_ascii=False),
-                "agent_profiles_json": json.dumps(self._render_agent_profile_options(), ensure_ascii=False),
-                "role_definitions": AgentRole.to_prompt_definitions(),
+                "role_definitions": AgentRole.to_prompt_definitions(remove_role_names=["planner", "coordinator"]),
             },
         )
         memory_context = await self._render_memory_context(task.goal)
@@ -177,8 +181,7 @@ class Planner:
                 "constraints_json": json.dumps(task.constraints, ensure_ascii=False),
                 "profile": str(task.metadata.get("profile", "py-basic")),
                 "subtasks_json": subtasks_json,
-                "agent_profiles_json": json.dumps(self._render_agent_profile_options(), ensure_ascii=False),
-                "role_definitions": AgentRole.to_prompt_definitions(),
+                "role_definitions": AgentRole.to_prompt_definitions(remove_role_names=["planner", "coordinator"]),
             },
         )
 
@@ -436,7 +439,7 @@ class Planner:
         skill_profiles: list[str] = []
         sandbox_profile = str(task.metadata.get("profile", "py-basic")) if runtime_kind == RuntimeKind.SANDBOX else None
         if self._agent_profile_store is not None:
-            profile = self._agent_profile_store.resolve_for_subtask(profile_id=None, role=role)
+            profile = self._agent_profile_store.resolve_for_subtask(role=role)
             if profile.default_tool_groups:
                 tool_requirements = list(profile.default_tool_groups)
             if profile.recommended_runtime_kinds:

@@ -4,13 +4,14 @@ from swarmmind.prompt_template.base import PromptTemplate
 
 
 PLANNER_SUPPORTED_ROLES = (
-    "coder",     # 编码者，负责编写代码实现任务
+    "coder",     # 编码者，负责编写代码实现任务，前后端通用
   	"verifier",  # 验证者，负责验证任务的正确性和完整性
     "tester",    # 测试者，负责编写和执行测试用例
     "reviewer",  # 审查者，负责审查任务的输出质量
     "researcher",# 研究者，负责进行背景研究和信息收集，主要使用搜索工具和沙盒进行浏览器搜索和文档阅读
     "writer",    # 撰写者，负责编写文档和报告，主要使用撰写工具和阅读工具，写成PPT、Word、Excel、Markdown、HTML等格式
 )
+
 PLANNER_ROLE_ENUM = "|".join(PLANNER_SUPPORTED_ROLES)
 
 
@@ -78,24 +79,65 @@ PLANNER_EXAMPLE_JSON = """{
 }"""
 
 
-PLANNER_EXECUTION_CONFIGURATION_EXAMPLE_JSON = """{
+PLANNER_EXECUTION_CONFIGURATION_EXAMPLE_JSON = """
+合法 JSON 示例 1（简单目标，不拆分）：
+{{
   "subtasks": [
-    {
-      "name": "design-system-architecture",
-      "runtime_kind": "host_tools",
-      "tool_requirements": ["workspace", "memory"],
-      "sandbox_profile": null,
-      "skill_profiles": ["task_planning"]
-    },
-    {
-      "name": "implement-core-module",
-      "runtime_kind": "sandbox",
-      "tool_requirements": ["workspace", "code_exec"],
-      "sandbox_profile": "py-basic",
-      "skill_profiles": ["build_app"]
-    }
+    {{
+      "name": "fix-readme-typo",
+      "description": "修正 README.md 中 Installation 章节第三行的拼写错误。",
+      "role": "coder",
+      "acceptance_criteria": [
+        "README.md 中的指定拼写错误已被修正。",
+        "文件仍能被正常解析为 Markdown。"
+      ],
+      "expected_artifacts": ["code_changes"],
+      "dependencies": []
+    }}
   ]
-}"""
+}}
+
+合法 JSON 示例 2（复杂研究+撰写任务）：
+{{
+  "subtasks": [
+    {{
+      "name": "research-gold-market",
+      "description": "收集近 3 个月黄金价格走势数据、影响金价的宏观经济事件，以及主流机构对未来价格的预测观点。",
+      "role": "researcher",
+      "acceptance_criteria": [
+        "包含近 3 个月黄金价格的关键价位变化（至少 5 个时间节点）。",
+        "列出了至少 3 家主流机构（如高盛、瑞银、世界黄金协会）的预测观点及来源。",
+        "标注了所有关键数据的来源链接。"
+      ],
+      "expected_artifacts": ["research_summary"],
+      "dependencies": []
+    }},
+    {{
+      "name": "draft-investment-ppt",
+      "description": "基于研究结果撰写黄金投资建议 PPT，内容包含：走势分析、未来预测、风险提示、投资建议。",
+      "role": "writer",
+      "acceptance_criteria": [
+        "PPT 包含走势分析、未来预测、风险提示、投资建议四个完整章节。",
+        "每页内容有明确的数据或观点支撑，无空占位符。",
+        "输出为可直接打开的 .pptx 或 .pdf 文件。"
+      ],
+      "expected_artifacts": ["presentation"],
+      "dependencies": ["research-gold-market"]
+    }},
+    {{
+      "name": "review-ppt-content",
+      "description": "审查 PPT 中的数据准确性、投资逻辑一致性和页面排版可读性，提出修改建议。",
+      "role": "reviewer",
+      "acceptance_criteria": [
+        "所有引用的数据与来源一致，无事实性错误。",
+        "投资逻辑不存在自相矛盾。",
+        "列出至少 3 条具体的改进建议（如有）。"
+      ],
+      "expected_artifacts": ["review_comments"],
+      "dependencies": ["draft-investment-ppt"]
+    }}
+  ]
+}}"""
 
 
 PLANNER_SYSTEM_PROMPT = PromptTemplate(
@@ -107,7 +149,7 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
     name="planner_task_decomposition",
     template=f"""请根据输入生成一个符合如下结构的计划 JSON。
 
-输出 Schema：
+## 输出 Schema：
 {{
   "subtasks": [
     {{
@@ -121,37 +163,57 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
   ]
 }}
 
-字段说明：
-- `name`: 子任务唯一标识。
-- `description`: 具体、可执行的任务描述。
-  注意：当 `role` 为 `coder` 时，请在这里明确说明它负责的是**架构设计**、**核心编码**、**Bug 排查**还是 **CI/CD/部署脚本**。不同 coder 子任务各司其职即可，无需拆成多个不同 `role`。
-- `role`: 只能是 {PLANNER_ROLE_ENUM} 之一。
-- `acceptance_criteria`: 明确的验收标准，供下游验证者判断任务完成质量。
-- `expected_artifacts`: 该子任务完成后应产出的可验证交付物类型。
-- `dependencies`: 依赖的其它子任务 `name` 列表。必须无环，且只能引用真实存在的子任务。
 
+## 字段说明：
+- `name`: 子任务唯一标识，kebab-case，在同一个 DAG 内不可重复。
+- `description`:
+  - 必须具体、可执行、无歧义。禁止使用 "可能需要..." "视情况而定..." "视具体环境..." 等模糊措辞。
+  - 当 `role` 为 `coder` 时，必须明确是「架构设计」「核心编码」「Bug 排查/调试」还是「CI/部署脚本」。
+  - 当 `role` 为 `coordinator` 时，必须明确协调的具体内容和预期决策。
+- `role`: 只能为上述可用角色之一（`planner` 通常不作为子任务出现，因为它就是当前执行规划的角色本身）。
+- `acceptance_criteria`:
+  - 每条标准必须是**可观察、可验证**的。
+  - 下游 `verifier` 仅通过查看代码、文档或运行结果就能给出明确的「通过/不通过」，不需要主观判断。
+  - 禁止出现 "质量较高" "逻辑清晰" "结构合理" 等无法直接验证的抽象描述。
+- `expected_artifacts`:
+  - 该子任务完成后应产出的**可验证交付物**清单。
+  - 对于非产出型角色（如部分 `verifier` 或 `coordinator`），如果确实没有固定交付物，可设为 `["verification_conclusion"]` 或 `["sync_summary"]`，**禁止留空字符串**。
+- `dependencies`:
+  - 只有当子任务**确实需要**其它任务的产出作为输入时才写依赖。
+  - 不要为了人为制造顺序而强行加依赖。如果两个任务可以并行，就让它并行。
 
-规则：
-1. 子任务必须精简、可执行、可验证。
-2. 依赖关系必须构成 DAG，禁止循环依赖。
-3. 任务需要测试时，必须显式产出 `tester` 子任务；需要验证时，必须显式产出 `verifier` 子任务。
-4. 简单目标（5 分钟内可完成）优先不拆；复杂目标再展开为丰富 DAG，子任务总数建议 2-6 个，不要超过 8 个。
-5. 每个子任务必须有具体且无歧义的验收标准。
-6. 每个子任务必须提供 `expected_artifacts`。
-7. 不需要的字段请使用 `null` 或省略，绝不要使用空字符串。
+## 任务拆分规则：
+1. **能不拆就不拆**：如果目标单一（5 分钟内、一个角色可完成、无并行需求），直接输出 1 个子任务。
+2. **拆分的触发条件**（满足任一）：
+    a. 涉及 2 个及以上不同专业领域
+    b. 存在天然并行路径
+    c. 需要独立验证/审查环节
+    d. 存在先研后产、先设计后实现的强依赖
+3. **角色选择原则（按任务本质选择，执行能力由底层工具统一支持）**：
+    - 最终产出是面向人类的文档、报告、PPT、邮件内容 → `writer`
+    - 需要先收集外部信息、查资料、做市场或技术调研 → `researcher`
+    - 涉及代码编写、脚本开发、系统架构、CI/CD 配置、技术调试 → `coder`
+    - 需要编写测试用例并验证代码正确性 → `tester`
+    - 需要评估质量、可读性、一致性并提出改进建议 → `reviewer`
+    - 需要从全局视角对照验收标准做最终检查并给出通过/不通过结论 → `verifier`
+    执行动作的分配：如果 `writer`、`researcher` 或 `coder` 的任务中涉及调用 API、发送通知、运行命令等动作，由该角色在执行阶段直接调用对应工具完成，无需切换角色。
+    例如：writer 撰写邮件后可直接调用邮件发送工具；researcher 调研后可直接调用下载工具保存数据；coder 编写脚本后可直接运行测试命令。
+4. **数量限制**：子任务总数建议 1-5 个，绝对不要超过 7 个。超过 7 个说明分解过细，请合并同类任务。
 
-合法 JSON 示例：
+## 合法 JSON 示例：
 {PLANNER_EXAMPLE_JSON}
 
-在正式输出 JSON 之前，请完成以下自检：
-1. `dependencies` 中的 `name` 是否都存在于 `subtasks` 里？
+## 自检清单（在输出 JSON 前必须确认）：
+1. `dependencies` 中引用的 `name` 是否都在 `subtasks` 中存在？
 2. 是否存在循环依赖？
-3. 输出是否只有纯 JSON，没有任何 Markdown 标记？
+3. `role` 是否都来自允许列表，且没有使用 `planner` 作为子任务角色？
+4. `acceptance_criteria` 是否都是可观察、可验证的具体标准（没有 "质量好" "逻辑清晰" 这类词）？
+5. `description` 中是否没有 "可能" "视情况" 等模糊词？
+6. 子任务数量是否在 1-7 之间？
 
-输入：
+## 输入：
 - 目标：{{{{ task_goal }}}}
 - 约束：{{{{ constraints_json }}}}
-- 可用 Agent Profiles JSON：{{{{ agent_profiles_json }}}}
 - 角色定义：
 {{{{ role_definitions }}}}"""  # TODO 后续添加用户上传skill，知识库等上下文输入
 )
@@ -190,7 +252,6 @@ PLANNER_EXECUTION_CONFIGURATION_PROMPT = PromptTemplate(
 - 任务约束：{{{{ constraints_json }}}}
 - 默认 sandbox profile：{{{{ profile }}}}
 - 子任务 DAG JSON：{{{{ subtasks_json }}}}
-- 可用 Agent Profiles JSON：{{{{ agent_profiles_json }}}}
 - 角色定义：
 {{{{ role_definitions }}}}"""
 )
