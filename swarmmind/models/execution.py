@@ -18,6 +18,16 @@ class ExecutionConfiguration(BaseModel):
     metadata: dict[str, str] = Field(default_factory=dict)
 
 
+class SubtaskExecutionCandidate(BaseModel):
+    """Planner-side execution candidate before coordinator resolution."""
+
+    name: str = Field(...)
+    tool_groups: list[ToolGroup] = Field(default_factory=list)
+    runtime_kinds: list[RuntimeKind] = Field(default_factory=list)
+    sandbox_profile: str | None = Field(default=None)
+    skill_profiles: list[str] = Field(default_factory=list)
+
+
 class ExecutionProfile(BaseModel):
     """Resolved capability bundle for a subtask execution."""
 

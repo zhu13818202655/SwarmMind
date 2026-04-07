@@ -8,7 +8,7 @@ from swarmmind.models.capability import (
 	ToolGroup,
 )
 from swarmmind.models.event import DomainEvent
-from swarmmind.models.execution import ExecutionConfiguration, ExecutionProfile
+from swarmmind.models.execution import ExecutionConfiguration, ExecutionProfile, SubtaskExecutionCandidate
 from swarmmind.models.replay import ReplayEntry, ReplayRoot
 from swarmmind.models.run import Run, RunPhase, RunStatus
 from swarmmind.models.session import Session, SessionStatus
@@ -23,6 +23,7 @@ __all__ = [
 	"DomainEvent",
 	"ExecutionConfiguration",
 	"ExecutionProfile",
+	"SubtaskExecutionCandidate",
 	"HandoffContextMode",
 	"HandoffPolicy",
 	"ReplayEntry",

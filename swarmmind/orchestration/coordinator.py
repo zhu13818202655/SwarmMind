@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.models.agent_profile import AgentProfile
 from swarmmind.models.capability import DEFAULT_ROLE_TOOL_GROUPS, RuntimeKind, ToolGroup
@@ -76,8 +78,29 @@ class Coordinator:
         required_tool_groups: list[ToolGroup],
     ) -> list[RuntimeKind]:
         candidates: list[RuntimeKind] = []
+        planner_candidate = subtask.metadata.get("planner_execution_candidate") if isinstance(subtask.metadata, dict) else None
+        if isinstance(planner_candidate, dict):
+            runtime_values = planner_candidate.get("runtime_kinds")
+            if isinstance(runtime_values, list):
+                for value in runtime_values:
+                    try:
+                        candidates.append(RuntimeKind(str(value).strip().lower()))
+                    except ValueError:
+                        continue
         if subtask.execution_configuration and subtask.execution_configuration.runtime_kind is not None:
             candidates.append(subtask.execution_configuration.runtime_kind)
+            raw_fallbacks = subtask.execution_configuration.metadata.get("planner_candidate_runtime_kinds")
+            if raw_fallbacks:
+                try:
+                    fallback_values = json.loads(raw_fallbacks)
+                except json.JSONDecodeError:
+                    fallback_values = []
+                if isinstance(fallback_values, list):
+                    for value in fallback_values:
+                        try:
+                            candidates.append(RuntimeKind(str(value).strip().lower()))
+                        except ValueError:
+                            continue
         candidates.extend(agent_profile.recommended_runtime_kinds)
         if ToolGroup.CODE_EXEC in required_tool_groups:
             candidates.extend([RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS])

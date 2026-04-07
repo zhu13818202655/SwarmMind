@@ -60,3 +60,36 @@ async def test_coordinator_prefers_host_tools_for_research_without_legacy_browse
     assert profile.runtime_fallback_chain == [RuntimeKind.SANDBOX, RuntimeKind.LLM_ONLY]
     assert profile.runtime_resolution_reason is not None
     assert "host_tools" in profile.runtime_resolution_reason
+
+
+@pytest.mark.asyncio
+async def test_coordinator_uses_planner_execution_candidate_runtime_priority() -> None:
+    coordinator = Coordinator(AgentProfileStore())
+    task = Task(id="task-3", goal="执行实现任务", metadata={"profile": "py-basic"})
+    run = Run(id="run-3", task_id=task.id, session_id="session-3")
+    subtask = SubTask(
+        id="subtask-3",
+        task_id=task.id,
+        name="prepare-implementation",
+        description="Implement feature with code execution.",
+        role=AgentRole.CODER,
+        execution_configuration=ExecutionConfiguration(
+            tool_requirements=[ToolGroup.CODE_EXEC, ToolGroup.WORKSPACE],
+            metadata={"planner_candidate_runtime_kinds": '["host_tools","sandbox"]'},
+        ),
+        metadata={
+            "planner_execution_candidate": {
+                "name": "prepare-implementation",
+                "tool_groups": ["code_exec", "workspace"],
+                "runtime_kinds": ["host_tools", "sandbox"],
+                "skill_profiles": ["build_app"],
+            }
+        },
+    )
+
+    [assigned_subtask] = await coordinator.assign(task, run, [subtask])
+    profile = ExecutionProfile.model_validate(assigned_subtask.metadata["execution_profile"])
+
+    assert profile.resolved_runtime_kind == RuntimeKind.HOST_TOOLS
+    assert profile.runtime_fallback_chain[0] == RuntimeKind.SANDBOX
+    assert assigned_subtask.metadata.get("resolved_execution_profile") is not None

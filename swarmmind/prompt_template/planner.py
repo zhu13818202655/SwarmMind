@@ -18,72 +18,11 @@ PLANNER_ROLE_ENUM = "|".join(PLANNER_SUPPORTED_ROLES)
 # =============================================================================
 # Few-shot 示例（展示 description 如何在大角色内细分职责 + DAG 依赖）
 # =============================================================================
-PLANNER_EXAMPLE_JSON = """{
-  "subtasks": [
-    {
-      "name": "design-system-architecture",
-      "description": "负责系统整体架构设计：定义模块边界、接口契约、数据库模型与技术选型。",
-      "role": "coder",
-      "acceptance_criteria": [
-        "包含模块关系图或接口定义文档。",
-        "技术选型说明了对比理由。"
-      ],
-      "expected_artifacts": ["design_doc"],
-      "dependencies": []
-    },
-    {
-      "name": "implement-core-module",
-      "description": "根据架构设计实现核心模块的业务逻辑代码。",
-      "role": "coder",
-      "acceptance_criteria": [
-        "代码通过编译/解释且无运行时错误。",
-        "关键路径包含基础异常处理。"
-      ],
-      "expected_artifacts": ["code_changes"],
-      "dependencies": ["design-system-architecture"]
-    },
-    {
-      "name": "setup-ci-pipeline",
-      "description": "编写 CI/CD 配置文件（如 GitHub Actions）并验证构建流程可正常跑通。",
-      "role": "coder",
-      "acceptance_criteria": [
-        "CI 配置文件已提交到仓库。",
-        "在测试分支上触发构建成功。"
-      ],
-      "expected_artifacts": ["ci_config"],
-      "dependencies": ["implement-core-module"]
-    },
-    {
-      "name": "write-module-tests",
-      "description": "为核心模块编写单元测试和集成测试。",
-      "role": "tester",
-      "acceptance_criteria": [
-        "覆盖正常路径与至少 2 种异常路径。",
-        "测试用例在本地可直接运行。"
-      ],
-      "expected_artifacts": ["test_code", "test_report"],
-      "dependencies": ["implement-core-module"]
-    },
-    {
-      "name": "verify-release-readiness",
-      "description": "验证代码、测试、CI 流程是否满足发布标准。",
-      "role": "verifier",
-      "acceptance_criteria": [
-        "所有子任务的验收标准已满足。",
-        "未发现阻塞性缺陷。"
-      ],
-      "expected_artifacts": ["verification_report"],
-      "dependencies": ["write-module-tests", "setup-ci-pipeline"]
-    }
-  ]
-}"""
-
-
-PLANNER_EXECUTION_CONFIGURATION_EXAMPLE_JSON = """
+PLANNER_EXAMPLE_JSON = """
 合法 JSON 示例 1（简单目标，不拆分）：
-{{
+{
   "subtasks": [
-    {{
+    {
       "name": "fix-readme-typo",
       "description": "修正 README.md 中 Installation 章节第三行的拼写错误。",
       "role": "coder",
@@ -93,14 +32,14 @@ PLANNER_EXECUTION_CONFIGURATION_EXAMPLE_JSON = """
       ],
       "expected_artifacts": ["code_changes"],
       "dependencies": []
-    }}
+    }
   ]
-}}
+}
 
 合法 JSON 示例 2（复杂研究+撰写任务）：
-{{
+{
   "subtasks": [
-    {{
+    {
       "name": "research-gold-market",
       "description": "收集近 3 个月黄金价格走势数据、影响金价的宏观经济事件，以及主流机构对未来价格的预测观点。",
       "role": "researcher",
@@ -111,8 +50,8 @@ PLANNER_EXECUTION_CONFIGURATION_EXAMPLE_JSON = """
       ],
       "expected_artifacts": ["research_summary"],
       "dependencies": []
-    }},
-    {{
+    },
+    {
       "name": "draft-investment-ppt",
       "description": "基于研究结果撰写黄金投资建议 PPT，内容包含：走势分析、未来预测、风险提示、投资建议。",
       "role": "writer",
@@ -123,8 +62,8 @@ PLANNER_EXECUTION_CONFIGURATION_EXAMPLE_JSON = """
       ],
       "expected_artifacts": ["presentation"],
       "dependencies": ["research-gold-market"]
-    }},
-    {{
+    },
+    {
       "name": "review-ppt-content",
       "description": "审查 PPT 中的数据准确性、投资逻辑一致性和页面排版可读性，提出修改建议。",
       "role": "reviewer",
@@ -135,9 +74,28 @@ PLANNER_EXECUTION_CONFIGURATION_EXAMPLE_JSON = """
       ],
       "expected_artifacts": ["review_comments"],
       "dependencies": ["draft-investment-ppt"]
-    }}
+    }
   ]
-}}"""
+}"""
+
+
+PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON = """
+合法 JSON 示例 1（代码实现子任务）：
+{
+  "name": "implement-core-module",
+  "tool_groups": ["workspace", "code_exec", "artifact"],
+  "runtime_kinds": ["sandbox", "host_tools"],
+  "sandbox_profile": "py-basic",
+  "skill_profiles": ["python-dev"]
+}
+
+合法 JSON 示例 2（调研子任务）：
+{
+  "name": "research-gold-market",
+  "tool_groups": ["web_search", "browser", "workspace", "artifact"],
+  "runtime_kinds": ["host_tools", "llm_only"],
+  "skill_profiles": ["deep-research"]
+}"""
 
 
 PLANNER_SYSTEM_PROMPT = PromptTemplate(
@@ -221,37 +179,36 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
 
 PLANNER_EXECUTION_CONFIGURATION_PROMPT = PromptTemplate(
     name="planner_execution_configuration",
-    template=f"""请基于已经生成的子任务 DAG，为每个子任务生成 execution configuration。
+    template=f"""请基于单个子任务事实，从系统给定候选空间中选择 execution candidate。
 
 输出 Schema：
 {{
-  "subtasks": [
-    {{
-      "name": "string-kebab-case",
-      "runtime_kind": "llm_only|host_tools|sandbox|null",
-      "tool_requirements": ["file_system|workspace|web_search|browser|code_exec|memory|artifact|communication"],
-      "sandbox_profile": "string|null",
-      "skill_profiles": ["string"]
-    }}
-  ]
+  "name": "string-kebab-case",
+  "tool_groups": ["file_system|workspace|web_search|browser|code_exec|memory|artifact|communication"],
+  "runtime_kinds": ["llm_only|host_tools|sandbox"],
+  "sandbox_profile": "string|null",
+  "skill_profiles": ["string"]
 }}
 
 规则：
-1. `name` 必须与输入子任务名称一一对应。
-2. `runtime_kind` 只能使用 `llm_only`、`host_tools`、`sandbox`。
-3. `tool_requirements` 必须从基础 ToolGroup 中选择，不允许输出 capability bundle 或内部执行器字段。
-4. 仅当子任务确实需要隔离执行环境时才输出 `sandbox`。
-5. `sandbox_profile` 仅在 `runtime_kind` 为 `sandbox` 时提供。
-6. `skill_profiles` 只输出受控的技能名，不要自由发明实现细节。
+1. `name` 必须与输入子任务名称完全一致。
+2. `tool_groups` 只能从给定 `available_tool_groups` 中选择。
+3. `runtime_kinds` 只能从给定 `available_runtime_kinds` 中选择，且按优先级排序。
+4. 只有当 `runtime_kinds` 包含 `sandbox` 时，才允许输出 `sandbox_profile`；否则必须为 `null` 或省略。
+5. `sandbox_profile` 只能从任务默认 profile 或系统支持的 sandbox profile 中选择，不要自由发明不存在的名字。
+6. `skill_profiles` 只能从给定 `available_skill_profiles` 中选择；若不需要技能可输出空数组。
+7. 这是 candidate 选择，不是最终执行决策；不要输出 agent profile 或其它执行器内部字段。
 
 合法 JSON 示例：
-{PLANNER_EXECUTION_CONFIGURATION_EXAMPLE_JSON}
+{PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON}
 
 输入：
 - 用户目标：{{{{ task_goal }}}}
 - 任务约束：{{{{ constraints_json }}}}
-- 默认 sandbox profile：{{{{ profile }}}}
-- 子任务 DAG JSON：{{{{ subtasks_json }}}}
+- 子任务 JSON：{{{{ subtask_json }}}}
+- 可用 tool groups：{{{{ available_tool_groups_json }}}}
+- 可用 runtime kinds：{{{{ available_runtime_kinds_json }}}}
+- 可用 skill profiles：{{{{ available_skill_profiles_json }}}}
 - 角色定义：
 {{{{ role_definitions }}}}"""
 )
