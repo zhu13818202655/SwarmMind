@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, List
 
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.memory import InMemoryMemory
@@ -325,7 +325,7 @@ class AgentFactory:
         return registry
 
     @staticmethod
-    def _resolve_tool_groups(tool: Any, fallback_groups: list[ToolGroup]) -> list[ToolGroup]:
+    def _resolve_tool_groups(tool: Any, fallback_groups: list[ToolGroup]) -> List[ToolGroup]:
         raw_groups = getattr(tool, "__swarmmind_tool_groups__", None)
         if raw_groups:
             return [group if isinstance(group, ToolGroup) else ToolGroup(group) for group in raw_groups]
