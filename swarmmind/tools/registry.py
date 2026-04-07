@@ -1,6 +1,6 @@
 """Tool registry for SwarmMind."""
 
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 import inspect
 
 from agentscope.tool import Toolkit
@@ -60,7 +60,7 @@ class ToolRegistry:
         func: Callable,
         name: str | None = None,
         description: str | None = None,
-        groups: list[ToolGroup | str] | None = None,
+        groups: Sequence[ToolGroup | str] | None = None,
         contract: ToolExecutionContract | dict[str, Any] | None = None,
     ) -> None:
         """Register a function as a tool."""
@@ -127,7 +127,7 @@ class ToolRegistry:
 
     def get_tools_for_groups(
         self,
-        groups: list[ToolGroup | str],
+        groups: Sequence[ToolGroup | str],
         *,
         runtime_kind: RuntimeKind | None = None,
         tool_names: list[str] | None = None,
@@ -146,7 +146,7 @@ class ToolRegistry:
 
     def get_functions_for_groups(
         self,
-        groups: list[ToolGroup | str],
+        groups: Sequence[ToolGroup | str],
         *,
         runtime_kind: RuntimeKind | None = None,
         tool_names: list[str] | None = None,
@@ -217,7 +217,7 @@ class ToolRegistry:
     def build_toolkit(
         self,
         *,
-        active_groups: list[ToolGroup | str] | None = None,
+        active_groups: Sequence[ToolGroup | str] | None = None,
         active_tool_names: list[str] | None = None,
         runtime_kind: RuntimeKind | None = None,
         strict_tool_names: bool = False,
@@ -254,7 +254,7 @@ class ToolRegistry:
             toolkit.update_tool_groups([group.value for group in normalized_active_groups], active=True)
         return toolkit
 
-    def _normalize_groups(self, groups: list[ToolGroup | str] | None) -> list[ToolGroup]:
+    def _normalize_groups(self, groups: Sequence[ToolGroup | str] | None) -> list[ToolGroup]:
         if not groups:
             return []
         normalized: list[ToolGroup] = []
@@ -270,7 +270,7 @@ class ToolRegistry:
     def _select_tool_names(
         self,
         *,
-        groups: list[ToolGroup | str] | None,
+        groups: Sequence[ToolGroup | str] | None,
         runtime_kind: RuntimeKind | None,
         tool_names: list[str] | None,
         strict_tool_names: bool,

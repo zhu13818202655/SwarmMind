@@ -31,7 +31,7 @@ vector_store:
   embedding_dimension: 256
 
 search:
-  provider: duckduckgo
+  provider: tavily
   api_key: ${SWARMMIND_SEARCH__API_KEY}
   base_url: null
   timeout_seconds: 10.0
