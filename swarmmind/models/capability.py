@@ -213,8 +213,8 @@ DEFAULT_ROLE_TOOL_GROUPS: dict[AgentRole, list[ToolGroup]] = {
     AgentRole.COORDINATOR: [ToolGroup.WORKSPACE, ToolGroup.MEMORY, ToolGroup.ARTIFACT],
     AgentRole.RESEARCHER: [ToolGroup.WEB_SEARCH, ToolGroup.BROWSER, ToolGroup.WORKSPACE, ToolGroup.ARTIFACT],
     AgentRole.CODER: [ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.MEMORY],
-    AgentRole.VERIFIER: [ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
-    AgentRole.TESTER: [ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+    AgentRole.VERIFIER: [ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT, ToolGroup.MEMORY],
+    AgentRole.TESTER: [ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT, ToolGroup.MEMORY],
     AgentRole.REVIEWER: [ToolGroup.ARTIFACT, ToolGroup.MEMORY, ToolGroup.WORKSPACE],
     AgentRole.WRITER: [ToolGroup.WORKSPACE, ToolGroup.ARTIFACT, ToolGroup.WEB_SEARCH, ToolGroup.BROWSER],
 }

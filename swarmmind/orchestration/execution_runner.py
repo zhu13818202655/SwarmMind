@@ -38,15 +38,6 @@ from swarmmind.sandbox import CommandRequest, SandboxLeaseRequest, SandboxManage
 from swarmmind.sandbox.artifact_collector import ArtifactCollector
 from swarmmind.skill_system import SkillExecutionService
 from swarmmind.tools import ToolRegistry
-from swarmmind.tools.builtin import (
-    SkillTool,
-    browser_get,
-    file_exists,
-    list_files,
-    read_file,
-    search,
-    write_file,
-)
 
 
 class ExecutionRunner:
@@ -102,7 +93,7 @@ class ExecutionRunner:
             temperature=model_temperature,
             max_tokens=model_max_tokens,
         )
-        self._register_default_tools()
+        self._register_runtime_tools()
 
     async def handle_subtask_assigned(self, event: DomainEvent) -> None:
         """Execute an assigned subtask and persist its evidence."""
@@ -196,6 +187,7 @@ class ExecutionRunner:
 
     async def _execute_subtask(self, task, run, subtask, event: DomainEvent) -> None:
         execution_profile = self._load_execution_profile(subtask)
+        await self._validate_execution_policy(task, run, subtask, execution_profile)
         resolved_runtime_kind = execution_profile.resolved_runtime_kind or RuntimeKind.HOST_TOOLS
 
         if subtask.role in {AgentRole.VERIFIER, AgentRole.TESTER, AgentRole.REVIEWER}:
@@ -204,6 +196,26 @@ class ExecutionRunner:
             await self._execute_sandbox_subtask(task, run, subtask, event)
         else:
             await self._execute_inline_runtime_subtask(task, run, subtask, event, resolved_runtime_kind)
+
+    async def _validate_execution_policy(self, task, run, subtask, execution_profile: ExecutionProfile) -> None:
+        required_groups = set(execution_profile.required_tool_groups)
+        allowed_groups = set(execution_profile.allowed_tool_groups)
+        if allowed_groups and not required_groups.issubset(allowed_groups):
+            missing_groups = sorted(group.value for group in required_groups.difference(allowed_groups))
+            await self._publish_policy_denied(
+                task=task,
+                run=run,
+                subtask=subtask,
+                payload={
+                    "reason": "required_tool_groups_not_allowed",
+                    "required_tool_groups": sorted(group.value for group in required_groups),
+                    "allowed_tool_groups": sorted(group.value for group in allowed_groups),
+                    "missing_tool_groups": missing_groups,
+                },
+            )
+            raise PermissionError(
+                f"Execution profile for subtask {subtask.name} is missing required tool groups: {', '.join(missing_groups)}"
+            )
 
     def _resolve_execution_label(self, subtask) -> str:
         execution_profile = self._load_execution_profile(subtask)
@@ -272,7 +284,7 @@ class ExecutionRunner:
         allowed_groups = {group.value for group in execution_profile.allowed_tool_groups}
         return not allowed_groups or bool(tool_groups.intersection(allowed_groups))
 
-    def _register_default_tools(self) -> None:
+    def _register_runtime_tools(self) -> None:
         existing = set(self._tool_registry.get_tool_names())
         if "sandbox_exec" not in existing:
             self._tool_registry.register(
@@ -324,121 +336,6 @@ class ExecutionRunner:
                     audit_required=True,
                 ),
             )
-        if "project_read" not in existing:
-            self._tool_registry.register(
-                read_file,
-                name="project_read",
-                description="Read a project file.",
-                groups=["workspace", "file_system"],
-                contract=ToolExecutionContract(
-                    default_runtime=RuntimeKind.HOST_TOOLS,
-                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
-                    read_only=True,
-                ),
-            )
-        if "project_write" not in existing:
-            self._tool_registry.register(
-                write_file,
-                name="project_write",
-                description="Write a project file.",
-                groups=["workspace", "file_system"],
-                contract=ToolExecutionContract(
-                    default_runtime=RuntimeKind.HOST_TOOLS,
-                    allowed_runtimes=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
-                    audit_required=True,
-                ),
-            )
-        if "project_list" not in existing:
-            self._tool_registry.register(
-                list_files,
-                name="project_list",
-                description="List project files.",
-                groups=["workspace", "file_system"],
-                contract=ToolExecutionContract(
-                    default_runtime=RuntimeKind.HOST_TOOLS,
-                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
-                    read_only=True,
-                ),
-            )
-        if "project_exists" not in existing:
-            self._tool_registry.register(
-                file_exists,
-                name="project_exists",
-                description="Check whether a project file exists.",
-                groups=["workspace", "file_system"],
-                contract=ToolExecutionContract(
-                    default_runtime=RuntimeKind.HOST_TOOLS,
-                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
-                    read_only=True,
-                ),
-            )
-        if "web_search" not in existing:
-            self._tool_registry.register(
-                search,
-                name="web_search",
-                description="Search the web.",
-                groups=["web_search"],
-                contract=ToolExecutionContract(
-                    default_runtime=RuntimeKind.HOST_TOOLS,
-                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
-                    read_only=True,
-                    expensive=True,
-                ),
-            )
-        if "browser_read" not in existing:
-            self._tool_registry.register(
-                browser_get,
-                name="browser_read",
-                description="Fetch and summarize a webpage.",
-                groups=["browser"],
-                contract=ToolExecutionContract(
-                    default_runtime=RuntimeKind.HOST_TOOLS,
-                    allowed_runtimes=[RuntimeKind.HOST_TOOLS],
-                    read_only=True,
-                    expensive=True,
-                ),
-            )
-        if self._skill_execution_service is not None:
-            skill_tool = SkillTool(self._skill_execution_service)
-            if "list_skill_scripts" not in existing:
-                self._tool_registry.register(
-                    skill_tool.list_skill_scripts,
-                    name="list_skill_scripts",
-                    description="List declared scripts for a skill package.",
-                    groups=["workspace"],
-                    contract=ToolExecutionContract(
-                        default_runtime=RuntimeKind.HOST_TOOLS,
-                        allowed_runtimes=[RuntimeKind.HOST_TOOLS],
-                        read_only=True,
-                    ),
-                )
-            if "get_skill_details" not in existing:
-                self._tool_registry.register(
-                    skill_tool.get_skill_details,
-                    name="get_skill_details",
-                    description="Inspect expanded metadata and resources for a skill package.",
-                    groups=["workspace"],
-                    contract=ToolExecutionContract(
-                        default_runtime=RuntimeKind.HOST_TOOLS,
-                        allowed_runtimes=[RuntimeKind.HOST_TOOLS],
-                        read_only=True,
-                    ),
-                )
-            if "run_skill_script" not in existing:
-                self._tool_registry.register(
-                    skill_tool.run_skill_script,
-                    name="run_skill_script",
-                    description="Execute a declared skill script inside a sandbox with audit context.",
-                    groups=["code_exec"],
-                    contract=ToolExecutionContract(
-                        default_runtime=RuntimeKind.SANDBOX,
-                        allowed_runtimes=[RuntimeKind.SANDBOX],
-                        audit_required=True,
-                        dangerous=True,
-                        expensive=True,
-                        sandbox_only=True,
-                    ),
-                )
 
     async def _execute_sandbox_subtask(self, task, run, subtask, event: DomainEvent) -> None:
         lease = None
@@ -1530,17 +1427,20 @@ class ExecutionRunner:
             contract = self._tool_registry.get_tool_contract(name)
             if contract is not None:
                 setattr(func, "__swarmmind_tool_contract__", contract.model_copy(deep=True))
+            groups = self._tool_registry.get_tool_groups(name)
+            if groups:
+                setattr(func, "__swarmmind_tool_groups__", tuple(groups))
             tools.append(func)
 
-        if "project_read" in selected_tools:
-            async def project_read(path: str, encoding: str = "utf-8") -> str:
-                return await self._run_tool("project_read", task=task, run=run, subtask=subtask, path=path, encoding=encoding)
-            register("project_read", "Read a project file.", project_read)
+        if "read_file" in selected_tools:
+            async def read_file(path: str, encoding: str = "utf-8") -> str:
+                return await self._run_tool("read_file", task=task, run=run, subtask=subtask, path=path, encoding=encoding)
+            register("read_file", "Read a workspace file.", read_file)
 
-        if "project_write" in selected_tools:
-            async def project_write(path: str, content: str, encoding: str = "utf-8") -> str:
+        if "write_file" in selected_tools:
+            async def write_file(path: str, content: str, encoding: str = "utf-8") -> str:
                 return await self._run_tool(
-                    "project_write",
+                    "write_file",
                     task=task,
                     run=run,
                     subtask=subtask,
@@ -1548,32 +1448,132 @@ class ExecutionRunner:
                     content=content,
                     encoding=encoding,
                 )
-            register("project_write", "Write a project file.", project_write)
+            register("write_file", "Write a workspace file.", write_file)
 
-        if "project_list" in selected_tools:
-            async def project_list(path: str = ".") -> str:
-                return await self._run_tool("project_list", task=task, run=run, subtask=subtask, path=path)
-            register("project_list", "List project files.", project_list)
+        if "list_files" in selected_tools:
+            async def list_files(path: str = ".") -> str:
+                return await self._run_tool("list_files", task=task, run=run, subtask=subtask, path=path)
+            register("list_files", "List workspace files.", list_files)
 
-        if "project_exists" in selected_tools:
-            async def project_exists(path: str) -> str:
-                return await self._run_tool("project_exists", task=task, run=run, subtask=subtask, path=path)
-            register("project_exists", "Check whether a project file exists.", project_exists)
+        if "file_exists" in selected_tools:
+            async def file_exists(path: str) -> str:
+                return await self._run_tool("file_exists", task=task, run=run, subtask=subtask, path=path)
+            register("file_exists", "Check whether a workspace path exists.", file_exists)
+
+        if "delete_file" in selected_tools:
+            async def delete_file(path: str) -> str:
+                return await self._run_tool("delete_file", task=task, run=run, subtask=subtask, path=path)
+            register("delete_file", "Delete a workspace file or directory.", delete_file)
+
+        if "rename_file" in selected_tools:
+            async def rename_file(source_path: str, destination_path: str) -> str:
+                return await self._run_tool(
+                    "rename_file",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    source_path=source_path,
+                    destination_path=destination_path,
+                )
+            register("rename_file", "Rename or move a workspace file or directory.", rename_file)
+
+        if "make_directory" in selected_tools:
+            async def make_directory(path: str) -> str:
+                return await self._run_tool("make_directory", task=task, run=run, subtask=subtask, path=path)
+            register("make_directory", "Create a workspace directory recursively.", make_directory)
+
+        if "glob_search" in selected_tools:
+            async def glob_search(pattern: str, base_path: str = ".", max_results: int = 200) -> list[str]:
+                return await self._run_tool(
+                    "glob_search",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    pattern=pattern,
+                    base_path=base_path,
+                    max_results=max_results,
+                )
+            register("glob_search", "Find workspace files by glob pattern.", glob_search)
+
+        if "grep_search" in selected_tools:
+            async def grep_search(
+                query: str,
+                base_path: str = ".",
+                include_pattern: str = "**/*",
+                is_regex: bool = False,
+                max_results: int = 50,
+            ) -> list[dict[str, object]]:
+                return await self._run_tool(
+                    "grep_search",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    query=query,
+                    base_path=base_path,
+                    include_pattern=include_pattern,
+                    is_regex=is_regex,
+                    max_results=max_results,
+                )
+            register("grep_search", "Search text content inside workspace files.", grep_search)
 
         if "web_search" in selected_tools:
             async def web_search(query: str, max_results: int = 5) -> str:
                 return await self._run_tool("web_search", task=task, run=run, subtask=subtask, query=query, max_results=max_results)
             register("web_search", "Search the web.", web_search)
 
-        if "browser_read" in selected_tools:
-            async def browser_read(url: str) -> str:
-                return await self._run_tool("browser_read", task=task, run=run, subtask=subtask, url=url)
-            register("browser_read", "Fetch and summarize a webpage.", browser_read)
+        if "browser_get" in selected_tools:
+            async def browser_get(url: str) -> str:
+                return await self._run_tool("browser_get", task=task, run=run, subtask=subtask, url=url)
+            register("browser_get", "Fetch and extract a webpage.", browser_get)
+
+        if "browser_screenshot" in selected_tools:
+            async def browser_screenshot(url: str) -> str:
+                return await self._run_tool("browser_screenshot", task=task, run=run, subtask=subtask, url=url)
+            register("browser_screenshot", "Capture a webpage screenshot placeholder.", browser_screenshot)
+
+        if "send_mail" in selected_tools:
+            async def send_mail(
+                to: str,
+                subject: str,
+                body: str,
+                from_addr: str | None = None,
+                smtp_host: str = "smtp.gmail.com",
+                smtp_port: int = 587,
+                username: str | None = None,
+                password: str | None = None,
+            ) -> str:
+                return await self._run_tool(
+                    "send_mail",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    to=to,
+                    subject=subject,
+                    body=body,
+                    from_addr=from_addr,
+                    smtp_host=smtp_host,
+                    smtp_port=smtp_port,
+                    username=username,
+                    password=password,
+                )
+            register("send_mail", "Send an email through configured SMTP.", send_mail)
 
         if "memory_lookup" in selected_tools:
             async def memory_lookup(query: str, top_k: int = 3) -> list[dict[str, Any]]:
                 return await self._run_tool("memory_lookup", task=task, run=run, subtask=subtask, query=query, top_k=top_k)
             register("memory_lookup", "Retrieve related long-term memory items.", memory_lookup)
+
+        if "memory_write" in selected_tools:
+            async def memory_write(content: str, metadata: dict[str, Any] | None = None) -> str | None:
+                return await self._run_tool(
+                    "memory_write",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    content=content,
+                    metadata=metadata,
+                )
+            register("memory_write", "Store a concise long-term memory summary.", memory_write)
 
         if "artifact_read" in selected_tools:
             dependency_ids = list(subtask.dependencies)

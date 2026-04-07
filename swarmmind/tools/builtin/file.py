@@ -90,6 +90,47 @@ class FileTool:
             return f"Yes, exists: {path}"
         return f"No, does not exist: {path}"
 
+    async def delete(self, path: str) -> str:
+        """Delete a file or directory."""
+        try:
+            target_path = self._resolve_path(path)
+            if not target_path.exists():
+                return f"Error: Path not found: {path}"
+            if target_path.is_dir():
+                for child in sorted(target_path.rglob("*"), reverse=True):
+                    if child.is_file() or child.is_symlink():
+                        child.unlink()
+                    elif child.is_dir():
+                        child.rmdir()
+                target_path.rmdir()
+            else:
+                target_path.unlink()
+            return f"Deleted: {path}"
+        except Exception as e:
+            return f"Error deleting path: {str(e)}"
+
+    async def rename(self, source_path: str, destination_path: str) -> str:
+        """Rename or move a file or directory."""
+        try:
+            source = self._resolve_path(source_path)
+            destination = self._resolve_path(destination_path)
+            if not source.exists():
+                return f"Error: Path not found: {source_path}"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source.rename(destination)
+            return f"Renamed: {source_path} -> {destination_path}"
+        except Exception as e:
+            return f"Error renaming path: {str(e)}"
+
+    async def make_directory(self, path: str) -> str:
+        """Create a directory recursively."""
+        try:
+            dir_path = self._resolve_path(path)
+            dir_path.mkdir(parents=True, exist_ok=True)
+            return f"Directory created: {path}"
+        except Exception as e:
+            return f"Error creating directory: {str(e)}"
+
 
 # Tool function for AgentScope
 async def read_file(path: str, encoding: str = "utf-8") -> str:
@@ -145,3 +186,43 @@ async def file_exists(path: str) -> str:
     """
     tool = FileTool()
     return await tool.exists(path)
+
+
+async def delete_file(path: str) -> str:
+    """Delete a file or directory.
+
+    Args:
+        path: Target path to delete
+
+    Returns:
+        Success or error message
+    """
+    tool = FileTool()
+    return await tool.delete(path)
+
+
+async def rename_file(source_path: str, destination_path: str) -> str:
+    """Rename or move a file or directory.
+
+    Args:
+        source_path: Existing path
+        destination_path: New target path
+
+    Returns:
+        Success or error message
+    """
+    tool = FileTool()
+    return await tool.rename(source_path, destination_path)
+
+
+async def make_directory(path: str) -> str:
+    """Create a directory recursively.
+
+    Args:
+        path: Directory path to create
+
+    Returns:
+        Success or error message
+    """
+    tool = FileTool()
+    return await tool.make_directory(path)

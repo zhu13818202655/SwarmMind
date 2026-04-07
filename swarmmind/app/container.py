@@ -43,7 +43,7 @@ from swarmmind.repositories import (
 from swarmmind.skill_system import SkillExecutionService, SkillScriptExecutor
 from swarmmind.sandbox import ArtifactCollector, LocalSandboxAdapter, ReplayRecorder, SandboxManager
 from swarmmind.sandbox.opensandbox_adapter import OpenSandboxAdapter
-from swarmmind.tools import ToolRegistry
+from swarmmind.tools import ToolRegistry, register_builtin_tools
 
 
 class AppContainer:
@@ -189,6 +189,7 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         event_bus=event_bus,
         artifact_repository=artifact_repository,
     )
+    register_builtin_tools(tool_registry, skill_execution_service=skill_execution_service)
 
     planner = Planner(
         model_name=settings.agent.model.name,
