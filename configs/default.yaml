@@ -30,6 +30,22 @@ vector_store:
   collection: swarmmind
   embedding_dimension: 256
 
+search:
+  provider: duckduckgo
+  api_key: ${SWARMMIND_SEARCH__API_KEY}
+  base_url: null
+  timeout_seconds: 10.0
+  default_max_results: 5
+  google_cse_id: ${GOOGLE_CSE_ID}
+  market: en-US
+  safe_search: moderate
+
+browser:
+  detail_provider: direct
+  reader_base_url: https://r.jina.ai/http://
+  timeout_seconds: 30.0
+  user_agent: SwarmMindBrowser/1.0
+
 agent:
   model:
     provider: litellm
