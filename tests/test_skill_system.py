@@ -12,6 +12,7 @@ from swarmmind.agents.agent_skill import (
 )
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
+from swarmmind.models.capability import ToolGroup
 from swarmmind.sandbox import LocalSandboxAdapter, SandboxManager
 from swarmmind.skill_system.catalog import (
     build_compact_catalog,
@@ -345,7 +346,7 @@ def test_agent_factory_exposes_filtered_skill_catalog_on_toolkit(tmp_path: Path,
         )
     )
 
-    toolkit = factory.create_toolkit([])
+    toolkit = factory.create_toolkit([], tool_groups=[ToolGroup.WORKSPACE])
     prompt = toolkit.get_agent_skill_prompt()
 
     assert getattr(toolkit, "_swarmmind_skill_catalog") == [

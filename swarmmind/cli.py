@@ -14,7 +14,8 @@ from swarmmind.sandbox.opensandbox_adapter import OpenSandboxAdapter
 from swarmmind.sandbox.manager import SandboxManager
 from swarmmind.agents.factory import AgentFactory
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
-from swarmmind.tools.registry import ToolRegistry
+from swarmmind.models.capability import ToolGroup
+from swarmmind.tools import ToolRegistry, register_builtin_tools
 
 
 @click.group()
@@ -62,6 +63,7 @@ async def _run_task(goal: str, output: Optional[str], profile: str, api_key: Opt
             max_tokens=config.agent.model.max_tokens,
         ),
         max_steps=config.agent.max_steps,
+        tool_groups=[ToolGroup.WEB_SEARCH],
     )
     agent_factory = AgentFactory(agent_config)
 
@@ -87,11 +89,10 @@ async def _run_task(goal: str, output: Optional[str], profile: str, api_key: Opt
         transcript.add_event("task_started", {"goal": goal})
 
         # Create agent with tools
-        from swarmmind.tools.builtin.search import search
         tool_registry = ToolRegistry()
-        tool_registry.register(search, name="search", description="Search the web for information")
+        register_builtin_tools(tool_registry)
 
-        agent = agent_factory.create_main_agent(tools=[search])
+        agent = agent_factory.create_main_agent(tools=[])
 
         # Run agent
         transcript.add_message("user", goal)

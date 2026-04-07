@@ -59,6 +59,11 @@ class Coordinator:
         return assigned
 
     def _resolve_agent_profile(self, task: Task, subtask: SubTask) -> AgentProfile:
+        explicit_profile_id = subtask.agent_profile_id or task.metadata.get("agent_profile_id")
+        if explicit_profile_id:
+            explicit_profile = self._agent_profile_store.get(str(explicit_profile_id))
+            if explicit_profile is not None and explicit_profile.role == subtask.role:
+                return explicit_profile
         return self._agent_profile_store.resolve_for_subtask(
             role=subtask.role,
         )

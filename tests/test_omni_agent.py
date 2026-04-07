@@ -33,6 +33,7 @@ setattr(
         read_only=True,
     ),
 )
+setattr(project_read, "__swarmmind_tool_groups__", (ToolGroup.FILE_SYSTEM,))
 setattr(
     project_write,
     "__swarmmind_tool_contract__",
@@ -42,6 +43,7 @@ setattr(
         audit_required=True,
     ),
 )
+setattr(project_write, "__swarmmind_tool_groups__", (ToolGroup.FILE_SYSTEM,))
 setattr(
     run_skill_script,
     "__swarmmind_tool_contract__",
@@ -53,6 +55,7 @@ setattr(
         sandbox_only=True,
     ),
 )
+setattr(run_skill_script, "__swarmmind_tool_groups__", (ToolGroup.CODE_EXEC,))
 
 
 def _build_factory() -> AgentFactory:
@@ -87,6 +90,21 @@ def test_factory_creates_omni_agent_with_capability_bundle() -> None:
     assert isinstance(agent.capability_bundle.resolved_skills, list)
     assert agent.capability_bundle.tool_contracts["project_read"].read_only is True
     assert agent.capability_bundle.default_tool_runtime["run_skill_script"] == RuntimeKind.SANDBOX
+
+
+def test_factory_create_toolkit_activates_only_requested_groups() -> None:
+    factory = _build_factory()
+
+    toolkit = factory.create_toolkit(
+        tools=[project_read, project_write, run_skill_script],
+        tool_groups=[ToolGroup.FILE_SYSTEM],
+    )
+
+    exposed = {schema["function"]["name"] for schema in toolkit.get_json_schemas()}
+
+    assert "project_read" in exposed
+    assert "project_write" in exposed
+    assert "run_skill_script" not in exposed
 
 
 def test_factory_uses_execution_profile_overrides_in_capability_bundle() -> None:

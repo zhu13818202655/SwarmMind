@@ -14,9 +14,46 @@ class ToolRegistry:
     def __init__(self):
         self._toolkit = Toolkit()
         self._funcs: dict[str, Callable] = {}
+        self._registered_funcs: dict[str, Callable] = {}
         self._tool_groups: dict[str, list[ToolGroup]] = {}
+        self._primary_groups: dict[str, ToolGroup] = {}
         self._descriptions: dict[str, str] = {}
         self._contracts: dict[str, ToolExecutionContract] = {}
+
+    _GROUP_DETAILS: dict[ToolGroup, tuple[str, str | None]] = {
+        ToolGroup.FILE_SYSTEM: (
+            "Basic file-system operations inside the workspace such as reading, writing, listing, renaming and deleting files.",
+            None,
+        ),
+        ToolGroup.WORKSPACE: (
+            "Project-level workspace helpers such as code search, glob search and repository-aware inspection.",
+            None,
+        ),
+        ToolGroup.WEB_SEARCH: (
+            "Structured public web search for discovering external information sources.",
+            None,
+        ),
+        ToolGroup.BROWSER: (
+            "Page fetching and browser-style interaction with web content.",
+            None,
+        ),
+        ToolGroup.CODE_EXEC: (
+            "Code and command execution capabilities that may require sandbox isolation.",
+            None,
+        ),
+        ToolGroup.MEMORY: (
+            "Long-term memory lookup and persistence helpers.",
+            None,
+        ),
+        ToolGroup.ARTIFACT: (
+            "Artifact inspection and attachment-oriented access patterns.",
+            None,
+        ),
+        ToolGroup.COMMUNICATION: (
+            "Communication primitives such as email and outbound notifications.",
+            None,
+        ),
+    }
 
     def register(
         self,
@@ -40,51 +77,99 @@ class ToolRegistry:
             return func(*args, **kwargs)
 
         normalized_contract = self._normalize_contract(contract)
+        normalized_groups = self._normalize_groups(groups)
         contract_target = getattr(func, "__func__", func)
         setattr(contract_target, "__swarmmind_tool_contract__", normalized_contract)
+        setattr(contract_target, "__swarmmind_tool_groups__", tuple(normalized_groups))
         setattr(async_wrapper, "__swarmmind_tool_contract__", normalized_contract)
+        setattr(async_wrapper, "__swarmmind_tool_groups__", tuple(normalized_groups))
+
+        primary_group_name = "basic"
+        if normalized_groups:
+            for group in normalized_groups:
+                self.ensure_group(group)
+            primary_group_name = normalized_groups[0].value
 
         self._toolkit.register_tool_function(
             async_wrapper,
+            group_name=primary_group_name,
             func_name=tool_name,
             func_description=description,
         )
         self._funcs[tool_name] = func
+        self._registered_funcs[tool_name] = async_wrapper
         self._descriptions[tool_name] = description
-        self._tool_groups[tool_name] = [
-            group if isinstance(group, ToolGroup) else ToolGroup(group)
-            for group in (groups or [])
-        ]
+        self._tool_groups[tool_name] = normalized_groups
+        if normalized_groups:
+            self._primary_groups[tool_name] = normalized_groups[0]
         self._contracts[tool_name] = normalized_contract
+
+    def ensure_group(self, group: ToolGroup | str, active: bool = False) -> ToolGroup:
+        """Ensure a ToolGroup exists in the underlying toolkit."""
+        normalized = group if isinstance(group, ToolGroup) else ToolGroup(group)
+        if normalized.value not in self._toolkit.groups:
+            description, notes = self._GROUP_DETAILS[normalized]
+            self._toolkit.create_tool_group(
+                normalized.value,
+                description=description,
+                active=active,
+                notes=notes,
+            )
+        return normalized
 
     def get_tool(self, name: str) -> Any:
         """Get tool by name."""
-        return self._toolkit
+        return self._funcs.get(name)
 
     def get_all_tools(self) -> list[dict[str, Any]]:
         """Get all registered tools."""
-        return self._toolkit.get_json_schemas()
+        return [self._tool_schema(name) for name in self.get_tool_names()]
 
-    def get_tools_for_groups(self, groups: list[ToolGroup | str]) -> list[dict[str, Any]]:
+    def get_tools_for_groups(
+        self,
+        groups: list[ToolGroup | str],
+        *,
+        runtime_kind: RuntimeKind | None = None,
+        tool_names: list[str] | None = None,
+        strict_tool_names: bool = False,
+    ) -> list[dict[str, Any]]:
         """Get tool schemas matching any of the provided groups."""
-        normalized_groups = {
-            group if isinstance(group, ToolGroup) else ToolGroup(group)
-            for group in groups
-        }
-        selected_names = {
-            name
-            for name, tool_groups in self._tool_groups.items()
-            if normalized_groups.intersection(tool_groups)
-        }
         return [
-            schema
-            for schema in self._toolkit.get_json_schemas()
-            if schema.get("name") in selected_names
+            self._tool_schema(name)
+            for name in self._select_tool_names(
+                groups=groups,
+                runtime_kind=runtime_kind,
+                tool_names=tool_names,
+                strict_tool_names=strict_tool_names,
+            )
+        ]
+
+    def get_functions_for_groups(
+        self,
+        groups: list[ToolGroup | str],
+        *,
+        runtime_kind: RuntimeKind | None = None,
+        tool_names: list[str] | None = None,
+        strict_tool_names: bool = False,
+    ) -> list[Callable]:
+        """Return registered tool callables matching active groups and explicit names."""
+        return [
+            self._funcs[name]
+            for name in self._select_tool_names(
+                groups=groups,
+                runtime_kind=runtime_kind,
+                tool_names=tool_names,
+                strict_tool_names=strict_tool_names,
+            )
         ]
 
     def get_tool_groups(self, name: str) -> list[ToolGroup]:
         """Return the tool groups associated with a tool."""
         return self._tool_groups.get(name, [])
+
+    def get_primary_tool_group(self, name: str) -> ToolGroup | None:
+        """Return the canonical primary ToolGroup for a tool."""
+        return self._primary_groups.get(name)
 
     def get_tool_contract(self, name: str) -> ToolExecutionContract | None:
         """Return execution metadata associated with a tool."""
@@ -97,6 +182,7 @@ class ToolRegistry:
                 "name": name,
                 "description": self._descriptions.get(name, ""),
                 "groups": [group.value for group in self._tool_groups.get(name, [])],
+                "primary_group": self._primary_groups.get(name).value if name in self._primary_groups else None,
                 "contract": self._contracts.get(name, ToolExecutionContract()).model_dump(mode="json"),
             }
             for name in self._funcs
@@ -120,11 +206,120 @@ class ToolRegistry:
 
     def clear(self) -> None:
         """Clear all registered tools."""
-        self._toolkit.clear()
+        self._toolkit = Toolkit()
         self._funcs.clear()
+        self._registered_funcs.clear()
         self._tool_groups.clear()
+        self._primary_groups.clear()
         self._descriptions.clear()
         self._contracts.clear()
+
+    def build_toolkit(
+        self,
+        *,
+        active_groups: list[ToolGroup | str] | None = None,
+        active_tool_names: list[str] | None = None,
+        runtime_kind: RuntimeKind | None = None,
+        strict_tool_names: bool = False,
+    ) -> Toolkit:
+        """Build a fresh AgentScope Toolkit with group-aware activation."""
+        toolkit = Toolkit()
+        normalized_active_groups = [
+            group if isinstance(group, ToolGroup) else ToolGroup(group)
+            for group in (active_groups or [])
+        ]
+        selected_names = self._select_tool_names(
+            groups=normalized_active_groups,
+            runtime_kind=runtime_kind,
+            tool_names=active_tool_names,
+            strict_tool_names=strict_tool_names,
+        )
+
+        groups_to_create = {group for group in normalized_active_groups}
+        for name in selected_names:
+            groups_to_create.update(self._tool_groups.get(name, []))
+        for group in sorted(groups_to_create, key=lambda item: item.value):
+            description, notes = self._GROUP_DETAILS[group]
+            toolkit.create_tool_group(group.value, description=description, active=False, notes=notes)
+
+        for name in selected_names:
+            toolkit.register_tool_function(
+                self._registered_funcs[name],
+                group_name=self._primary_groups[name].value if name in self._primary_groups else "basic",
+                func_name=name,
+                func_description=self._descriptions[name],
+            )
+
+        if normalized_active_groups:
+            toolkit.update_tool_groups([group.value for group in normalized_active_groups], active=True)
+        return toolkit
+
+    def _normalize_groups(self, groups: list[ToolGroup | str] | None) -> list[ToolGroup]:
+        if not groups:
+            return []
+        normalized: list[ToolGroup] = []
+        seen: set[ToolGroup] = set()
+        for group in groups:
+            resolved = group if isinstance(group, ToolGroup) else ToolGroup(group)
+            if resolved in seen:
+                continue
+            normalized.append(resolved)
+            seen.add(resolved)
+        return normalized
+
+    def _select_tool_names(
+        self,
+        *,
+        groups: list[ToolGroup | str] | None,
+        runtime_kind: RuntimeKind | None,
+        tool_names: list[str] | None,
+        strict_tool_names: bool,
+    ) -> list[str]:
+        normalized_groups = {
+            group if isinstance(group, ToolGroup) else ToolGroup(group)
+            for group in (groups or [])
+        }
+        explicit_names = [name for name in (tool_names or []) if name in self._funcs]
+
+        if strict_tool_names and explicit_names:
+            selected: list[str] = []
+            for name in explicit_names:
+                contract = self._contracts.get(name)
+                if runtime_kind is not None and contract is not None and runtime_kind not in contract.allowed_runtimes:
+                    continue
+                selected.append(name)
+            return selected
+
+        selected: list[str] = []
+        seen: set[str] = set()
+
+        for name in self._funcs:
+            contract = self._contracts.get(name)
+            if runtime_kind is not None and contract is not None and runtime_kind not in contract.allowed_runtimes:
+                continue
+            if normalized_groups and not normalized_groups.intersection(self._tool_groups.get(name, [])) and name not in explicit_names:
+                continue
+            if name in seen:
+                continue
+            selected.append(name)
+            seen.add(name)
+
+        for name in explicit_names:
+            contract = self._contracts.get(name)
+            if runtime_kind is not None and contract is not None and runtime_kind not in contract.allowed_runtimes:
+                continue
+            if name in seen:
+                continue
+            selected.append(name)
+            seen.add(name)
+
+        return selected
+
+    def _tool_schema(self, name: str) -> dict[str, Any]:
+        tool = self._toolkit.tools.get(name)
+        if tool is None:
+            raise ValueError(f"Tool not found: {name}")
+        return tool.extended_json_schema
 
     @staticmethod
     def _normalize_contract(

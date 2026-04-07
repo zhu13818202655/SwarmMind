@@ -17,8 +17,9 @@ from swarmmind.agents.agent_skill import (
 )
 from swarmmind.agents.config import AgentConfig
 from swarmmind.agents.omni_agent import CapabilityResolver, OmniAgent
+from swarmmind.models.capability import DEFAULT_ROLE_TOOL_GROUPS, ToolExecutionContract, ToolGroup
 from swarmmind.models.execution import ExecutionProfile
-from swarmmind.tools.builtin.file import file_exists, list_files, read_file
+from swarmmind.tools import ToolRegistry, register_builtin_tools
 
 
 class AgentFactory:
@@ -54,27 +55,28 @@ class AgentFactory:
         self,
         tools: list[Any] | None = None,
         skill_profiles: list[str] | None = None,
+        tool_groups: list[ToolGroup] | None = None,
+        active_tool_names: list[str] | None = None,
+        runtime_kind: Any | None = None,
     ) -> Toolkit:
-        """Create toolkit and register plain tool functions."""
-        """
-        # TODO 需要区分
-        # [ ] 1. tool_function
-        # [ ] 2. tool_group, 这里是包装，一个完整的能力：包含多个工具函数
-            - [ ] 文件操作能力
-            - [ ] 搜索能力
-        # [ ] 3. agent_skill
-        """  # TODO 这里面没有tool_group -> tool, Toolkit().create_tool_group
-        toolkit = Toolkit()
+        """Create a group-aware toolkit assembled from a ToolRegistry."""
         effective_skill_profiles = list(skill_profiles or self.config.skill_profiles)
-        registered_tools = self._collect_registered_tools(tools, effective_skill_profiles)
-
-        seen_names: set[str] = set()
-        for tool in registered_tools:
-            tool_name = getattr(tool, "__name__", repr(tool))
-            if tool_name in seen_names:
-                continue
-            toolkit.register_tool_function(tool)  # TODO 需要有：group_name
-            seen_names.add(tool_name)
+        equipped_tool_groups = list(tool_groups or self.config.tool_groups)
+        strict_tool_names = bool(active_tool_names)
+        registry = self._build_tool_registry(tools or [], fallback_groups=equipped_tool_groups)
+        toolkit = registry.build_toolkit(
+            active_groups=equipped_tool_groups,
+            active_tool_names=active_tool_names,
+            runtime_kind=runtime_kind,
+            strict_tool_names=strict_tool_names,
+        )
+        equipped_tools = registry.get_functions_for_groups(
+            equipped_tool_groups,
+            runtime_kind=runtime_kind,
+            tool_names=active_tool_names,
+            strict_tool_names=strict_tool_names,
+        )
+        seen_names = {getattr(tool, "__name__", repr(tool)) for tool in equipped_tools}
 
         skill_entries = resolve_agent_skill_entries(effective_skill_profiles, seen_names)
         for entry in skill_entries:
@@ -92,17 +94,6 @@ class AgentFactory:
 
         return toolkit
 
-    @staticmethod
-    def _collect_registered_tools(
-        tools: list[Any] | None,
-        skill_profiles: list[str] | None,
-    ) -> list[Any]:
-        registered_tools: list[Any] = list(tools or [])
-        # TODO - 需要区分工具函数和技能脚本，目前的实现是只要有技能配置就注册文件工具，后续需要区分开来，并且在agent profile里区分开来
-        if skill_profiles:
-            registered_tools.extend([read_file, list_files, file_exists])
-        return registered_tools
-
     def create_agent(
         self,
         tools: list[Any] | None = None,
@@ -113,14 +104,20 @@ class AgentFactory:
     ) -> OmniAgent:
         """Create an OmniAgent."""
         effective_prompt = sys_prompt or self.config.system_prompt or ""
+        equipped_tool_groups = self._resolve_equipped_tool_groups(execution_profile=execution_profile)
+        active_tool_names = self._resolve_active_tool_names(execution_profile=execution_profile)
         effective_skill_profiles = self._resolve_effective_skill_profiles(
             explicit_skill_profiles=skill_profiles,
             fallback_skill_profiles=self.config.skill_profiles,
             execution_profile=execution_profile,
         )
-        filtered_tools = self._filter_tools_for_execution_profile(tools or [], execution_profile)
-        effective_tools = self._collect_registered_tools(filtered_tools, effective_skill_profiles)
-        toolkit = self.create_toolkit(filtered_tools, skill_profiles=effective_skill_profiles)
+        toolkit, effective_tools = self._assemble_tooling(
+            tools=tools or [],
+            skill_profiles=effective_skill_profiles,
+            tool_groups=equipped_tool_groups,
+            active_tool_names=active_tool_names,
+            runtime_kind=execution_profile.resolved_runtime_kind if execution_profile is not None else None,
+        )
         capability_bundle = CapabilityResolver.resolve(
             role=execution_profile.role if execution_profile is not None else self.config.role,
             system_prompt=effective_prompt,
@@ -170,15 +167,20 @@ class AgentFactory:
             if part and part not in prompt_parts:
                 prompt_parts.append(part)
         effective_prompt = "\n\n".join(prompt_parts)
-        filtered_tools = self._filter_tools_for_profile(tools or [], profile)
-        filtered_tools = self._filter_tools_for_execution_profile(filtered_tools, execution_profile)
+        equipped_tool_groups = self._resolve_equipped_tool_groups(profile=profile, execution_profile=execution_profile)
+        active_tool_names = self._resolve_active_tool_names(profile=profile, execution_profile=execution_profile)
         effective_skill_profiles = self._resolve_effective_skill_profiles(
             explicit_skill_profiles=None,
             fallback_skill_profiles=self._resolve_profile_skill_profiles(profile),
             execution_profile=execution_profile,
         )
-        capability_tools = self._collect_registered_tools(filtered_tools, effective_skill_profiles)
-        toolkit = self.create_toolkit(filtered_tools, skill_profiles=effective_skill_profiles)
+        toolkit, capability_tools = self._assemble_tooling(
+            tools=tools or [],
+            skill_profiles=effective_skill_profiles,
+            tool_groups=equipped_tool_groups,
+            active_tool_names=active_tool_names,
+            runtime_kind=execution_profile.resolved_runtime_kind if execution_profile is not None else None,
+        )
         capability_bundle = CapabilityResolver.resolve(
             role=execution_profile.role if execution_profile is not None else profile.role,
             system_prompt=effective_prompt,
@@ -212,14 +214,20 @@ class AgentFactory:
         config = self.config.model_copy()
         config.name = name
         effective_prompt = system_prompt or config.system_prompt or ""
+        equipped_tool_groups = self._resolve_equipped_tool_groups(execution_profile=execution_profile)
+        active_tool_names = self._resolve_active_tool_names(execution_profile=execution_profile)
         effective_skill_profiles = self._resolve_effective_skill_profiles(
             explicit_skill_profiles=None,
             fallback_skill_profiles=config.skill_profiles,
             execution_profile=execution_profile,
         )
-        filtered_tools = self._filter_tools_for_execution_profile(tools, execution_profile)
-        effective_tools = self._collect_registered_tools(filtered_tools, effective_skill_profiles)
-        toolkit = self.create_toolkit(filtered_tools, skill_profiles=effective_skill_profiles)
+        toolkit, effective_tools = self._assemble_tooling(
+            tools=tools,
+            skill_profiles=effective_skill_profiles,
+            tool_groups=equipped_tool_groups,
+            active_tool_names=active_tool_names,
+            runtime_kind=execution_profile.resolved_runtime_kind if execution_profile is not None else None,
+        )
         capability_bundle = CapabilityResolver.resolve(
             role=execution_profile.role if execution_profile is not None else config.role,
             system_prompt=effective_prompt,
@@ -261,31 +269,100 @@ class AgentFactory:
             return list(execution_profile.skill_profiles)
         return list(fallback_skill_profiles or [])
 
-    @staticmethod
-    def _filter_tools_for_profile(tools: list[Any], profile: AgentProfile) -> list[Any]:
-        if not profile.allowed_tool_names:
-            return tools
-
-        allowed = set(profile.allowed_tool_names)
-        filtered: list[Any] = []
-        for tool in tools:
-            tool_name = getattr(tool, "__name__", None)
-            if tool_name is None or tool_name in allowed:
-                filtered.append(tool)
-        return filtered
-
-    @staticmethod
-    def _filter_tools_for_execution_profile(
+    def _assemble_tooling(
+        self,
+        *,
         tools: list[Any],
-        execution_profile: ExecutionProfile | None,
-    ) -> list[Any]:
-        if execution_profile is None or not execution_profile.allowed_tool_names:
-            return tools
+        skill_profiles: list[str],
+        tool_groups: list[ToolGroup],
+        active_tool_names: list[str],
+        runtime_kind: Any | None,
+    ) -> tuple[Toolkit, list[Any]]:
+        registry = self._build_tool_registry(tools, fallback_groups=tool_groups)
+        strict_tool_names = bool(active_tool_names)
+        toolkit = registry.build_toolkit(
+            active_groups=tool_groups,
+            active_tool_names=active_tool_names,
+            runtime_kind=runtime_kind,
+            strict_tool_names=strict_tool_names,
+        )
+        effective_tools = registry.get_functions_for_groups(
+            tool_groups,
+            tool_names=active_tool_names,
+            runtime_kind=runtime_kind,
+            strict_tool_names=strict_tool_names,
+        )
+        seen_names = {getattr(tool, "__name__", repr(tool)) for tool in effective_tools}
+        skill_entries = resolve_agent_skill_entries(skill_profiles, seen_names)
+        for entry in skill_entries:
+            toolkit.register_agent_skill(str(entry.root_dir))
+        toolkit._swarmmind_skill_catalog = build_agent_skill_catalog(  # type: ignore[attr-defined]
+            skill_profiles,
+            seen_names,
+        )
+        toolkit._swarmmind_skill_details = build_agent_skill_details(  # type: ignore[attr-defined]
+            skill_profiles,
+            seen_names,
+        )
+        return toolkit, effective_tools
 
-        allowed = set(execution_profile.allowed_tool_names)
-        filtered: list[Any] = []
+    @staticmethod
+    def _build_tool_registry(tools: list[Any], fallback_groups: list[ToolGroup]) -> ToolRegistry:
+        registry = ToolRegistry()
+        register_builtin_tools(registry)
         for tool in tools:
-            tool_name = getattr(tool, "__name__", None)
-            if tool_name is None or tool_name in allowed:
-                filtered.append(tool)
-        return filtered
+            tool_name = getattr(tool, "__name__", repr(tool))
+            contract = getattr(tool, "__swarmmind_tool_contract__", None)
+            if isinstance(contract, dict):
+                contract = ToolExecutionContract(**contract)
+            registry.register(
+                tool,
+                name=tool_name,
+                description=getattr(tool, "__doc__", None) or "No description",
+                groups=AgentFactory._resolve_tool_groups(tool, fallback_groups),
+                contract=contract,
+            )
+        return registry
+
+    @staticmethod
+    def _resolve_tool_groups(tool: Any, fallback_groups: list[ToolGroup]) -> list[ToolGroup]:
+        raw_groups = getattr(tool, "__swarmmind_tool_groups__", None)
+        if raw_groups:
+            return [group if isinstance(group, ToolGroup) else ToolGroup(group) for group in raw_groups]
+        tool_name = getattr(tool, "__name__", "")
+        if tool_name in {"run_skill_script", "sandbox_exec"}:
+            return [ToolGroup.CODE_EXEC]
+        return list(fallback_groups or [ToolGroup.WORKSPACE])
+
+    def _resolve_equipped_tool_groups(
+        self,
+        *,
+        profile: AgentProfile | None = None,
+        execution_profile: ExecutionProfile | None = None,
+    ) -> list[ToolGroup]:
+        if execution_profile is not None and execution_profile.required_tool_groups:
+            return list(execution_profile.required_tool_groups)
+        if profile is not None and profile.default_tool_groups:
+            return list(profile.default_tool_groups)
+        if self.config.tool_groups:
+            return list(self.config.tool_groups)
+        role = (
+            execution_profile.role
+            if execution_profile is not None
+            else profile.role
+            if profile is not None
+            else self.config.role
+        )
+        return list(DEFAULT_ROLE_TOOL_GROUPS.get(role, [ToolGroup.WORKSPACE]))
+
+    @staticmethod
+    def _resolve_active_tool_names(
+        *,
+        profile: AgentProfile | None = None,
+        execution_profile: ExecutionProfile | None = None,
+    ) -> list[str]:
+        if execution_profile is not None and execution_profile.allowed_tool_names:
+            return list(execution_profile.allowed_tool_names)
+        if profile is not None and profile.allowed_tool_names:
+            return list(profile.allowed_tool_names)
+        return []

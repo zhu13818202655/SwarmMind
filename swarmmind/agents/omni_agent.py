@@ -244,7 +244,7 @@ class CapabilityResolver:
             if default_runtime == RuntimeKind.SANDBOX and (
                 tool_name.endswith("_write")
                 or tool_name.endswith("_exec")
-                or tool_name.startswith("project_write")
+                or tool_name in {"write_file", "memory_write", "delete_file", "rename_file", "make_directory", "send_mail"}
             ):
                 mapping[tool_name] = RuntimeKind.SANDBOX
                 continue
@@ -295,10 +295,28 @@ class CapabilityResolver:
             read_only=not (
                 tool_name.endswith("_write")
                 or tool_name.endswith("_exec")
-                or tool_name in {"sandbox_exec", "run_skill_script", "memory_write"}
+                or tool_name in {
+                    "sandbox_exec",
+                    "run_skill_script",
+                    "memory_write",
+                    "write_file",
+                    "delete_file",
+                    "rename_file",
+                    "make_directory",
+                    "send_mail",
+                }
             ),
-            audit_required=tool_name in {"sandbox_exec", "run_skill_script", "project_write", "memory_write"},
-            dangerous=tool_name in {"sandbox_exec", "run_skill_script"},
+            audit_required=tool_name in {
+                "sandbox_exec",
+                "run_skill_script",
+                "write_file",
+                "memory_write",
+                "delete_file",
+                "rename_file",
+                "make_directory",
+                "send_mail",
+            },
+            dangerous=tool_name in {"sandbox_exec", "run_skill_script", "send_mail"},
             sandbox_only=tool_name in {"sandbox_exec", "run_skill_script"},
         )
 

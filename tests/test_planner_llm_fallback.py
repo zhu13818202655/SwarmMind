@@ -304,6 +304,6 @@ def test_agent_factory_registers_native_agentscope_skills() -> None:
         )
     )
 
-    toolkit = factory.create_toolkit([])
+    toolkit = factory.create_toolkit([], tool_groups=[ToolGroup.WORKSPACE])
     assert toolkit is not None
     assert resolve_agent_skill_dirs(["build_app"]) == []

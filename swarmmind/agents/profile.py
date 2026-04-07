@@ -60,7 +60,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         skill_profiles=["verification"],
         default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
         recommended_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
-        allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT, ToolGroup.MEMORY],
         default_sandbox_profile="py-basic",
     ),
     "tester-default": AgentProfile(
@@ -72,7 +72,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         skill_profiles=["verification"],
         default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
         recommended_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
-        allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT, ToolGroup.MEMORY],
         default_sandbox_profile="py-basic",
     ),
     "reviewer-default": AgentProfile(
