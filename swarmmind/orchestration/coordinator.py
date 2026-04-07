@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.models.agent_profile import AgentProfile
@@ -10,6 +11,30 @@ from swarmmind.models.capability import DEFAULT_ROLE_TOOL_GROUPS, RuntimeKind, T
 from swarmmind.models.execution import ExecutionProfile
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
+
+
+_BROWSER_PLAYWRIGHT_HINTS: tuple[str, ...] = (
+    "dynamic page",
+    "dynamic webpage",
+    "dynamic site",
+    "playwright",
+    "screenshot",
+    "screen shot",
+    "click",
+    "clicking",
+    "selector",
+    "interactive",
+    "interaction",
+    "scroll",
+    "登录",
+    "截图",
+    "动态页面",
+    "动态网页",
+    "点击",
+    "交互",
+    "选择器",
+    "滚动",
+)
 
 
 class Coordinator:
@@ -25,7 +50,7 @@ class Coordinator:
             agent_profile = self._resolve_agent_profile(task, subtask)
             subtask.agent_profile_id = agent_profile.id
             required_tool_groups = self._resolve_required_tool_groups(subtask, agent_profile)
-            candidate_runtime_kinds = self._resolve_candidate_runtime_kinds(subtask, agent_profile, required_tool_groups)
+            candidate_runtime_kinds = self._resolve_candidate_runtime_kinds(task, subtask, agent_profile, required_tool_groups)
             skill_profiles = self._resolve_skill_profiles(subtask, agent_profile)
             resolved_runtime_kind, runtime_reason, fallback_chain = self._resolve_runtime_kind(
                 task=task,
@@ -78,11 +103,14 @@ class Coordinator:
 
     @staticmethod
     def _resolve_candidate_runtime_kinds(
+        task: Task,
         subtask: SubTask,
         agent_profile: AgentProfile,
         required_tool_groups: list[ToolGroup],
     ) -> list[RuntimeKind]:
         candidates: list[RuntimeKind] = []
+        if Coordinator._prefers_browser_playwright(task, subtask, required_tool_groups):
+            candidates.append(RuntimeKind.SANDBOX)
         planner_candidate = subtask.metadata.get("planner_execution_candidate") if isinstance(subtask.metadata, dict) else None
         if isinstance(planner_candidate, dict):
             runtime_values = planner_candidate.get("runtime_kinds")
@@ -133,12 +161,19 @@ class Coordinator:
         fallback_chain = list(dict.fromkeys(candidate_runtime_kinds))
         required_groups = set(required_tool_groups)
         sandbox_profile = subtask.execution_configuration.sandbox_profile if subtask.execution_configuration else None
+        prefers_browser_playwright = Coordinator._prefers_browser_playwright(task, subtask, required_tool_groups)
 
         def backup_runtimes(selected: RuntimeKind) -> list[RuntimeKind]:
             return [candidate for candidate in fallback_chain if candidate != selected]
 
         for runtime_kind in fallback_chain:
             if runtime_kind == RuntimeKind.SANDBOX:
+                if prefers_browser_playwright:
+                    return (
+                        RuntimeKind.SANDBOX,
+                        "Resolved to sandbox because the subtask requires browser-playwright for dynamic browsing, clicking, or screenshots.",
+                        backup_runtimes(RuntimeKind.SANDBOX),
+                    )
                 if ToolGroup.CODE_EXEC in required_groups or sandbox_profile or agent_profile.default_sandbox_profile:
                     return (
                         RuntimeKind.SANDBOX,
@@ -161,6 +196,12 @@ class Coordinator:
                     backup_runtimes(RuntimeKind.HOST_TOOLS),
                 )
 
+        if prefers_browser_playwright:
+            return (
+                RuntimeKind.SANDBOX,
+                "Resolved to sandbox as a safety fallback because the subtask requires browser-playwright automation.",
+                backup_runtimes(RuntimeKind.SANDBOX),
+            )
         if ToolGroup.CODE_EXEC in required_groups:
             return (
                 RuntimeKind.SANDBOX,
@@ -183,8 +224,23 @@ class Coordinator:
     ) -> str | None:
         if resolved_runtime_kind != RuntimeKind.SANDBOX:
             return None
+        required_tool_groups = list(subtask.execution_configuration.tool_requirements) if subtask.execution_configuration else []
+        if Coordinator._prefers_browser_playwright(task, subtask, required_tool_groups):
+            return (subtask.execution_configuration.sandbox_profile if subtask.execution_configuration else None) or "browser-playwright"
         return (
             (subtask.execution_configuration.sandbox_profile if subtask.execution_configuration else None)
             or agent_profile.default_sandbox_profile
             or task.metadata.get("profile")
         )
+
+    @staticmethod
+    def _prefers_browser_playwright(task: Task, subtask: SubTask, required_tool_groups: list[ToolGroup]) -> bool:
+        if ToolGroup.BROWSER not in required_tool_groups:
+            return False
+        text = "\n".join(
+            part
+            for part in [task.goal, subtask.name, subtask.description]
+            if isinstance(part, str) and part.strip()
+        ).lower()
+        text = re.sub(r"\s+", " ", text)
+        return any(keyword in text for keyword in _BROWSER_PLAYWRIGHT_HINTS)

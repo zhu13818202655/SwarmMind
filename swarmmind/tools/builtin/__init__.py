@@ -1,7 +1,7 @@
 """Built-in tools for SwarmMind."""
 
 from swarmmind.tools.builtin.search import SearchTool, search
-from swarmmind.tools.builtin.browser import BrowserTool, browser_get, browser_screenshot
+from swarmmind.tools.builtin.browser import BrowserTool, browser_get
 from swarmmind.tools.builtin.mail import MailTool, send_mail
 from swarmmind.tools.builtin.file import (
     FileTool,
@@ -24,7 +24,6 @@ __all__ = [
     # Browser
     "BrowserTool",
     "browser_get",
-    "browser_screenshot",
     # Mail
     "MailTool",
     "send_mail",

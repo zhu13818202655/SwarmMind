@@ -324,6 +324,20 @@ class ExecutionRunner:
                     sandbox_only=True,
                 ),
             )
+        if "browser_screenshot" not in existing:
+            self._tool_registry.register(
+                self._tool_browser_screenshot,
+                name="browser_screenshot",
+                description="Capture a web page screenshot with Playwright inside a sandbox.",
+                groups=["browser"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.SANDBOX,
+                    allowed_runtimes=[RuntimeKind.SANDBOX],
+                    audit_required=True,
+                    expensive=True,
+                    sandbox_only=True,
+                ),
+            )
         if "artifact_read" not in existing:
             self._tool_registry.register(
                 self._tool_artifact_read,
@@ -1574,9 +1588,31 @@ class ExecutionRunner:
             )
 
         if "browser_screenshot" in selected_tools:
-            async def browser_screenshot(url: str) -> str:
-                return await self._run_tool("browser_screenshot", task=task, run=run, subtask=subtask, url=url)
-            register("browser_screenshot", "Capture a webpage screenshot placeholder.", browser_screenshot)
+            async def browser_screenshot(
+                url: str,
+                wait_until: str = "networkidle",
+                timeout_seconds: int = 30000,
+                selector: str | None = None,
+                full_page: bool = True,
+                sandbox_profile: str | None = None,
+            ) -> dict[str, Any]:
+                return await self._run_tool(
+                    "browser_screenshot",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    url=url,
+                    wait_until=wait_until,
+                    timeout_seconds=timeout_seconds,
+                    selector=selector,
+                    full_page=full_page,
+                    sandbox_profile=sandbox_profile,
+                )
+            register(
+                "browser_screenshot",
+                "Capture a web page screenshot with Playwright inside a sandbox.",
+                browser_screenshot,
+            )
 
         if "browser_playwright" in selected_tools:
             async def browser_playwright(
@@ -1829,6 +1865,27 @@ class ExecutionRunner:
             return result
         finally:
             await self._sandbox_manager.release(lease.lease_id)
+
+    async def _tool_browser_screenshot(
+        self,
+        url: str,
+        wait_until: str = "networkidle",
+        timeout_seconds: int = 30000,
+        selector: str | None = None,
+        full_page: bool = True,
+        sandbox_profile: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        return await self._tool_browser_playwright(
+            url=url,
+            action="screenshot",
+            wait_until=wait_until,
+            timeout_seconds=timeout_seconds,
+            selector=selector,
+            full_page=full_page,
+            sandbox_profile=sandbox_profile,
+            **kwargs,
+        )
 
     async def _tool_artifact_read(self, run_id: str, dependency_ids: list[str], **_: Any) -> list[Artifact]:
         artifacts = await self._artifact_repository.list_for_run(run_id)
