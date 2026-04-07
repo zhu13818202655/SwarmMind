@@ -110,13 +110,9 @@ class Planner:
             )
             agent = agent_factory.create_main_agent(tools=[])
             prompt = await self._compose_planning_prompt(task)
-            with open("planner_composed_prompt.txt", "w", encoding="utf-8") as f:
-                f.write(prompt)
             result = await agent(Msg(name="user", role="user", content=prompt))
             text = result.get_text_content() or json.dumps(result.to_dict(), ensure_ascii=False)
             payload = self._extract_json_payload(text)
-            with open("planner_raw_output.json", "w", encoding="utf-8") as f:
-                json.dump({"text": text, "payload": payload}, f, ensure_ascii=False, indent=2)
             if payload is None:
                 return []
 
