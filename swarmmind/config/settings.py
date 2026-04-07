@@ -17,12 +17,14 @@ from swarmmind.config.env import PROJECT_ROOT, SECRETS_DIR
 from swarmmind.config.schema import (
     AgentConfig,
     ApiConfig,
+    BrowserConfig,
     IdentityConfig,
     PostgresConfig,
     RateLimitConfig,
     RedisConfig,
     RepositoryConfig,
     SandboxConfig,
+    SearchConfig,
     VectorStoreConfig,
 )
 
@@ -68,6 +70,8 @@ class SwarmMindConfig(BaseSettings):
     repositories: RepositoryConfig = Field(default_factory=RepositoryConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
+    search: SearchConfig = Field(default_factory=SearchConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     identity: IdentityConfig = Field(default_factory=IdentityConfig)

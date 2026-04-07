@@ -3,6 +3,7 @@
 from swarmmind.config.schema import (
     AgentConfig,
     ApiConfig,
+    BrowserConfig,
     IdentityConfig,
     MemoryConfig,
     ModelConfig,
@@ -11,6 +12,7 @@ from swarmmind.config.schema import (
     RedisConfig,
     RepositoryConfig,
     SandboxConfig,
+    SearchConfig,
     VectorStoreConfig,
 )
 from swarmmind.config.settings import SwarmMindConfig, get_settings
@@ -18,6 +20,7 @@ from swarmmind.config.settings import SwarmMindConfig, get_settings
 __all__ = [
     "AgentConfig",
     "ApiConfig",
+    "BrowserConfig",
     "IdentityConfig",
     "MemoryConfig",
     "ModelConfig",
@@ -26,6 +29,7 @@ __all__ = [
     "RedisConfig",
     "RepositoryConfig",
     "SandboxConfig",
+    "SearchConfig",
     "SwarmMindConfig",
     "VectorStoreConfig",
     "get_settings",

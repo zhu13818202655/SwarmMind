@@ -167,6 +167,105 @@ class VectorStoreConfig(ValidatedDefaultsModel):
         return resolve_env_value(value, "QDRANT_URL")
 
 
+class SearchConfig(ValidatedDefaultsModel):
+    """Search provider configuration for result-page retrieval."""
+
+    provider: str = Field(default="duckduckgo", description="Search provider: duckduckgo, brave, bing, serpapi, tavily, google_cse")
+    api_key: str | None = Field(default=None, description="Provider API key when required")
+    base_url: str | None = Field(default=None, description="Optional provider endpoint override")
+    timeout_seconds: float = Field(default=10.0, description="Timeout in seconds for search calls")
+    default_max_results: int = Field(default=5, description="Default maximum number of results")
+    google_cse_id: str | None = Field(default=None, description="Google Custom Search engine identifier")
+    market: str = Field(default="en-US", description="Regional market hint for supported providers")
+    safe_search: str = Field(default="moderate", description="Safe search mode where supported")
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def resolve_provider(cls, value: Any) -> Any:
+        resolved = resolve_env_value(None if value == "duckduckgo" else value, "SWARMMIND_SEARCH__PROVIDER")
+        return "duckduckgo" if resolved is None else resolved
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def resolve_api_key(cls, value: Any) -> Any:
+        return resolve_env_value(
+            value,
+            "SWARMMIND_SEARCH__API_KEY",
+            "TAVILY_API_KEY",
+            "BRAVE_SEARCH_API_KEY",
+            "SERPAPI_API_KEY",
+            "BING_SEARCH_API_KEY",
+            "GOOGLE_SEARCH_API_KEY",
+        )
+
+    @field_validator("base_url", mode="before")
+    @classmethod
+    def resolve_base_url(cls, value: Any) -> Any:
+        return resolve_env_value(value, "SWARMMIND_SEARCH__BASE_URL")
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def resolve_timeout_seconds(cls, value: Any) -> Any:
+        resolved = resolve_env_value(None if value == 10.0 else value, "SWARMMIND_SEARCH__TIMEOUT_SECONDS", cast_type=float)
+        return 10.0 if resolved is None else resolved
+
+    @field_validator("default_max_results", mode="before")
+    @classmethod
+    def resolve_default_max_results(cls, value: Any) -> Any:
+        resolved = resolve_env_value(None if value == 5 else value, "SWARMMIND_SEARCH__DEFAULT_MAX_RESULTS", cast_type=int)
+        return 5 if resolved is None else resolved
+
+    @field_validator("google_cse_id", mode="before")
+    @classmethod
+    def resolve_google_cse_id(cls, value: Any) -> Any:
+        return resolve_env_value(value, "SWARMMIND_SEARCH__GOOGLE_CSE_ID", "GOOGLE_CSE_ID")
+
+    @field_validator("market", mode="before")
+    @classmethod
+    def resolve_market(cls, value: Any) -> Any:
+        resolved = resolve_env_value(None if value == "en-US" else value, "SWARMMIND_SEARCH__MARKET")
+        return "en-US" if resolved is None else resolved
+
+    @field_validator("safe_search", mode="before")
+    @classmethod
+    def resolve_safe_search(cls, value: Any) -> Any:
+        resolved = resolve_env_value(None if value == "moderate" else value, "SWARMMIND_SEARCH__SAFE_SEARCH")
+        return "moderate" if resolved is None else resolved
+
+
+class BrowserConfig(ValidatedDefaultsModel):
+    """Browser/detail retrieval configuration."""
+
+    detail_provider: str = Field(default="direct", description="Detail provider: direct or reader")
+    reader_base_url: str = Field(default="https://r.jina.ai/http://", description="Reader API prefix for article extraction")
+    timeout_seconds: float = Field(default=30.0, description="Timeout in seconds for detail fetches")
+    user_agent: str = Field(default="SwarmMindBrowser/1.0", description="Default user agent for outbound browser requests")
+
+    @field_validator("detail_provider", mode="before")
+    @classmethod
+    def resolve_detail_provider(cls, value: Any) -> Any:
+        resolved = resolve_env_value(None if value == "direct" else value, "SWARMMIND_BROWSER__DETAIL_PROVIDER")
+        return "direct" if resolved is None else resolved
+
+    @field_validator("reader_base_url", mode="before")
+    @classmethod
+    def resolve_reader_base_url(cls, value: Any) -> Any:
+        resolved = resolve_env_value(None if value == "https://r.jina.ai/http://" else value, "SWARMMIND_BROWSER__READER_BASE_URL")
+        return "https://r.jina.ai/http://" if resolved is None else resolved
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def resolve_timeout_seconds(cls, value: Any) -> Any:
+        resolved = resolve_env_value(None if value == 30.0 else value, "SWARMMIND_BROWSER__TIMEOUT_SECONDS", cast_type=float)
+        return 30.0 if resolved is None else resolved
+
+    @field_validator("user_agent", mode="before")
+    @classmethod
+    def resolve_user_agent(cls, value: Any) -> Any:
+        resolved = resolve_env_value(None if value == "SwarmMindBrowser/1.0" else value, "SWARMMIND_BROWSER__USER_AGENT")
+        return "SwarmMindBrowser/1.0" if resolved is None else resolved
+
+
 class MemoryConfig(BaseModel):
     """Memory configuration."""
 

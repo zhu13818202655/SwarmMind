@@ -1517,14 +1517,37 @@ class ExecutionRunner:
             register("grep_search", "Search text content inside workspace files.", grep_search)
 
         if "web_search" in selected_tools:
-            async def web_search(query: str, max_results: int = 5) -> str:
-                return await self._run_tool("web_search", task=task, run=run, subtask=subtask, query=query, max_results=max_results)
-            register("web_search", "Search the web.", web_search)
+            async def web_search(query: str, max_results: int = 5, provider: str | None = None) -> str:
+                return await self._run_tool(
+                    "web_search",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    query=query,
+                    max_results=max_results,
+                    provider=provider,
+                )
+            register(
+                "web_search",
+                "Search public web result pages. Use this to find candidate URLs and snippets, not to read full page details.",
+                web_search,
+            )
 
         if "browser_get" in selected_tools:
-            async def browser_get(url: str) -> str:
-                return await self._run_tool("browser_get", task=task, run=run, subtask=subtask, url=url)
-            register("browser_get", "Fetch and extract a webpage.", browser_get)
+            async def browser_get(url: str, detail_provider: str | None = None) -> str:
+                return await self._run_tool(
+                    "browser_get",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    url=url,
+                    detail_provider=detail_provider,
+                )
+            register(
+                "browser_get",
+                "Fetch one known page URL and extract detail content. Use this after search when you already know which page to inspect.",
+                browser_get,
+            )
 
         if "browser_screenshot" in selected_tools:
             async def browser_screenshot(url: str) -> str:
