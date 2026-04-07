@@ -52,10 +52,6 @@ class BrowserTool:
         except Exception as exc:
             return f"Error fetching {url}: {exc}"
 
-    async def screenshot(self, url: str) -> str:
-        """Take a screenshot of a page."""
-        return f"Screenshot not implemented for {url}. Use browser_get for detail retrieval."
-
     async def _get_direct(self, url: str) -> str:
         response = await self._client.get(url)
         response.raise_for_status()
@@ -139,21 +135,5 @@ async def browser_get(url: str, detail_provider: str | None = None) -> str:
     tool = BrowserTool.from_settings(detail_provider=detail_provider)
     try:
         return await tool.get(url)
-    finally:
-        await tool.close()
-
-
-async def browser_screenshot(url: str) -> str:
-    """Take a screenshot of a web page.
-
-    Args:
-        url: The URL to screenshot
-
-    Returns:
-        Status message
-    """
-    tool = BrowserTool.from_settings()
-    try:
-        return await tool.screenshot(url)
     finally:
         await tool.close()

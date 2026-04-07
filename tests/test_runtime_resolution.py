@@ -63,6 +63,31 @@ async def test_coordinator_prefers_host_tools_for_research_without_legacy_browse
 
 
 @pytest.mark.asyncio
+async def test_coordinator_prefers_browser_playwright_for_dynamic_browser_tasks() -> None:
+    coordinator = Coordinator(AgentProfileStore())
+    task = Task(id="task-2b", goal="打开动态页面并截图", metadata={"profile": "research-net"})
+    run = Run(id="run-2b", task_id=task.id, session_id="session-2b")
+    subtask = SubTask(
+        id="subtask-2b",
+        task_id=task.id,
+        name="capture-dynamic-page",
+        description="Open the dynamic page, click the login button, and capture a screenshot.",
+        role=AgentRole.RESEARCHER,
+        execution_configuration=ExecutionConfiguration(
+            tool_requirements=[ToolGroup.BROWSER, ToolGroup.WORKSPACE],
+        ),
+    )
+
+    [assigned_subtask] = await coordinator.assign(task, run, [subtask])
+    profile = ExecutionProfile.model_validate(assigned_subtask.metadata["execution_profile"])
+
+    assert profile.resolved_runtime_kind == RuntimeKind.SANDBOX
+    assert profile.sandbox_profile == "browser-playwright"
+    assert profile.runtime_resolution_reason is not None
+    assert "browser-playwright" in profile.runtime_resolution_reason
+
+
+@pytest.mark.asyncio
 async def test_coordinator_uses_planner_execution_candidate_runtime_priority() -> None:
     coordinator = Coordinator(AgentProfileStore())
     task = Task(id="task-3", goal="执行实现任务", metadata={"profile": "py-basic"})

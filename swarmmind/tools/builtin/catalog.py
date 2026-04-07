@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from swarmmind.models.capability import RuntimeKind, ToolExecutionContract, ToolGroup
-from swarmmind.tools.builtin.browser import browser_get, browser_screenshot
+from swarmmind.tools.builtin.browser import browser_get
 from swarmmind.tools.builtin.file import (
     delete_file,
     file_exists,
@@ -141,18 +141,6 @@ def register_builtin_tools(
         browser_get,
         name="browser_get",
         description="Fetch and extract text content from a web page.",
-        groups=[ToolGroup.BROWSER],
-        contract=ToolExecutionContract(
-            default_runtime=RuntimeKind.HOST_TOOLS,
-            allowed_runtimes=[RuntimeKind.HOST_TOOLS],
-            read_only=True,
-            expensive=True,
-        ),
-    )
-    register(
-        browser_screenshot,
-        name="browser_screenshot",
-        description="Capture a screenshot placeholder for a web page.",
         groups=[ToolGroup.BROWSER],
         contract=ToolExecutionContract(
             default_runtime=RuntimeKind.HOST_TOOLS,

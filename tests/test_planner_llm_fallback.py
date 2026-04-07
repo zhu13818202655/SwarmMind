@@ -116,6 +116,22 @@ def test_build_subtasks_from_plan_applies_default_execution_configuration() -> N
     assert ToolGroup.CODE_EXEC in subtask.execution_configuration.tool_requirements
 
 
+def test_planner_prefers_browser_playwright_for_dynamic_browser_subtask() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-4b", goal="抓取动态页面并截图", metadata={"profile": "research-net"})
+
+    configuration = planner._default_execution_configuration(
+        task,
+        AgentRole.RESEARCHER,
+        "Open the dynamic page, click the target element, and capture a screenshot.",
+    )
+
+    assert configuration.runtime_kind == RuntimeKind.SANDBOX
+    assert configuration.sandbox_profile == "browser-playwright"
+    assert ToolGroup.BROWSER in configuration.tool_requirements
+    assert configuration.metadata["preferred_browser_runtime"] == "browser-playwright"
+
+
 def test_build_subtasks_from_plan_records_validation_warnings_for_missing_expected_artifacts() -> None:
     planner = Planner(agent_profile_store=AgentProfileStore())
     task = Task(id="task-5", goal="实现功能", metadata={"profile": "py-basic"})
@@ -181,6 +197,42 @@ def test_merge_execution_configurations_prefers_llm_execution_output() -> None:
     planner_candidate = merged[0].metadata.get("planner_execution_candidate")
     assert planner_candidate is not None
     assert planner_candidate["runtime_kinds"] == [RuntimeKind.HOST_TOOLS.value, RuntimeKind.LLM_ONLY.value]
+
+
+def test_merge_execution_configurations_promotes_dynamic_browser_tasks_to_playwright() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-6b", goal="检查动态网页登录流程", metadata={"profile": "research-net"})
+    plan_result = _PlanResult(
+        subtasks=[
+            _PlanSubtaskSpec(
+                name="inspect-login-page",
+                description="Open the dynamic login page, click the submit button, and capture a screenshot.",
+                role="researcher",
+                acceptance_criteria=["The interaction result is captured."],
+                expected_artifacts=["browser_report"],
+            )
+        ]
+    )
+
+    normalized = planner._validate_and_normalize_plan(task, plan_result)
+    merged = planner._merge_execution_configurations(
+        task,
+        normalized,
+        [
+            _ExecutionCandidateSubtaskSpec(
+                name="inspect-login-page",
+                runtime_kinds=["host_tools"],
+                tool_groups=["browser", "workspace"],
+            )
+        ],
+    )
+
+    assert len(merged) == 1
+    execution_configuration = merged[0].execution_configuration
+    assert execution_configuration is not None
+    assert execution_configuration.runtime_kind == RuntimeKind.SANDBOX
+    assert execution_configuration.sandbox_profile == "browser-playwright"
+    assert execution_configuration.metadata["preferred_browser_runtime"] == "browser-playwright"
 
 
 @pytest.mark.asyncio

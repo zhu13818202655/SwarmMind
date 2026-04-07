@@ -44,6 +44,32 @@ PLANNER_ALLOWED_ROLES: set[AgentRole] = {
     AgentRole.WRITER,
 }
 
+_BROWSER_PLAYWRIGHT_HINTS: tuple[str, ...] = (
+    "dynamic page",
+    "dynamic webpage",
+    "dynamic site",
+    "playwright",
+    "screenshot",
+    "screen shot",
+    "click",
+    "clicking",
+    "rendered",
+    "interactive",
+    "interaction",
+    "dom",
+    "selector",
+    "scroll",
+    "登录",
+    "截图",
+    "动态页面",
+    "动态网页",
+    "点击",
+    "交互",
+    "渲染后",
+    "选择器",
+    "滚动",
+)
+
 
 @dataclass(slots=True)
 class _NormalizedPlanSubtaskSpec:
@@ -270,7 +296,14 @@ class Planner:
                 execution_configuration, candidate_metadata = candidate_and_configuration
                 metadata.update(candidate_metadata)
             if execution_configuration is None:
-                execution_configuration = self._default_execution_configuration(task, spec.role)
+                execution_configuration = self._default_execution_configuration(task, spec.role, spec.description)
+            execution_configuration = self._apply_browser_playwright_preference(
+                task,
+                role=spec.role,
+                name=spec.name,
+                description=spec.description,
+                execution_configuration=execution_configuration,
+            )
             merged.append(
                 _NormalizedPlanSubtaskSpec(
                     name=spec.name,
@@ -460,7 +493,12 @@ class Planner:
             for profile in self._agent_profile_store.list_all()
         ]
 
-    def _default_execution_configuration(self, task: Task, role: AgentRole) -> ExecutionConfiguration:
+    def _default_execution_configuration(
+        self,
+        task: Task,
+        role: AgentRole,
+        description: str = "",
+    ) -> ExecutionConfiguration:
         tool_requirements = self._default_tool_groups_for_role(role)
         runtime_kind = RuntimeKind.SANDBOX if ToolGroup.CODE_EXEC in tool_requirements else RuntimeKind.HOST_TOOLS
         skill_profiles: list[str] = []
@@ -476,11 +514,52 @@ class Planner:
                 sandbox_profile = profile.default_sandbox_profile or sandbox_profile
         if runtime_kind != RuntimeKind.SANDBOX:
             sandbox_profile = None
-        return ExecutionConfiguration(
-            runtime_kind=runtime_kind,
-            tool_requirements=tool_requirements,
-            sandbox_profile=sandbox_profile,
-            skill_profiles=skill_profiles,
+        return self._apply_browser_playwright_preference(
+            task,
+            role=role,
+            name="",
+            description=description,
+            execution_configuration=ExecutionConfiguration(
+                runtime_kind=runtime_kind,
+                tool_requirements=tool_requirements,
+                sandbox_profile=sandbox_profile,
+                skill_profiles=skill_profiles,
+            ),
+        )
+
+    @classmethod
+    def _is_browser_playwright_task(cls, text: str) -> bool:
+        normalized = text.strip().lower()
+        if not normalized:
+            return False
+        return any(keyword in normalized for keyword in _BROWSER_PLAYWRIGHT_HINTS)
+
+    def _apply_browser_playwright_preference(
+        self,
+        task: Task,
+        *,
+        role: AgentRole,
+        name: str,
+        description: str,
+        execution_configuration: ExecutionConfiguration,
+    ) -> ExecutionConfiguration:
+        combined_text = "\n".join(part for part in [task.goal, name, description] if part)
+        if not self._is_browser_playwright_task(combined_text):
+            return execution_configuration
+        tool_requirements = list(dict.fromkeys(execution_configuration.tool_requirements))
+        if ToolGroup.BROWSER not in tool_requirements and role in {AgentRole.RESEARCHER, AgentRole.WRITER}:
+            tool_requirements.append(ToolGroup.BROWSER)
+        if ToolGroup.BROWSER not in tool_requirements:
+            return execution_configuration
+        metadata = dict(execution_configuration.metadata)
+        metadata["preferred_browser_runtime"] = "browser-playwright"
+        return execution_configuration.model_copy(
+            update={
+                "runtime_kind": RuntimeKind.SANDBOX,
+                "tool_requirements": tool_requirements,
+                "sandbox_profile": "browser-playwright",
+                "metadata": metadata,
+            }
         )
 
     @staticmethod
@@ -548,7 +627,11 @@ class Planner:
                 acceptance_criteria=["Requirements summary is clear and implementation scope is identified."],
                 expected_artifacts=["analysis_note"],
                 dependencies=[],
-                execution_configuration=self._default_execution_configuration(task, AgentRole.PLANNER),
+                execution_configuration=self._default_execution_configuration(
+                    task,
+                    AgentRole.PLANNER,
+                    "Analyze the task requirements and identify the implementation scope.",
+                ),
                 metadata={"plan_source": "rules"},
             ),
             _NormalizedPlanSubtaskSpec(
@@ -558,7 +641,11 @@ class Planner:
                 acceptance_criteria=["Implementation changes are complete and locally verifiable."],
                 expected_artifacts=["code_changes"],
                 dependencies=["analyze-requirement"],
-                execution_configuration=self._default_execution_configuration(task, AgentRole.CODER),
+                execution_configuration=self._default_execution_configuration(
+                    task,
+                    AgentRole.CODER,
+                    "Implement the required changes for the task.",
+                ),
                 metadata={"plan_source": "rules"},
             ),
             _NormalizedPlanSubtaskSpec(
@@ -568,7 +655,11 @@ class Planner:
                 acceptance_criteria=["Verification evidence is attached and acceptance criteria are checked."],
                 expected_artifacts=["verification_report"],
                 dependencies=["prepare-implementation"],
-                execution_configuration=self._default_execution_configuration(task, AgentRole.TESTER),
+                execution_configuration=self._default_execution_configuration(
+                    task,
+                    AgentRole.TESTER,
+                    "Verify the implementation against the acceptance criteria.",
+                ),
                 metadata={"plan_source": "rules"},
             ),
             _NormalizedPlanSubtaskSpec(
@@ -578,7 +669,11 @@ class Planner:
                 acceptance_criteria=["Review decision is recorded."],
                 expected_artifacts=["review_decision"],
                 dependencies=["verify-result"],
-                execution_configuration=self._default_execution_configuration(task, AgentRole.REVIEWER),
+                execution_configuration=self._default_execution_configuration(
+                    task,
+                    AgentRole.REVIEWER,
+                    "Review the verified result and decide accept or rework.",
+                ),
                 metadata={"plan_source": "rules"},
             ),
         ]

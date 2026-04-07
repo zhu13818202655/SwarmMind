@@ -42,6 +42,7 @@ async def test_select_tool_names_prefers_host_browser_tools_for_host_runtime() -
 
     assert "browser_get" in selected
     assert "browser_playwright" not in selected
+    assert "browser_screenshot" not in selected
 
 
 @pytest.mark.asyncio
@@ -72,8 +73,40 @@ async def test_select_tool_names_exposes_playwright_for_sandbox_browser_runtime(
     selected = runner._select_tool_names(subtask)
 
     assert "browser_playwright" in selected
+    assert "browser_screenshot" in selected
     assert "browser_get" not in selected
     assert "sandbox_exec" not in selected
+
+
+@pytest.mark.asyncio
+async def test_browser_screenshot_alias_uses_playwright(monkeypatch) -> None:
+    runner = await _build_runner()
+    calls: list[dict[str, object]] = []
+
+    async def fake_browser_playwright(**kwargs):
+        calls.append(kwargs)
+        return {"action": kwargs["action"], "url": kwargs["url"]}
+
+    monkeypatch.setattr(runner, "_tool_browser_playwright", fake_browser_playwright)
+
+    result = await runner._tool_browser_screenshot(
+        url="https://example.com",
+        selector="#app",
+        full_page=False,
+    )
+
+    assert result == {"action": "screenshot", "url": "https://example.com"}
+    assert calls == [
+        {
+            "url": "https://example.com",
+            "action": "screenshot",
+            "wait_until": "networkidle",
+            "timeout_seconds": 30000,
+            "selector": "#app",
+            "full_page": False,
+            "sandbox_profile": None,
+        }
+    ]
 
 
 @pytest.mark.asyncio
