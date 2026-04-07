@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import PurePosixPath
 import re
 import shlex
 import uuid
@@ -12,7 +13,7 @@ from swarmmind.events import EventBus
 from swarmmind.memory import LongTermMemoryBase
 from swarmmind.models.artifact import Artifact, ArtifactType
 from swarmmind.models.agent_profile import AgentProfile, HandoffContextMode
-from swarmmind.models.capability import AgentRole, RuntimeKind, ToolExecutionContract
+from swarmmind.models.capability import AgentRole, RuntimeKind, ToolExecutionContract, ToolGroup
 from swarmmind.models.event import DomainEvent
 from swarmmind.models.execution import (
     ExecutionProfile,
@@ -192,7 +193,7 @@ class ExecutionRunner:
 
         if subtask.role in {AgentRole.VERIFIER, AgentRole.TESTER, AgentRole.REVIEWER}:
             await self._execute_validation_subtask(task, run, subtask, event)
-        elif resolved_runtime_kind == RuntimeKind.SANDBOX:
+        elif resolved_runtime_kind == RuntimeKind.SANDBOX and ToolGroup.CODE_EXEC in execution_profile.required_tool_groups:
             await self._execute_sandbox_subtask(task, run, subtask, event)
         else:
             await self._execute_inline_runtime_subtask(task, run, subtask, event, resolved_runtime_kind)
@@ -236,12 +237,21 @@ class ExecutionRunner:
     def _select_tool_names(self, subtask) -> list[str]:
         execution_profile = self._load_execution_profile(subtask)
         names: list[str] = []
+        runtime_kind = execution_profile.resolved_runtime_kind
         required_groups = {group.value for group in execution_profile.required_tool_groups}
         allowed_groups = {group.value for group in execution_profile.allowed_tool_groups}
         explicit_allowed_names = set(execution_profile.allowed_tool_names)
         for metadata in self._tool_registry.get_tool_metadata():
             groups = set(metadata.get("groups", []))
             tool_name = str(metadata.get("name"))
+            contract = metadata.get("contract") if isinstance(metadata.get("contract"), dict) else {}
+            allowed_runtimes = {
+                str(item)
+                for item in contract.get("allowed_runtimes", [])
+                if isinstance(item, str)
+            }
+            if runtime_kind is not None and allowed_runtimes and runtime_kind.value not in allowed_runtimes:
+                continue
             if required_groups and not groups.intersection(required_groups) and tool_name not in explicit_allowed_names:
                 continue
             if allowed_groups and not groups.intersection(allowed_groups) and tool_name not in explicit_allowed_names:
@@ -258,7 +268,7 @@ class ExecutionRunner:
         execution_profile = self._load_execution_profile(subtask)
         role = subtask.role
         required: set[str] = set()
-        if execution_profile.resolved_runtime_kind == RuntimeKind.SANDBOX:
+        if execution_profile.resolved_runtime_kind == RuntimeKind.SANDBOX and ToolGroup.CODE_EXEC in execution_profile.required_tool_groups:
             required.add("sandbox_exec")
         if role in {AgentRole.VERIFIER, AgentRole.TESTER, AgentRole.REVIEWER}:
             required.add("artifact_read")
@@ -297,6 +307,20 @@ class ExecutionRunner:
                     allowed_runtimes=[RuntimeKind.SANDBOX],
                     audit_required=True,
                     dangerous=True,
+                    sandbox_only=True,
+                ),
+            )
+        if "browser_playwright" not in existing:
+            self._tool_registry.register(
+                self._tool_browser_playwright,
+                name="browser_playwright",
+                description="Use Playwright inside a sandbox to inspect or screenshot a web page.",
+                groups=["browser"],
+                contract=ToolExecutionContract(
+                    default_runtime=RuntimeKind.SANDBOX,
+                    allowed_runtimes=[RuntimeKind.SANDBOX],
+                    audit_required=True,
+                    expensive=True,
                     sandbox_only=True,
                 ),
             )
@@ -1554,6 +1578,35 @@ class ExecutionRunner:
                 return await self._run_tool("browser_screenshot", task=task, run=run, subtask=subtask, url=url)
             register("browser_screenshot", "Capture a webpage screenshot placeholder.", browser_screenshot)
 
+        if "browser_playwright" in selected_tools:
+            async def browser_playwright(
+                url: str,
+                action: str = "inspect",
+                wait_until: str = "networkidle",
+                timeout_seconds: int = 30000,
+                selector: str | None = None,
+                full_page: bool = True,
+                sandbox_profile: str | None = None,
+            ) -> dict[str, Any]:
+                return await self._run_tool(
+                    "browser_playwright",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    url=url,
+                    action=action,
+                    wait_until=wait_until,
+                    timeout_seconds=timeout_seconds,
+                    selector=selector,
+                    full_page=full_page,
+                    sandbox_profile=sandbox_profile,
+                )
+            register(
+                "browser_playwright",
+                "Use Playwright inside a sandbox for dynamic browser inspection or screenshots. This tool is sandbox-only.",
+                browser_playwright,
+            )
+
         if "send_mail" in selected_tools:
             async def send_mail(
                 to: str,
@@ -1695,6 +1748,87 @@ class ExecutionRunner:
 
     async def _tool_sandbox_exec(self, lease, command_request, **_: Any):
         return await self._sandbox_manager.execute(lease, command_request)
+
+    async def _tool_browser_playwright(
+        self,
+        url: str,
+        action: str = "inspect",
+        wait_until: str = "networkidle",
+        timeout_seconds: int = 30000,
+        selector: str | None = None,
+        full_page: bool = True,
+        sandbox_profile: str | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        profile = sandbox_profile or "browser-playwright"
+        lease = await self._sandbox_manager.acquire(
+            SandboxLeaseRequest(
+                profile=profile,
+                task_id="browser-playwright",
+                run_id="browser-playwright",
+                subtask_id="browser-playwright",
+            )
+        )
+        script_payload = json.dumps(
+            {
+                "url": url,
+                "action": action,
+                "wait_until": wait_until,
+                "timeout_ms": timeout_seconds,
+                "selector": selector,
+                "full_page": full_page,
+            },
+            ensure_ascii=False,
+        )
+        command = "\n".join(
+            [
+                "python - <<'PY'",
+                "import asyncio, json",
+                "from pathlib import Path",
+                "from playwright.async_api import async_playwright",
+                f"payload = json.loads({script_payload!r})",
+                "async def main():",
+                "    async with async_playwright() as playwright:",
+                "        browser = await playwright.chromium.launch(headless=True)",
+                "        page = await browser.new_page()",
+                "        await page.goto(payload['url'], wait_until=payload['wait_until'], timeout=payload['timeout_ms'])",
+                "        selector = payload.get('selector')",
+                "        if selector:",
+                "            await page.locator(selector).first.wait_for(state='visible', timeout=payload['timeout_ms'])",
+                "        title = await page.title()",
+                "        body_text = await page.locator('body').inner_text()",
+                "        screenshot_path = None",
+                "        if payload['action'] == 'screenshot':",
+                "            artifact_dir = Path('/tmp/browser-playwright')",
+                "            artifact_dir.mkdir(parents=True, exist_ok=True)",
+                "            screenshot_path = artifact_dir / 'screenshot.png'",
+                "            await page.screenshot(path=str(screenshot_path), full_page=bool(payload.get('full_page', True)))",
+                "        await browser.close()",
+                "        print(json.dumps({",
+                "            'url': payload['url'],",
+                "            'action': payload['action'],",
+                "            'title': title,",
+                "            'text_preview': body_text[:4000],",
+                "            'screenshot_path': str(screenshot_path) if screenshot_path else None,",
+                "        }, ensure_ascii=False))",
+                "asyncio.run(main())",
+                "PY",
+            ]
+        )
+        try:
+            execution = await self._sandbox_manager.execute(lease, CommandRequest(command=command, cwd="/tmp"))
+            if execution.exit_code != 0:
+                raise RuntimeError(execution.stderr or execution.stdout or f"Playwright command failed with exit code {execution.exit_code}")
+            stdout = execution.stdout.strip()
+            result = json.loads(stdout.splitlines()[-1]) if stdout else {}
+            if not isinstance(result, dict):
+                return {"stdout": stdout}
+            screenshot_path = result.get("screenshot_path")
+            if isinstance(screenshot_path, str) and screenshot_path:
+                result["screenshot_name"] = PurePosixPath(screenshot_path).name
+            return result
+        finally:
+            await self._sandbox_manager.release(lease.lease_id)
 
     async def _tool_artifact_read(self, run_id: str, dependency_ids: list[str], **_: Any) -> list[Artifact]:
         artifacts = await self._artifact_repository.list_for_run(run_id)

@@ -17,6 +17,7 @@ class SandboxProfile:
 
 # Default sandbox profiles
 DEFAULT_INTERPRETER_IMAGE = "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.1"
+DEFAULT_PLAYWRIGHT_IMAGE = "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/playwright:latest"
 
 DEFAULT_PROFILES: dict[str, SandboxProfile] = {
     "py-basic": SandboxProfile(
@@ -39,6 +40,12 @@ DEFAULT_PROFILES: dict[str, SandboxProfile] = {
         name="node-basic",
         image=DEFAULT_INTERPRETER_IMAGE,
         entrypoint=["/opt/opensandbox/code-interpreter.sh"],
+        timeout_seconds=300,
+        resource_limits={"cpu": "1000m", "memory": "1024Mi"},
+    ),
+    "browser-playwright": SandboxProfile(
+        name="browser-playwright",
+        image=DEFAULT_PLAYWRIGHT_IMAGE,
         timeout_seconds=300,
         resource_limits={"cpu": "1000m", "memory": "1024Mi"},
     ),

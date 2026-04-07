@@ -238,7 +238,7 @@ class CapabilityResolver:
     ) -> dict[str, RuntimeKind]:
         mapping: dict[str, RuntimeKind] = {}
         for tool_name in tool_names:
-            if tool_name in {"run_skill_script", "sandbox_exec"}:
+            if tool_name in {"run_skill_script", "sandbox_exec", "browser_playwright"}:
                 mapping[tool_name] = RuntimeKind.SANDBOX
                 continue
             if default_runtime == RuntimeKind.SANDBOX and (
@@ -298,6 +298,7 @@ class CapabilityResolver:
                 or tool_name in {
                     "sandbox_exec",
                     "run_skill_script",
+                    "browser_playwright",
                     "memory_write",
                     "write_file",
                     "delete_file",
@@ -309,6 +310,7 @@ class CapabilityResolver:
             audit_required=tool_name in {
                 "sandbox_exec",
                 "run_skill_script",
+                "browser_playwright",
                 "write_file",
                 "memory_write",
                 "delete_file",
@@ -316,8 +318,8 @@ class CapabilityResolver:
                 "make_directory",
                 "send_mail",
             },
-            dangerous=tool_name in {"sandbox_exec", "run_skill_script", "send_mail"},
-            sandbox_only=tool_name in {"sandbox_exec", "run_skill_script"},
+            dangerous=tool_name in {"sandbox_exec", "run_skill_script", "browser_playwright", "send_mail"},
+            sandbox_only=tool_name in {"sandbox_exec", "run_skill_script", "browser_playwright"},
         )
 
 
