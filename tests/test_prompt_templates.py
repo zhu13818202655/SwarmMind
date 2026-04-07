@@ -22,7 +22,7 @@ def test_render_prompt_renders_jinja_template() -> None:
     )
 
     assert "目标：实现导出功能" in rendered
-    assert "可用 Agent Profiles JSON：[]" in rendered
+    assert "输出 Schema" in rendered
     assert "角色定义" in rendered
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import pytest
 
 from swarmmind.agents.agent_skill import resolve_agent_skill_dirs
@@ -11,7 +12,7 @@ from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
 from swarmmind.orchestration.planner import (
     Planner,
-    _ExecutionConfigurationSubtaskSpec,
+    _ExecutionCandidateSubtaskSpec,
     _PlanResult,
     _PlanSubtaskSpec,
 )
@@ -79,9 +80,7 @@ async def test_planner_prompt_includes_available_agent_profiles() -> None:
 
     prompt = await planner._compose_planning_prompt(task)
 
-    assert "可用 Agent Profiles JSON" in prompt
-    assert "coder-default" in prompt
-    assert "verifier-default" in prompt
+    assert "输出 Schema" in prompt
     assert PLANNER_ROLE_ENUM in prompt
     assert "expected_artifacts" in prompt
     assert "candidate_runtime_kinds" not in prompt
@@ -164,10 +163,10 @@ def test_merge_execution_configurations_prefers_llm_execution_output() -> None:
         task,
         normalized,
         [
-            _ExecutionConfigurationSubtaskSpec(
+            _ExecutionCandidateSubtaskSpec(
                 name="draft-release-summary",
-                runtime_kind="host_tools",
-                tool_requirements=["workspace", "artifact"],
+                runtime_kinds=["host_tools", "llm_only"],
+                tool_groups=["workspace", "artifact"],
                 skill_profiles=["write_report"],
             )
         ],
@@ -179,6 +178,121 @@ def test_merge_execution_configurations_prefers_llm_execution_output() -> None:
     assert execution_configuration.runtime_kind == RuntimeKind.HOST_TOOLS
     assert execution_configuration.tool_requirements == [ToolGroup.WORKSPACE, ToolGroup.ARTIFACT]
     assert execution_configuration.skill_profiles == ["write_report"]
+    planner_candidate = merged[0].metadata.get("planner_execution_candidate")
+    assert planner_candidate is not None
+    assert planner_candidate["runtime_kinds"] == [RuntimeKind.HOST_TOOLS.value, RuntimeKind.LLM_ONLY.value]
+
+
+@pytest.mark.asyncio
+async def test_plan_execution_configurations_runs_per_subtask() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-7", goal="实现并测试", constraints={})
+    specs = [
+        planner._normalize_plan_subtask(
+            task,
+            _PlanSubtaskSpec(
+                name="prepare-implementation",
+                description="Implement the feature.",
+                role="coder",
+                acceptance_criteria=["Implementation is complete."],
+                expected_artifacts=["code_changes"],
+            ),
+        ),
+        planner._normalize_plan_subtask(
+            task,
+            _PlanSubtaskSpec(
+                name="verify-result",
+                description="Verify the result.",
+                role="tester",
+                acceptance_criteria=["Tests pass."],
+                expected_artifacts=["test_report"],
+            ),
+        ),
+    ]
+
+    class _FakeResult:
+        def __init__(self, payload: str) -> None:
+            self._payload = payload
+
+        def get_text_content(self) -> str:
+            return self._payload
+
+        def to_dict(self) -> dict[str, object]:
+            return {"text": self._payload}
+
+    class _FakeAgent:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.active_calls = 0
+            self.max_active_calls = 0
+
+        async def __call__(self, msg) -> _FakeResult:
+            self.calls.append(str(msg.content))
+            self.active_calls += 1
+            self.max_active_calls = max(self.max_active_calls, self.active_calls)
+            await asyncio.sleep(0.01)
+            if "prepare-implementation" in str(msg.content):
+                payload = (
+                    '{"name":"prepare-implementation","tool_groups":["workspace","code_exec"],'
+                    '"runtime_kinds":["sandbox","host_tools"],"sandbox_profile":"py-basic","skill_profiles":["build_app"]}'
+                )
+            else:
+                payload = (
+                    '{"name":"verify-result","tool_groups":["workspace","artifact"],'
+                    '"runtime_kinds":["host_tools"],"skill_profiles":["test_runner"]}'
+                )
+            self.active_calls -= 1
+            return _FakeResult(payload)
+
+    fake_agent = _FakeAgent()
+
+    candidates = await planner._plan_execution_configurations(task, specs, fake_agent)
+
+    assert len(fake_agent.calls) == 2
+    assert fake_agent.max_active_calls == 2
+    assert len(candidates) == 2
+    assert candidates[0].name == "prepare-implementation"
+    assert candidates[1].name == "verify-result"
+    assert candidates[0].sandbox_profile == "py-basic"
+
+
+def test_merge_execution_configurations_preserves_candidate_sandbox_profile() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-8", goal="实现功能", metadata={"profile": "py-basic"})
+    normalized = planner._validate_and_normalize_plan(
+        task,
+        _PlanResult(
+            subtasks=[
+                _PlanSubtaskSpec(
+                    name="prepare-implementation",
+                    description="Implement the feature.",
+                    role="coder",
+                    acceptance_criteria=["Implementation is complete."],
+                    expected_artifacts=["code_changes"],
+                )
+            ]
+        ),
+    )
+
+    merged = planner._merge_execution_configurations(
+        task,
+        normalized,
+        [
+            _ExecutionCandidateSubtaskSpec(
+                name="prepare-implementation",
+                tool_groups=["workspace", "code_exec"],
+                runtime_kinds=["sandbox", "host_tools"],
+                sandbox_profile="secure-offline",
+                skill_profiles=["build_app"],
+            )
+        ],
+    )
+
+    planner_candidate = merged[0].metadata.get("planner_execution_candidate")
+    assert planner_candidate is not None
+    assert planner_candidate["sandbox_profile"] == "secure-offline"
+    assert merged[0].execution_configuration is not None
+    assert merged[0].execution_configuration.sandbox_profile == "secure-offline"
 
 
 def test_agent_factory_registers_native_agentscope_skills() -> None:

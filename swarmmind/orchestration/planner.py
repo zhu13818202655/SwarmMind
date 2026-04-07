@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import uuid
@@ -21,7 +22,7 @@ from swarmmind.models.capability import (
     RuntimeKind,
     ToolGroup,
 )
-from swarmmind.models.execution import ExecutionConfiguration
+from swarmmind.models.execution import ExecutionConfiguration, SubtaskExecutionCandidate
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
 from swarmmind.prompt_template import (
@@ -156,21 +157,16 @@ class Planner:
     async def _compose_execution_configuration_prompt(
         self,
         task: Task,
-        plan_specs: list[_NormalizedPlanSubtaskSpec],
+        subtask: _NormalizedPlanSubtaskSpec,
     ) -> str:
-        subtasks_json = json.dumps(
+        subtask_json = json.dumps(
             {
-                "subtasks": [
-                    {
-                        "name": spec.name,
-                        "description": spec.description,
-                        "role": spec.role.value,
-                        "acceptance_criteria": spec.acceptance_criteria,
-                        "expected_artifacts": spec.expected_artifacts,
-                        "dependencies": spec.dependencies,
-                    }
-                    for spec in plan_specs
-                ]
+                "name": subtask.name,
+                "description": subtask.description,
+                "role": subtask.role.value,
+                "acceptance_criteria": subtask.acceptance_criteria,
+                "expected_artifacts": subtask.expected_artifacts,
+                "dependencies": subtask.dependencies,
             },
             ensure_ascii=False,
         )
@@ -179,8 +175,10 @@ class Planner:
             {
                 "task_goal": task.goal,
                 "constraints_json": json.dumps(task.constraints, ensure_ascii=False),
-                "profile": str(task.metadata.get("profile", "py-basic")),
-                "subtasks_json": subtasks_json,
+                "subtask_json": subtask_json,
+                "available_tool_groups_json": json.dumps(self._available_tool_groups(), ensure_ascii=False),
+                "available_runtime_kinds_json": json.dumps(self._available_runtime_kinds(), ensure_ascii=False),
+                "available_skill_profiles_json": json.dumps(self._available_skill_profiles(), ensure_ascii=False),
                 "role_definitions": AgentRole.to_prompt_definitions(remove_role_names=["planner", "coordinator"]),
             },
         )
@@ -210,32 +208,71 @@ class Planner:
         task: Task,
         plan_specs: list[_NormalizedPlanSubtaskSpec],
         agent,
-    ) -> list["_ExecutionConfigurationSubtaskSpec"]:
-        prompt = await self._compose_execution_configuration_prompt(task, plan_specs)
-        result = await agent(Msg(name="user", role="user", content=prompt))
-        text = result.get_text_content() or json.dumps(result.to_dict(), ensure_ascii=False)
-        payload = self._extract_json_payload(text)
-        if payload is None:
-            return []
-        config_result = _ExecutionConfigurationResult.model_validate(payload)
-        return list(config_result.subtasks)
+    ) -> list["_ExecutionCandidateSubtaskSpec"]:
+        max_attempts = int(task.constraints.get("planner_execution_candidate_max_attempts", 2))
+        if max_attempts < 1:
+            max_attempts = 1
+        results = await asyncio.gather(
+            *(self._plan_execution_candidate_for_subtask(task, subtask, agent, max_attempts) for subtask in plan_specs)
+        )
+        return [candidate for candidate in results if candidate is not None]
+
+    async def _plan_execution_candidate_for_subtask(
+        self,
+        task: Task,
+        subtask: _NormalizedPlanSubtaskSpec,
+        agent,
+        max_attempts: int,
+    ) -> "_ExecutionCandidateSubtaskSpec | None":
+        for attempt in range(1, max_attempts + 1):
+            prompt = await self._compose_execution_configuration_prompt(task, subtask)
+            result = await agent(Msg(name="user", role="user", content=prompt))
+            text = result.get_text_content() or json.dumps(result.to_dict(), ensure_ascii=False)
+            payload = self._extract_json_payload(text)
+            if payload is None:
+                subtask.metadata["planner_execution_candidate_attempt"] = attempt
+                subtask.metadata["planner_execution_candidate_error"] = "empty_or_invalid_json"
+                continue
+            try:
+                candidate = _ExecutionCandidateSubtaskSpec.model_validate(payload)
+            except Exception:
+                subtask.metadata["planner_execution_candidate_attempt"] = attempt
+                subtask.metadata["planner_execution_candidate_error"] = "schema_validation_failed"
+                continue
+            if self._normalize_name(candidate.name) != self._normalize_name(subtask.name):
+                subtask.metadata["planner_execution_candidate_attempt"] = attempt
+                subtask.metadata["planner_execution_candidate_error"] = "name_mismatch"
+                continue
+            subtask.metadata["planner_execution_candidate_attempt"] = attempt
+            subtask.metadata.pop("planner_execution_candidate_error", None)
+            return candidate
+        return None
 
     def _merge_execution_configurations(
         self,
         task: Task,
         plan_specs: list[_NormalizedPlanSubtaskSpec],
-        execution_specs: list["_ExecutionConfigurationSubtaskSpec"],
+        execution_specs: list["_ExecutionCandidateSubtaskSpec"],
     ) -> list[_NormalizedPlanSubtaskSpec]:
-        normalized_by_name: dict[str, ExecutionConfiguration] = {}
+        normalized_by_name: dict[str, tuple[ExecutionConfiguration, dict[str, Any]]] = {}
         for execution_spec in execution_specs:
             normalized_name = self._normalize_name(execution_spec.name)
             if not normalized_name:
                 continue
-            normalized_by_name[normalized_name] = self._normalize_execution_configuration(task, execution_spec)
+            candidate = self._normalize_execution_candidate(execution_spec)
+            normalized_by_name[normalized_name] = (
+                self._candidate_to_execution_configuration(task, candidate),
+                {"planner_execution_candidate": candidate.model_dump(mode="json")},
+            )
 
         merged: list[_NormalizedPlanSubtaskSpec] = []
         for spec in plan_specs:
-            execution_configuration = normalized_by_name.get(self._normalize_name(spec.name))
+            candidate_and_configuration = normalized_by_name.get(self._normalize_name(spec.name))
+            execution_configuration: ExecutionConfiguration | None = None
+            metadata = dict(spec.metadata)
+            if candidate_and_configuration is not None:
+                execution_configuration, candidate_metadata = candidate_and_configuration
+                metadata.update(candidate_metadata)
             if execution_configuration is None:
                 execution_configuration = self._default_execution_configuration(task, spec.role)
             merged.append(
@@ -247,7 +284,7 @@ class Planner:
                     expected_artifacts=spec.expected_artifacts,
                     dependencies=spec.dependencies,
                     execution_configuration=execution_configuration,
-                    metadata=dict(spec.metadata),
+                    metadata=metadata,
                 )
             )
         return merged
@@ -293,6 +330,7 @@ class Planner:
                 "planning_prompt": self._user_prompt_template.name,
                 **spec.metadata,
             }
+            metadata.setdefault("planner_execution_candidate", None)
             metadata["execution_configuration"] = (
                 spec.execution_configuration.model_dump(mode="json")
                 if spec.execution_configuration is not None
@@ -426,13 +464,6 @@ class Planner:
             for profile in self._agent_profile_store.list_all()
         ]
 
-    @staticmethod
-    def _normalize_optional_string(value: str | None) -> str | None:
-        if value is None:
-            return None
-        token = str(value).strip()
-        return token or None
-
     def _default_execution_configuration(self, task: Task, role: AgentRole) -> ExecutionConfiguration:
         tool_requirements = self._default_tool_groups_for_role(role)
         runtime_kind = RuntimeKind.SANDBOX if ToolGroup.CODE_EXEC in tool_requirements else RuntimeKind.HOST_TOOLS
@@ -456,30 +487,61 @@ class Planner:
             skill_profiles=skill_profiles,
         )
 
-    def _normalize_execution_configuration(
-        self,
-        task: Task,
-        spec: "_ExecutionConfigurationSubtaskSpec",
-    ) -> ExecutionConfiguration:
-        tool_requirements = self._parse_tool_groups(spec.tool_requirements)
-        runtime_kind = None
-        if spec.runtime_kind:
-            try:
-                runtime_kind = RuntimeKind(spec.runtime_kind.strip().lower())
-            except ValueError:
-                runtime_kind = None
+    @staticmethod
+    def _available_tool_groups() -> list[str]:
+        return [tool_group.value for tool_group in ToolGroup]
+
+    @staticmethod
+    def _available_runtime_kinds() -> list[str]:
+        return [runtime_kind.value for runtime_kind in RuntimeKind]
+
+    def _available_skill_profiles(self) -> list[str]:
+        if self._agent_profile_store is None:
+            return []
+        available: list[str] = []
+        for profile in self._agent_profile_store.list_all():
+            for skill_profile in profile.skill_profiles:
+                if skill_profile not in available:
+                    available.append(skill_profile)
+        return available
+
+    def _normalize_execution_candidate(self, spec: "_ExecutionCandidateSubtaskSpec") -> SubtaskExecutionCandidate:
+        tool_groups = self._parse_tool_groups(spec.tool_groups)
+        runtime_kinds = self._parse_runtime_kinds(spec.runtime_kinds)
         sandbox_profile = self._normalize_optional_string(spec.sandbox_profile)
-        skill_profiles = self._normalize_skill_profiles(spec.skill_profiles)
-        if runtime_kind == RuntimeKind.SANDBOX:
-            sandbox_profile = sandbox_profile or str(task.metadata.get("profile", "py-basic"))
-        else:
+        if RuntimeKind.SANDBOX not in runtime_kinds:
             sandbox_profile = None
-        return ExecutionConfiguration(
-            runtime_kind=runtime_kind,
-            tool_requirements=tool_requirements,
+        skill_profiles = self._normalize_skill_profiles(spec.skill_profiles)
+        return SubtaskExecutionCandidate(
+            name=spec.name,
+            tool_groups=tool_groups,
+            runtime_kinds=runtime_kinds,
             sandbox_profile=sandbox_profile,
             skill_profiles=skill_profiles,
         )
+
+    @staticmethod
+    def _candidate_to_execution_configuration(task: Task, candidate: SubtaskExecutionCandidate) -> ExecutionConfiguration:
+        runtime_kind = candidate.runtime_kinds[0] if candidate.runtime_kinds else None
+        sandbox_profile = candidate.sandbox_profile or str(task.metadata.get("profile", "py-basic"))
+        if runtime_kind != RuntimeKind.SANDBOX:
+            sandbox_profile = None
+        return ExecutionConfiguration(
+            runtime_kind=runtime_kind,
+            tool_requirements=list(candidate.tool_groups),
+            sandbox_profile=sandbox_profile,
+            skill_profiles=list(candidate.skill_profiles),
+            metadata={
+                "planner_candidate_runtime_kinds": json.dumps([item.value for item in candidate.runtime_kinds], ensure_ascii=False),
+            },
+        )
+
+    @staticmethod
+    def _normalize_optional_string(value: str | None) -> str | None:
+        if value is None:
+            return None
+        token = str(value).strip()
+        return token or None
 
     def _fallback_subtasks(self, task: Task, run: Run) -> list[SubTask]:
         fallback_specs = [
@@ -541,13 +603,13 @@ class _PlanResult(BaseModel):
     subtasks: list[_PlanSubtaskSpec] = Field(default_factory=list)
 
 
-class _ExecutionConfigurationSubtaskSpec(BaseModel):
+class _ExecutionCandidateSubtaskSpec(BaseModel):
     name: str = Field(...)
-    runtime_kind: str | None = Field(default=None)
-    tool_requirements: list[str] = Field(default_factory=list)
+    tool_groups: list[str] = Field(default_factory=list)
+    runtime_kinds: list[str] = Field(default_factory=list)
     sandbox_profile: str | None = Field(default=None)
     skill_profiles: list[str] = Field(default_factory=list)
 
 
-class _ExecutionConfigurationResult(BaseModel):
-    subtasks: list[_ExecutionConfigurationSubtaskSpec] = Field(default_factory=list)
+class _ExecutionCandidateResult(BaseModel):
+    subtasks: list[_ExecutionCandidateSubtaskSpec] = Field(default_factory=list)

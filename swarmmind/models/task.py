@@ -120,6 +120,7 @@ class SubTask(BaseModel):
         self.status = SubTaskStatus.ASSIGNED
         self.metadata["assigned_execution"] = execution_profile
         self.metadata["execution_profile"] = execution_profile
+        self.metadata["resolved_execution_profile"] = execution_profile
         self.metadata["assigned_run_id"] = run_id
         self.metadata["assigned_at"] = utc_now().isoformat()
         self.updated_at = utc_now()
