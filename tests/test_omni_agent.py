@@ -5,6 +5,8 @@ from typing import Any
 import pytest
 from agentscope.agent import ReActAgent
 from agentscope.message import Msg
+from agentscope.message import TextBlock
+from agentscope.model import ChatResponse, OpenAIChatModel
 
 from swarmmind.agents import AgentConfig, AgentFactory, AgentScopeConfig, OmniAgent
 from swarmmind.models.agent_profile import AgentProfile, SkillsMode
@@ -207,6 +209,34 @@ async def test_omni_agent_acting_emits_tool_and_skill_events(monkeypatch: pytest
     assert tool_started["tool_runtime"] == RuntimeKind.SANDBOX.value
     assert tool_started["tool_audit_required"] is True
     assert tool_started["tool_sandbox_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_factory_model_client_emits_llm_audit_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    factory = _build_factory()
+    events: list[tuple[str, dict[str, object]]] = []
+    model = factory.create_model_client(event_publisher=lambda topic, payload: _capture(events, topic, payload))
+
+    async def fake_call(
+        self: OpenAIChatModel,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]] | None = None,
+        tool_choice: str | None = None,
+        structured_model: Any | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        del self, tools, tool_choice, structured_model, kwargs
+        assert messages[0]["content"] == "inspect llm call"
+        return ChatResponse(content=[TextBlock(type="text", text="ok")])
+
+    monkeypatch.setattr(OpenAIChatModel, "__call__", fake_call)
+
+    response = await model(messages=[{"role": "user", "content": "inspect llm call"}])
+
+    assert response.content[0]["text"] == "ok"
+    assert [topic for topic, _ in events] == ["llm.requested", "llm.responded"]
+    assert events[0][1]["messages"][0]["content"] == "inspect llm call"
+    assert events[1][1]["response"]["content"][0]["text"] == "ok"
 
 
 async def _capture(

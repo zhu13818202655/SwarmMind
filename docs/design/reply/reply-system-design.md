@@ -205,7 +205,31 @@ artifact 的内容会包含：
 
 这一步解决的是“知道失败了，但拿不到完整命令输出”的问题。
 
-## 2.6 修改后的系统视图
+## 2.6 修改点五：tool 调用与 LLM 调用生成调试 artifact
+
+为了让本地排障时不仅能看 replay event，还能直接在 `data/artifacts/` 下检索关键证据对象，reply 系统新增了审计 trace artifact。
+
+### 现在会额外固化的内容
+
+1. `tool.started`
+2. `tool.completed`
+3. `tool.failed`
+4. `llm.requested`
+5. `llm.responded`
+6. `llm.failed`
+
+### 固化内容示例
+
+1. tool 调用前输入参数
+2. tool 调用完成后的结果摘要
+3. LLM 每次调用时的 messages、tool schema、tool_choice、structured_model
+4. LLM 返回的最终响应对象与响应摘要
+
+这些 trace artifact 会继续保留 `task_id/run_id/subtask_id/sandbox_id` 维度，因此既可以通过 replay 定位，也可以直接在 artifact 目录中查看单次调用的输入输出快照。
+
+这一步解决的是“replay 里知道发生过调用，但 `data/artifacts/` 里没有对应调试记录”的问题。
+
+## 2.7 修改后的系统视图
 
 修改后，这套系统可以概括成下面这条链路。
 
@@ -218,7 +242,7 @@ artifact 的内容会包含：
 
 所以现在的 reply 设计已经从“过程事件化”提升成了“过程事件化 + 关键证据对象化 + 本地默认持久化”。
 
-## 2.7 修改后的优点
+## 2.8 修改后的优点
 
 ### 优点 1：不破坏现有模型
 
@@ -241,7 +265,7 @@ artifact 的内容会包含：
 
 有了 topic/tool_name 过滤和 tool failure artifact，下一步做“run diagnostics”就不需要重构底层数据结构。
 
-## 2.8 修改后的局限
+## 2.9 修改后的局限
 
 虽然这次修改已经解决了本地调试最痛的点，但它仍然是一个阶段性方案。
 
@@ -249,7 +273,7 @@ artifact 的内容会包含：
 
 1. replay 还是 append-only 事件流，不是结构化诊断视图。
 2. stdout/stderr 直接放在 artifact metadata 中，适合 MVP，不适合超大输出。
-3. tool completed 事件只保留摘要，不保留完整 result 快照。
+3. 超大 tool result / 超长 prompt 仍然需要截断策略，否则本地文件体积会快速膨胀。
 4. reply 级别还没有独立的 `reply_id` 概念。
 5. API 仍偏底层，使用者需要知道 run/subtask/tool 的关系。
 

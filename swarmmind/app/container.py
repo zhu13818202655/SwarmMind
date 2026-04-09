@@ -41,7 +41,7 @@ from swarmmind.repositories import (
     TaskRepository,
 )
 from swarmmind.skill_system import SkillExecutionService, SkillScriptExecutor
-from swarmmind.sandbox import ArtifactCollector, LocalSandboxAdapter, ReplayRecorder, SandboxManager
+from swarmmind.sandbox import ArtifactCollector, AuditArtifactRecorder, LocalSandboxAdapter, ReplayRecorder, SandboxManager
 from swarmmind.sandbox.opensandbox_adapter import OpenSandboxAdapter
 from swarmmind.tools import ToolRegistry, register_builtin_tools
 
@@ -66,6 +66,7 @@ class AppContainer:
     sandbox_manager: SandboxManager
     artifact_collector: ArtifactCollector
     replay_recorder: ReplayRecorder
+    audit_artifact_recorder: AuditArtifactRecorder
     skill_execution_service: SkillExecutionService
     run_state_service: RunStateService
     execution_runner: ExecutionRunner
@@ -92,6 +93,7 @@ class AppContainer:
         "sandbox_manager",
         "artifact_collector",
         "replay_recorder",
+        "audit_artifact_recorder",
         "skill_execution_service",
         "run_state_service",
         "execution_runner",
@@ -120,6 +122,7 @@ class AppContainer:
         sandbox_manager: SandboxManager,
         artifact_collector: ArtifactCollector,
         replay_recorder: ReplayRecorder,
+        audit_artifact_recorder: AuditArtifactRecorder,
         skill_execution_service: SkillExecutionService,
         run_state_service: RunStateService,
         execution_runner: ExecutionRunner,
@@ -145,6 +148,7 @@ class AppContainer:
         self.sandbox_manager = sandbox_manager
         self.artifact_collector = artifact_collector
         self.replay_recorder = replay_recorder
+        self.audit_artifact_recorder = audit_artifact_recorder
         self.skill_execution_service = skill_execution_service
         self.run_state_service = run_state_service
         self.execution_runner = execution_runner
@@ -183,6 +187,7 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
     sandbox_manager = SandboxManager(_build_sandbox_provider(settings))
     artifact_collector = ArtifactCollector()
     replay_recorder = ReplayRecorder(replay_repository)
+    audit_artifact_recorder = AuditArtifactRecorder(artifact_repository)
     tool_registry = ToolRegistry()
     skill_execution_service = SkillExecutionService(
         executor=SkillScriptExecutor(sandbox_manager),
@@ -199,6 +204,7 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         model_max_tokens=settings.agent.model.max_tokens,
         agent_profile_store=agent_profile_store,
         long_term_memory=long_term_memory,
+        event_bus=event_bus,
     )
     coordinator = Coordinator(agent_profile_store=agent_profile_store)
     scheduler = Scheduler()
@@ -265,6 +271,7 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
 
     # TODO 怎么区分不同的task，多个用户传不同的任务，怎么区分
     await event_bus.subscribe("*", replay_recorder.handle_event)
+    await event_bus.subscribe("*", audit_artifact_recorder.handle_event)
     await event_bus.subscribe("task.created", orchestrator.handle_task_created)
     await event_bus.subscribe("subtask.completed", orchestrator.handle_subtask_terminal)
     await event_bus.subscribe("subtask.failed", orchestrator.handle_subtask_terminal)
@@ -288,6 +295,7 @@ async def build_container(settings: SwarmMindConfig | None = None) -> AppContain
         sandbox_manager=sandbox_manager,
         artifact_collector=artifact_collector,
         replay_recorder=replay_recorder,
+        audit_artifact_recorder=audit_artifact_recorder,
         skill_execution_service=skill_execution_service,
         run_state_service=run_state_service,
         execution_runner=execution_runner,

@@ -17,6 +17,7 @@ from swarmmind.agents.agent_skill import build_agent_skill_catalog, build_agent_
 from swarmmind.models.agent_profile import AgentProfile, HandoffPolicy, SkillsMode
 from swarmmind.models.capability import AgentRole, RuntimeKind, ToolExecutionContract, ToolGroup
 from swarmmind.models.execution import ExecutionProfile
+from swarmmind.utils.audit import sanitize_audit_value
 
 AgentEventPublisher: TypeAlias = Callable[[str, dict[str, object]], Awaitable[None]]
 
@@ -431,6 +432,7 @@ class OmniAgent(ReActAgent):
                     "tool_name": tool_name,
                     "tool_runtime": tool_runtime.value,
                     "tool_call_id": str(tool_call.get("id", "")),
+                    "input": sanitize_audit_value(tool_args),
                     **self._tool_contract_payload(tool_contract),
                 },
             )
@@ -446,6 +448,7 @@ class OmniAgent(ReActAgent):
                         "tool_name": tool_name,
                         "tool_runtime": tool_runtime.value,
                         "tool_call_id": str(tool_call.get("id", "")),
+                        "input": sanitize_audit_value(tool_args),
                         **self._tool_contract_payload(tool_contract),
                         "error": str(exc),
                     },
@@ -461,6 +464,8 @@ class OmniAgent(ReActAgent):
                     "tool_name": tool_name,
                     "tool_runtime": tool_runtime.value,
                     "tool_call_id": str(tool_call.get("id", "")),
+                    "input": sanitize_audit_value(tool_args),
+                    "result": sanitize_audit_value(result),
                     **self._tool_contract_payload(tool_contract),
                 },
             )

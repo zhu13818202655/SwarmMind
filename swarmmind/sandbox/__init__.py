@@ -1,6 +1,7 @@
 """Sandbox module for SwarmMind."""
 
 from swarmmind.sandbox.artifact_collector import ArtifactCollector
+from swarmmind.sandbox.audit_artifact_recorder import AuditArtifactRecorder
 from swarmmind.sandbox.local_adapter import LocalSandboxAdapter
 from swarmmind.sandbox.provider import SandboxProvider, SandboxHandle, ExecResult, WriteFileEntry
 from swarmmind.sandbox.profiles import SandboxProfile, DEFAULT_PROFILES
@@ -17,6 +18,7 @@ from swarmmind.sandbox.models import (
 __all__ = [
     "CommandRequest",
     "ArtifactCollector",
+    "AuditArtifactRecorder",
     "SandboxProvider",
     "SandboxHandle",
     "SandboxExecution",

@@ -6,9 +6,9 @@ from typing import Any, List
 
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.memory import InMemoryMemory
-from agentscope.model import OpenAIChatModel
 from agentscope.tool import Toolkit
 
+from swarmmind.agents.audited_model import AuditedOpenAIChatModel
 from swarmmind.models.agent_profile import AgentProfile, SkillsMode
 from swarmmind.agents.agent_skill import (
     build_agent_skill_catalog,
@@ -28,12 +28,13 @@ class AgentFactory:
     def __init__(self, config: AgentConfig):
         self.config = config
 
-    def create_model_client(self):
+    def create_model_client(self, *, event_publisher: Any = None):
         """Create model client from config."""
         config = self.config.scope_config
-        return OpenAIChatModel(
+        return AuditedOpenAIChatModel(
             model_name=config.model_name,
             api_key=config.api_key,
+            event_publisher=event_publisher,
             generate_kwargs={
                 "temperature": config.temperature,
                 "max_tokens": config.max_tokens,
@@ -130,7 +131,7 @@ class AgentFactory:
             event_publisher=event_publisher,
             name=self.config.name,
             sys_prompt=effective_prompt,
-            model=self.create_model_client(),
+            model=self.create_model_client(event_publisher=event_publisher),
             formatter=self.create_formatter(),
             toolkit=toolkit,
             memory=self.create_memory(),
@@ -195,7 +196,7 @@ class AgentFactory:
             event_publisher=event_publisher,
             name=config.name,
             sys_prompt=effective_prompt,
-            model=self.create_model_client(),
+            model=self.create_model_client(event_publisher=event_publisher),
             formatter=self.create_formatter(),
             toolkit=toolkit,
             memory=InMemoryMemory(),
@@ -241,7 +242,7 @@ class AgentFactory:
             event_publisher=event_publisher,
             name=name,
             sys_prompt=effective_prompt,
-            model=self.create_model_client(),
+            model=self.create_model_client(event_publisher=event_publisher),
             formatter=self.create_formatter(),
             toolkit=toolkit,
             memory=InMemoryMemory(),

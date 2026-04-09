@@ -11,6 +11,7 @@ from swarmmind.app.container import build_container
 from swarmmind.config import SwarmMindConfig
 from swarmmind.gateway import TaskSubmitRequest
 from swarmmind.models.artifact import Artifact, ArtifactType
+from swarmmind.models.event import DomainEvent
 from swarmmind.models.replay import ReplayEntry, ReplayRoot
 from swarmmind.models.run import RunStatus
 from swarmmind.repositories import FileArtifactRepository, FileReplayRepository
@@ -157,3 +158,58 @@ async def test_subtask_replay_and_artifact_api_returns_filtered_results(tmp_path
             item.get("subtask_id") == subtask_id
             for item in artifacts_payload["artifacts"]
         )
+
+
+@pytest.mark.asyncio
+async def test_audit_trace_events_persist_to_file_backed_artifacts(tmp_path) -> None:
+    settings = SwarmMindConfig(
+        repositories={
+            "artifact_backend": "file",
+            "replay_backend": "file",
+            "file_base_path": str(tmp_path),
+        },
+    )
+    container = await build_container(settings)
+
+    await container.event_bus.publish(
+        DomainEvent(
+            event_id="event-llm-1",
+            topic="llm.requested",
+            tenant_id="tenant-test",
+            session_id="session-test",
+            task_id="task-audit-1",
+            run_id="run-audit-1",
+            subtask_id="subtask-audit-1",
+            payload={
+                "model_name": "gpt-4o",
+                "messages": [{"role": "user", "content": "record this prompt"}],
+            },
+        )
+    )
+    await container.event_bus.publish(
+        DomainEvent(
+            event_id="event-tool-1",
+            topic="tool.completed",
+            tenant_id="tenant-test",
+            session_id="session-test",
+            task_id="task-audit-1",
+            run_id="run-audit-1",
+            subtask_id="subtask-audit-1",
+            payload={
+                "tool_name": "sandbox_exec",
+                "command": "pytest -q",
+                "result": {"exit_code": 0, "stdout": "ok"},
+            },
+        )
+    )
+
+    artifacts = await container.artifact_repository.list_for_run("run-audit-1")
+
+    assert len(artifacts) == 2
+    assert {artifact.metadata.get("topic") for artifact in artifacts} == {"llm.requested", "tool.completed"}
+    llm_artifact = next(artifact for artifact in artifacts if artifact.metadata.get("topic") == "llm.requested")
+    tool_artifact = next(artifact for artifact in artifacts if artifact.metadata.get("topic") == "tool.completed")
+    assert llm_artifact.type == ArtifactType.TRANSCRIPT
+    assert tool_artifact.type == ArtifactType.LOG
+    assert llm_artifact.metadata["payload"]["messages"][0]["content"] == "record this prompt"
+    assert tool_artifact.metadata["payload"]["result"]["stdout"] == "ok"
