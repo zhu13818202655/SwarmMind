@@ -172,9 +172,18 @@ def to_task_detail_response(task_detail: TaskDetail) -> TaskDetailResponse:
     )
 
 
-def build_run_events_response(run_id: str, replay, cursor: int, limit: int) -> RunEventsResponse:
+def build_run_events_response(
+    run_id: str,
+    replay,
+    cursor: int,
+    limit: int,
+    *,
+    topic: str | None = None,
+    tool_name: str | None = None,
+) -> RunEventsResponse:
     """Build a paged replay response from a replay root."""
-    events, next_cursor = _build_event_page(replay.entries, cursor, limit)
+    entries = _filter_replay_entries(replay.entries, topic=topic, tool_name=tool_name)
+    events, next_cursor = _build_event_page(entries, cursor, limit)
 
     return RunEventsResponse(
         run_id=run_id,
@@ -183,9 +192,19 @@ def build_run_events_response(run_id: str, replay, cursor: int, limit: int) -> R
     )
 
 
-def build_subtask_events_response(run_id: str, subtask_id: str, replay, cursor: int, limit: int) -> SubTaskEventsResponse:
+def build_subtask_events_response(
+    run_id: str,
+    subtask_id: str,
+    replay,
+    cursor: int,
+    limit: int,
+    *,
+    topic: str | None = None,
+    tool_name: str | None = None,
+) -> SubTaskEventsResponse:
     """Build a paged replay response filtered to a single subtask."""
     entries = [entry for entry in replay.entries if entry.payload.get("subtask_id") == subtask_id]
+    entries = _filter_replay_entries(entries, topic=topic, tool_name=tool_name)
     events, next_cursor = _build_event_page(entries, cursor, limit)
 
     return SubTaskEventsResponse(
@@ -200,6 +219,16 @@ def replay_contains_subtask(replay, subtask_id: str) -> bool:
     """Return whether the replay contains at least one event for the subtask."""
 
     return any(str((entry.payload or {}).get("subtask_id") or "") == subtask_id for entry in replay.entries)
+
+
+def _filter_replay_entries(entries, *, topic: str | None = None, tool_name: str | None = None):
+    """Filter replay entries by event topic and tool name."""
+    filtered = entries
+    if topic:
+        filtered = [entry for entry in filtered if entry.event_type == topic]
+    if tool_name:
+        filtered = [entry for entry in filtered if str((entry.payload or {}).get("tool_name") or "") == tool_name]
+    return filtered
 
 
 def _build_event_page(entries, cursor: int, limit: int) -> tuple[list[RunEventResponse], int]:
@@ -362,6 +391,8 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
         raw_request: Request,
         cursor: int = 0,
         limit: int = 100,
+        topic: str | None = None,
+        tool_name: str | None = None,
     ):
         """Get paged replay events for a run."""
         container = raw_request.app.state.container
@@ -378,7 +409,7 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
                 )
             return RunEventsResponse(run_id=run_id, next_cursor=max(0, cursor), events=[])
 
-        return build_run_events_response(run_id, replay, cursor, limit)
+        return build_run_events_response(run_id, replay, cursor, limit, topic=topic, tool_name=tool_name)
 
     @app.get("/v1/runs/{run_id}/subtasks/{subtask_id}/events", response_model=SubTaskEventsResponse)
     async def get_subtask_events(
@@ -387,6 +418,8 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
         raw_request: Request,
         cursor: int = 0,
         limit: int = 100,
+        topic: str | None = None,
+        tool_name: str | None = None,
     ):
         """Get paged replay events for a single subtask within a run."""
         container = raw_request.app.state.container
@@ -411,7 +444,15 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
                     detail=f"Subtask not found for run: {subtask_id}",
                 )
 
-        return build_subtask_events_response(run_id, subtask_id, replay, cursor, limit)
+        return build_subtask_events_response(
+            run_id,
+            subtask_id,
+            replay,
+            cursor,
+            limit,
+            topic=topic,
+            tool_name=tool_name,
+        )
 
     @app.get("/v1/runs/{run_id}/subtasks/{subtask_id}/artifacts", response_model=SubTaskArtifactsResponse)
     async def get_subtask_artifacts(run_id: str, subtask_id: str, raw_request: Request):

@@ -85,6 +85,7 @@ async def test_subtask_replay_and_artifact_api_returns_filtered_results(tmp_path
             run_id=run_id,
             entries=[
                 ReplayEntry(event_type="subtask.started", payload={"subtask_id": subtask_id, "name": "prepare-implementation"}),
+                ReplayEntry(event_type="tool.failed", payload={"subtask_id": subtask_id, "tool_name": "sandbox_exec", "error": "boom"}),
                 ReplayEntry(event_type="subtask.summary", payload={"subtask_id": subtask_id, "status": "succeeded"}),
                 ReplayEntry(event_type="subtask.summary", payload={"subtask_id": other_subtask_id, "status": "succeeded"}),
             ],
@@ -136,6 +137,15 @@ async def test_subtask_replay_and_artifact_api_returns_filtered_results(tmp_path
             item["payload"].get("subtask_id") == subtask_id
             for item in events_payload["events"]
         )
+
+        filtered_events_response = await client.get(
+            f"/v1/runs/{run_id}/subtasks/{subtask_id}/events",
+            params={"topic": "tool.failed", "tool_name": "sandbox_exec"},
+        )
+        assert filtered_events_response.status_code == 200
+        filtered_events_payload = filtered_events_response.json()
+        assert [item["event_type"] for item in filtered_events_payload["events"]] == ["tool.failed"]
+        assert all(item["payload"].get("tool_name") == "sandbox_exec" for item in filtered_events_payload["events"])
 
         artifacts_response = await client.get(f"/v1/runs/{run_id}/subtasks/{subtask_id}/artifacts")
         assert artifacts_response.status_code == 200

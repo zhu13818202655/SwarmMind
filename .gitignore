@@ -45,3 +45,7 @@ agentscope_minimal/logs/
 .github/story/
 .github/skills/
 .agents/
+
+# artifacts
+data/artifacts/
+data/replays/

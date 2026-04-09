@@ -20,7 +20,10 @@
       "justMyCode": false,
       "envFile": "${workspaceFolder}/.env",
       "env": {
-        "PYTHONPATH": "${workspaceFolder}"
+        "PYTHONPATH": "${workspaceFolder}",
+        "SWARMMIND_REPOSITORIES__REPLAY_BACKEND": "file",
+        "SWARMMIND_REPOSITORIES__ARTIFACT_BACKEND": "file",
+        "SWARMMIND_REPOSITORIES__FILE_BASE_PATH": "${workspaceFolder}/data"
       }
     },
     {

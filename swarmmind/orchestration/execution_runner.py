@@ -1071,6 +1071,21 @@ class ExecutionRunner:
                 sandbox_id=sandbox_id,
                 payload={**payload, "error": str(exc)},
             )
+            artifact = self._create_inline_artifact(
+                task=task,
+                run=run,
+                subtask=subtask,
+                name=f"{subtask.name}-{tool_name}-tool-failure.json",
+                artifact_type=ArtifactType.REPORT,
+                metadata={
+                    "source": "tool_failure",
+                    "tool_name": tool_name,
+                    "sandbox_id": sandbox_id,
+                    "error": str(exc),
+                    "input": payload,
+                },
+            )
+            await self._store_artifact(task, run, subtask, artifact, sandbox_id)
             raise
         await self._publish_tool_event(
             topic="tool.completed",

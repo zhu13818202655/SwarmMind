@@ -54,6 +54,7 @@ class ArtifactCollector:
                         "source": "stdout",
                         "sandbox_id": lease.sandbox_id,
                         "content_length": len(execution.stdout),
+                        "content": execution.stdout,
                         "preview": execution.stdout[:1000],
                     },
                 )
@@ -72,6 +73,7 @@ class ArtifactCollector:
                         "source": "stderr",
                         "sandbox_id": lease.sandbox_id,
                         "content_length": len(execution.stderr),
+                        "content": execution.stderr,
                         "preview": execution.stderr[:1000],
                     },
                 )
