@@ -313,27 +313,27 @@ def test_load_skill_dir_tracks_source_type_and_install_state(tmp_path: Path) -> 
 
 
 def test_agent_skill_details_expose_expanded_catalog_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _write_skill(tmp_path, "task_planning", body="# Task Planning\n\nBody text.")
+    _write_skill(tmp_path, "writing-plans", body="# Writing Plans\n\nBody text.")
     monkeypatch.setattr("swarmmind.agents.agent_skill.get_agent_skill_root", lambda: tmp_path)
 
-    details = build_agent_skill_details(["task_planning"], {"read_file", "list_files", "file_exists"})
+    details = build_agent_skill_details(["writing-plans"], {"read_file", "list_files", "file_exists"})
 
-    assert details[0]["name"] == "task_planning"
-    assert details[0]["body"] == "# Task Planning\n\nBody text."
+    assert details[0]["name"] == "writing-plans"
+    assert details[0]["body"] == "# Writing Plans\n\nBody text."
     assert details[0]["source_type"] == "repo-local"
 
 
 def test_agent_factory_exposes_filtered_skill_catalog_on_toolkit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _write_skill(tmp_path, "task_planning")
-    gated = _write_skill(tmp_path, "review")
+    _write_skill(tmp_path, "writing-plans")
+    gated = _write_skill(tmp_path, "blocked-skill")
     (gated / "SKILL.md").write_text(
         "---\n"
-        "name: review\n"
+        "name: blocked-skill\n"
         "description: gated\n"
         "allowed-tools:\n"
         "  - nonexistent_tool\n"
         "---\n\n"
-        "# Review\n",
+        "# Blocked Skill\n",
         encoding="utf-8",
     )
     monkeypatch.setattr("swarmmind.agents.agent_skill.get_agent_skill_root", lambda: tmp_path)
@@ -342,7 +342,7 @@ def test_agent_factory_exposes_filtered_skill_catalog_on_toolkit(tmp_path: Path,
         AgentConfig(
             name="catalog-agent",
             scope_config=AgentScopeConfig(model_name="gpt-4o"),
-            skill_profiles=["task_planning", "review"],
+            skill_profiles=["writing-plans", "blocked-skill"],
         )
     )
 
@@ -351,13 +351,13 @@ def test_agent_factory_exposes_filtered_skill_catalog_on_toolkit(tmp_path: Path,
 
     assert getattr(toolkit, "_swarmmind_skill_catalog") == [
         {
-            "name": "task_planning",
+            "name": "writing-plans",
             "description": "Test skill description.",
         }
     ]
-    assert getattr(toolkit, "_swarmmind_skill_details")[0]["name"] == "task_planning"
-    assert "task_planning" in prompt
-    assert "review" not in prompt
+    assert getattr(toolkit, "_swarmmind_skill_details")[0]["name"] == "writing-plans"
+    assert "writing-plans" in prompt
+    assert "blocked-skill" not in prompt
 
 
 @pytest.mark.asyncio

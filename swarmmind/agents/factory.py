@@ -13,6 +13,7 @@ from swarmmind.models.agent_profile import AgentProfile, SkillsMode
 from swarmmind.agents.agent_skill import (
     build_agent_skill_catalog,
     build_agent_skill_details,
+    normalize_skill_profile_names,
     resolve_agent_skill_entries,
 )
 from swarmmind.agents.config import AgentConfig
@@ -265,10 +266,10 @@ class AgentFactory:
         execution_profile: ExecutionProfile | None,
     ) -> list[str]:
         if explicit_skill_profiles:
-            return list(explicit_skill_profiles)
+            return normalize_skill_profile_names(explicit_skill_profiles)
         if execution_profile is not None and execution_profile.skill_profiles:
-            return list(execution_profile.skill_profiles)
-        return list(fallback_skill_profiles or [])
+            return normalize_skill_profile_names(execution_profile.skill_profiles)
+        return normalize_skill_profile_names(fallback_skill_profiles or [])
 
     def _assemble_tooling(
         self,

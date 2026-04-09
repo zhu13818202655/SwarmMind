@@ -74,7 +74,7 @@ def _build_factory() -> AgentFactory:
             ),
             max_steps=4,
             system_prompt="You are the coding agent.",
-            skill_profiles=["build_app"],
+            skill_profiles=[],
             tool_groups=[ToolGroup.WORKSPACE, ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC],
         )
     )
@@ -116,10 +116,10 @@ def test_factory_uses_execution_profile_overrides_in_capability_bundle() -> None
         name="Coder Sandbox",
         role=AgentRole.CODER,
         skill_mode=SkillsMode.INCLUSIVE,
-        skill_profiles=["build_app"],
+        skill_profiles=["pptx"],
         allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC],
         allowed_tool_names=["project_read", "project_write", "run_skill_script"],
-        allowed_skill_scripts=["build_app:scripts/default.py"],
+        allowed_skill_scripts=["pptx:scripts/render.py"],
         default_sandbox_profile="py-basic",
     )
     execution_profile = ExecutionProfile(
@@ -178,7 +178,7 @@ async def test_omni_agent_acting_emits_tool_and_skill_events(monkeypatch: pytest
         name="Coder Sandbox",
         role=AgentRole.CODER,
         skill_mode=SkillsMode.INCLUSIVE,
-        skill_profiles=["build_app"],
+        skill_profiles=["pptx"],
         allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC],
         default_sandbox_profile="py-basic",
     )
@@ -197,7 +197,7 @@ async def test_omni_agent_acting_emits_tool_and_skill_events(monkeypatch: pytest
         {
             "id": "call-1",
             "name": "run_skill_script",
-            "arguments": {"skill_name": "build_app", "script_path": "scripts/build.py"},
+            "arguments": {"skill_name": "pptx", "script_path": "scripts/render.py"},
         }
     )
 

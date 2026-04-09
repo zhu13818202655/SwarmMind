@@ -70,7 +70,7 @@ async def test_submit_task_executes_subtasks_and_collects_artifacts() -> None:
     assert implementation_profile.agent_profile_id == "coder-default"
     assert implementation_profile.resolved_runtime_kind == RuntimeKind.SANDBOX
     assert implementation_profile.runtime_fallback_chain == [RuntimeKind.HOST_TOOLS]
-    assert implementation_profile.skill_profiles == ["build_app"]
+    assert implementation_profile.skill_profiles == []
     assert ToolGroup.CODE_EXEC in implementation_profile.allowed_tool_groups
 
     event_types = [entry.event_type for entry in replay.entries]
@@ -363,7 +363,7 @@ async def test_execution_policy_denies_tools_outside_profile_allowlist() -> None
             role=AgentRole.CODER,
             description="Profile that intentionally blocks sandbox execution.",
             skill_mode=SkillsMode.INCLUSIVE,
-            skill_profiles=["build_app"],
+            skill_profiles=[],
             default_tool_groups=[ToolGroup.WORKSPACE],
             recommended_runtime_kinds=[RuntimeKind.HOST_TOOLS],
             allowed_tool_groups=[ToolGroup.WORKSPACE],

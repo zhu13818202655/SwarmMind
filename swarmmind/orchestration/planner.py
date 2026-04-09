@@ -12,6 +12,7 @@ from typing import Any, List
 from agentscope.message import Msg
 from pydantic import BaseModel, ConfigDict, Field
 
+from swarmmind.agents.agent_skill import normalize_skill_profile_names
 from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
@@ -291,6 +292,9 @@ class Planner:
                 subtask.metadata["planner_execution_candidate_attempt"] = attempt
                 subtask.metadata["planner_execution_candidate_error"] = "name_mismatch"
                 continue
+            candidate = candidate.model_copy(
+                update={"skill_profiles": self._normalize_skill_profiles(candidate.skill_profiles)}
+            )
             subtask.metadata["planner_execution_candidate_attempt"] = attempt
             subtask.metadata.pop("planner_execution_candidate_error", None)
             return candidate
@@ -480,12 +484,7 @@ class Planner:
 
     @staticmethod
     def _normalize_skill_profiles(values: list[str]) -> list[str]:
-        normalized: list[str] = []
-        for value in values:
-            token = str(value).strip()
-            if token and token not in normalized:
-                normalized.append(token)
-        return normalized
+        return normalize_skill_profile_names(values)
 
     @staticmethod
     def _normalize_string_list(values: list[str]) -> list[str]:

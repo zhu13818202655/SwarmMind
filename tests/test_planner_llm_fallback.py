@@ -183,7 +183,7 @@ def test_merge_execution_configurations_prefers_llm_execution_output() -> None:
                 name="draft-release-summary",
                 runtime_kinds=["host_tools", "llm_only"],
                 tool_groups=["workspace", "artifact"],
-                skill_profiles=["write_report"],
+                skill_profiles=[],
             )
         ],
     )
@@ -193,7 +193,7 @@ def test_merge_execution_configurations_prefers_llm_execution_output() -> None:
     assert execution_configuration is not None
     assert execution_configuration.runtime_kind == RuntimeKind.HOST_TOOLS
     assert execution_configuration.tool_requirements == [ToolGroup.WORKSPACE, ToolGroup.ARTIFACT]
-    assert execution_configuration.skill_profiles == ["write_report"]
+    assert execution_configuration.skill_profiles == []
     planner_candidate = merged[0].metadata.get("planner_execution_candidate")
     assert planner_candidate is not None
     assert planner_candidate["runtime_kinds"] == [RuntimeKind.HOST_TOOLS.value, RuntimeKind.LLM_ONLY.value]
@@ -286,7 +286,7 @@ async def test_plan_execution_configurations_runs_per_subtask() -> None:
             if "prepare-implementation" in str(msg.content):
                 payload = (
                     '{"name":"prepare-implementation","tool_groups":["workspace","code_exec"],'
-                    '"runtime_kinds":["sandbox","host_tools"],"sandbox_profile":"py-basic","skill_profiles":["build_app"]}'
+                    '"runtime_kinds":["sandbox","host_tools"],"sandbox_profile":"py-basic","skill_profiles":[]}'
                 )
             else:
                 payload = (
@@ -306,6 +306,8 @@ async def test_plan_execution_configurations_runs_per_subtask() -> None:
     assert candidates[0].name == "prepare-implementation"
     assert candidates[1].name == "verify-result"
     assert candidates[0].sandbox_profile == "py-basic"
+    assert candidates[0].skill_profiles == []
+    assert candidates[1].skill_profiles == []
 
 
 def test_merge_execution_configurations_preserves_candidate_sandbox_profile() -> None:
@@ -335,7 +337,7 @@ def test_merge_execution_configurations_preserves_candidate_sandbox_profile() ->
                 tool_groups=["workspace", "code_exec"],
                 runtime_kinds=["sandbox", "host_tools"],
                 sandbox_profile="secure-offline",
-                skill_profiles=["build_app"],
+                skill_profiles=[],
             )
         ],
     )
@@ -343,8 +345,10 @@ def test_merge_execution_configurations_preserves_candidate_sandbox_profile() ->
     planner_candidate = merged[0].metadata.get("planner_execution_candidate")
     assert planner_candidate is not None
     assert planner_candidate["sandbox_profile"] == "secure-offline"
+    assert planner_candidate["skill_profiles"] == []
     assert merged[0].execution_configuration is not None
     assert merged[0].execution_configuration.sandbox_profile == "secure-offline"
+    assert merged[0].execution_configuration.skill_profiles == []
 
 
 def test_agent_factory_registers_native_agentscope_skills() -> None:
@@ -352,10 +356,10 @@ def test_agent_factory_registers_native_agentscope_skills() -> None:
         AgentConfig(
             name="skill-agent",
             scope_config=AgentScopeConfig(model_name="gpt-4o"),
-            skill_profiles=["task_planning", "build_app"],
+            skill_profiles=["writing-plans"],
         )
     )
 
     toolkit = factory.create_toolkit([], tool_groups=[ToolGroup.WORKSPACE])
     assert toolkit is not None
-    assert resolve_agent_skill_dirs(["build_app"]) == []
+    assert resolve_agent_skill_dirs(["writing-plans"])

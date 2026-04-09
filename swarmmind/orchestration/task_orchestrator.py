@@ -106,6 +106,7 @@ class TaskOrchestrator:
         await self._run_repository.save(run)
 
         for subtask in assigned_subtasks:
+
             await self._subtask_repository.save(subtask)
             await self._event_bus.publish(
                 DomainEvent(
@@ -180,7 +181,7 @@ class TaskOrchestrator:
             execution_configuration=ExecutionConfiguration(
                 runtime_kind=RuntimeKind.HOST_TOOLS,
                 tool_requirements=[ToolGroup.ARTIFACT, ToolGroup.MEMORY],
-                skill_profiles=["verification"],
+                skill_profiles=[],
             ),
             dependencies=[repair_subtask.id],
             metadata={
@@ -202,7 +203,7 @@ class TaskOrchestrator:
             execution_configuration=ExecutionConfiguration(
                 runtime_kind=RuntimeKind.HOST_TOOLS,
                 tool_requirements=[ToolGroup.ARTIFACT, ToolGroup.MEMORY],
-                skill_profiles=["review"],
+                skill_profiles=[],
             ),
             dependencies=[verify_subtask.id],
             metadata={
@@ -289,7 +290,7 @@ class TaskOrchestrator:
             execution_configuration=ExecutionConfiguration(
                 runtime_kind=RuntimeKind.HOST_TOOLS,
                 tool_requirements=[ToolGroup.ARTIFACT, ToolGroup.MEMORY],
-                skill_profiles=["verification"],
+                skill_profiles=[],
             ),
             dependencies=[repair_subtask.id],
             metadata={
@@ -310,7 +311,7 @@ class TaskOrchestrator:
             execution_configuration=ExecutionConfiguration(
                 runtime_kind=RuntimeKind.HOST_TOOLS,
                 tool_requirements=[ToolGroup.ARTIFACT, ToolGroup.MEMORY],
-                skill_profiles=["review"],
+                skill_profiles=[],
             ),
             dependencies=[verify_subtask.id],
             metadata={

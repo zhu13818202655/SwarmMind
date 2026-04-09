@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 
+from swarmmind.agents.agent_skill import normalize_skill_profile_names
 from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.models.agent_profile import AgentProfile
 from swarmmind.models.capability import DEFAULT_ROLE_TOOL_GROUPS, RuntimeKind, ToolGroup
@@ -146,8 +147,8 @@ class Coordinator:
     @staticmethod
     def _resolve_skill_profiles(subtask: SubTask, agent_profile: AgentProfile) -> list[str]:
         if subtask.execution_configuration and subtask.execution_configuration.skill_profiles:
-            return list(dict.fromkeys(subtask.execution_configuration.skill_profiles))
-        return list(dict.fromkeys(agent_profile.skill_profiles))
+            return normalize_skill_profile_names(list(dict.fromkeys(subtask.execution_configuration.skill_profiles)))
+        return normalize_skill_profile_names(list(dict.fromkeys(agent_profile.skill_profiles)))
 
     @staticmethod
     def _resolve_runtime_kind(

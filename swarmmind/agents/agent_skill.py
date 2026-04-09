@@ -22,12 +22,29 @@ def resolve_agent_skill_dirs(skill_names: list[str] | None) -> list[Path]:
     return [entry.root_dir for entry in resolve_agent_skill_entries(skill_names)]
 
 
+def normalize_skill_profile_names(skill_names: list[str] | None) -> list[str]:
+    """Normalize configured skill names to unique installed skill names."""
+    if not skill_names:
+        return []
+
+    registry = load_skill_registry(get_agent_skill_root())
+    installed_names = {entry.name for entry in registry.list_entries(include_invalid=True)}
+    normalized: list[str] = []
+    for raw_name in skill_names:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        if name in installed_names and name not in normalized:
+            normalized.append(name)
+    return normalized
+
+
 def resolve_agent_skill_entries(
     skill_names: list[str] | None,
     available_tool_names: set[str] | None = None,
 ) -> list[SkillEntry]:
     """Resolve configured skill names into usable local skill entries."""
-    registry = load_skill_registry(get_agent_skill_root(), skill_names)
+    registry = load_skill_registry(get_agent_skill_root(), normalize_skill_profile_names(skill_names))
     entries = registry.list_entries(include_invalid=False)
     return [entry for entry in entries if _is_skill_entry_usable(entry, available_tool_names or set())]
 

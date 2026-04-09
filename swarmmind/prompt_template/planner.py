@@ -86,7 +86,7 @@ PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON = """
   "tool_groups": ["workspace", "code_exec", "artifact"],
   "runtime_kinds": ["sandbox", "host_tools"],
   "sandbox_profile": "py-basic",
-  "skill_profiles": ["python-dev"]
+  "skill_profiles": []
 }
 
 合法 JSON 示例 2（调研子任务）：

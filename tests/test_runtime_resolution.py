@@ -107,7 +107,7 @@ async def test_coordinator_uses_planner_execution_candidate_runtime_priority() -
                 "name": "prepare-implementation",
                 "tool_groups": ["code_exec", "workspace"],
                 "runtime_kinds": ["host_tools", "sandbox"],
-                "skill_profiles": ["build_app"],
+                "skill_profiles": [],
             }
         },
     )
@@ -118,3 +118,4 @@ async def test_coordinator_uses_planner_execution_candidate_runtime_priority() -
     assert profile.resolved_runtime_kind == RuntimeKind.HOST_TOOLS
     assert profile.runtime_fallback_chain[0] == RuntimeKind.SANDBOX
     assert assigned_subtask.metadata.get("resolved_execution_profile") is not None
+    assert profile.skill_profiles == []
