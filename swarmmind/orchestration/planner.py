@@ -200,8 +200,7 @@ class Planner:
                 "subtask_json": subtask_json,
                 "available_tool_groups_json": json.dumps(self._available_tool_groups(), ensure_ascii=False),
                 "available_runtime_kinds_json": json.dumps(self._available_runtime_kinds(), ensure_ascii=False),
-                "available_skill_profiles_json": json.dumps(self._available_skill_profiles(), ensure_ascii=False),
-                "role_definitions": AgentRole.to_prompt_definitions(remove_role_names=["planner", "coordinator"]),
+                "available_skill_profiles_json": json.dumps(self._available_skill_profiles(), ensure_ascii=False)
             },
         )
 

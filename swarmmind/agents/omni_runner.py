@@ -89,43 +89,6 @@ class OmniAgentRunner:
             "sandbox_profile": request.execution_profile.sandbox_profile if request.execution_profile is not None else None,
         }
 
-        if not self._model_name or (not self._api_key and not self._base_url):  # TODO fallback处理，这个是否还需要
-            result = OmniAgentResult(
-                status="fallback",
-                reason="model_unavailable",
-                tool_names=tool_names,
-                skill_profiles=list(request.skill_profiles),
-                agent_name=common_payload["agent_name"],
-                agent_profile_id=common_payload["agent_profile_id"],
-                model_name=self._model_name,
-            )
-            await self._publish(publisher, "agent.step.fallback", {**common_payload, "reason": result.reason})
-            await self._publish(
-                publisher,
-                "agent.failed",
-                {
-                    "event_source": "omni_agent_runner",
-                    "agent_name": result.agent_name or request.agent_name,
-                    "role": (
-                        request.execution_profile.role.value
-                        if request.execution_profile is not None
-                        else request.agent_profile.role.value
-                        if request.agent_profile is not None
-                        else AgentRole.CODER.value
-                    ),
-                    "allowed_tool_names": tool_names,
-                    "allowed_skill_scripts": (
-                        list(request.execution_profile.allowed_skill_scripts)
-                        if request.execution_profile is not None
-                        else list(request.agent_profile.allowed_skill_scripts)
-                        if request.agent_profile is not None
-                        else []
-                    ),
-                    "error": result.reason or "model_unavailable",
-                },
-            )
-            return result
-
         await self._publish(publisher, "agent.step.started", common_payload)
 
         try:

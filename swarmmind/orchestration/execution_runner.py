@@ -6,7 +6,7 @@ import re
 import shlex
 import uuid
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 from swarmmind.agents import AgentProfileStore, OmniAgentRequest, OmniAgentRunner
 from swarmmind.events import EventBus
@@ -1092,7 +1092,7 @@ class ExecutionRunner:
         subtask,
         sandbox_id: str | None,
         kwargs: dict[str, Any],
-    ) -> None:
+    ) -> None:  # TODO 确认逻辑正确吗
         selected_tools = set(subtask.metadata.get("selected_tools") or [])
         if selected_tools and tool_name not in selected_tools:
             await self._publish_policy_denied(
@@ -1555,7 +1555,16 @@ class ExecutionRunner:
             register("grep_search", "Search text content inside workspace files.", grep_search)
 
         if "web_search" in selected_tools:
-            async def web_search(query: str, max_results: int = 5, provider: str | None = None) -> str:
+            async def web_search(
+                query: str,
+                max_results: int = 5,
+                provider: str | None = None,
+                start_date: str | None = None,
+                end_date: str | None = None,
+                topic: Literal["general", "news", "finance"] | None = None,
+                include_domains: list[str] | None = None,
+                exclude_domains: list[str] | None = None,
+            ) -> str:
                 return await self._run_tool(
                     "web_search",
                     task=task,
@@ -1564,10 +1573,15 @@ class ExecutionRunner:
                     query=query,
                     max_results=max_results,
                     provider=provider,
+                    start_date=start_date,
+                    end_date=end_date,
+                    topic=topic,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
                 )
             register(
                 "web_search",
-                "Search public web result pages. Use this to find candidate URLs and snippets, not to read full page details.",
+                "Search public web result pages. Use this to find candidate URLs and snippets, not to read full page details. Use start_date and end_date with YYYY-MM-DD when the user asks for a specific time window. Use topic for general, news, or finance. Use include_domains to restrict trusted sites and exclude_domains to avoid unwanted sources.",
                 web_search,
             )
 

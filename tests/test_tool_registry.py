@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+from agentscope.tool import ToolResponse
+
 from swarmmind.models.capability import RuntimeKind, ToolExecutionContract, ToolGroup
 from swarmmind.tools import ToolRegistry, register_builtin_tools
 
@@ -66,3 +70,52 @@ def test_registry_strict_tool_name_selection_overrides_group_expansion() -> None
     exposed = {schema["function"]["name"] for schema in toolkit.get_json_schemas()}
 
     assert exposed == {"read_file"}
+
+
+def test_registry_allows_overriding_builtin_tool_name() -> None:
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+
+    async def wrapped_glob_search(pattern: str) -> list[str]:
+        return [pattern]
+
+    registry.register(
+        wrapped_glob_search,
+        name="glob_search",
+        groups=[ToolGroup.WORKSPACE],
+        contract=ToolExecutionContract(
+            default_runtime=RuntimeKind.HOST_TOOLS,
+            allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+            read_only=True,
+        ),
+    )
+
+    toolkit = registry.build_toolkit(active_groups=[ToolGroup.WORKSPACE])
+    exposed = [schema["function"]["name"] for schema in toolkit.get_json_schemas()]
+
+    assert exposed.count("glob_search") == 1
+    assert registry.get_tool("glob_search") is wrapped_glob_search
+
+
+@pytest.mark.asyncio
+async def test_registry_wraps_string_results_as_tool_response() -> None:
+    registry = ToolRegistry()
+
+    async def echo_tool(value: str) -> str:
+        return value
+
+    registry.register(
+        echo_tool,
+        name="echo_tool",
+        groups=[ToolGroup.WORKSPACE],
+        contract=ToolExecutionContract(
+            default_runtime=RuntimeKind.HOST_TOOLS,
+            allowed_runtimes=[RuntimeKind.HOST_TOOLS],
+            read_only=True,
+        ),
+    )
+
+    result = await registry._registered_funcs["echo_tool"]("hello")
+
+    assert isinstance(result, ToolResponse)
+    assert result.content == [{"type": "text", "text": "hello"}]

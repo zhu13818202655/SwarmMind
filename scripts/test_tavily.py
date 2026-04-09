@@ -55,7 +55,7 @@ def tavily_search(api_token, query, **kwargs):
 
     return response.json()
 
-
+   
 if __name__ == "__main__":
     # 替换为你的实际 API Token
     API_TOKEN = ""

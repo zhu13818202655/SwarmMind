@@ -1,10 +1,10 @@
 """Tool registry for SwarmMind."""
 
+import json
 from typing import Any, Callable, Sequence
 import inspect
 
-from agentscope.tool import Toolkit
-
+from agentscope.tool import ToolResponse, Toolkit
 from swarmmind.models.capability import RuntimeKind, ToolExecutionContract, ToolGroup
 
 
@@ -73,8 +73,10 @@ class ToolRegistry:
         # Wrap async function for sync use
         async def async_wrapper(*args, **kwargs):
             if inspect.iscoroutinefunction(func):
-                return await func(*args, **kwargs)
-            return func(*args, **kwargs)
+                result = await func(*args, **kwargs)
+            else:
+                result = func(*args, **kwargs)
+            return self._normalize_tool_result(result)
 
         normalized_contract = self._normalize_contract(contract)
         normalized_groups = self._normalize_groups(groups)
@@ -83,26 +85,16 @@ class ToolRegistry:
         setattr(contract_target, "__swarmmind_tool_groups__", tuple(normalized_groups))
         setattr(async_wrapper, "__swarmmind_tool_contract__", normalized_contract)
         setattr(async_wrapper, "__swarmmind_tool_groups__", tuple(normalized_groups))
-
-        primary_group_name = "basic"
-        if normalized_groups:
-            for group in normalized_groups:
-                self.ensure_group(group)
-            primary_group_name = normalized_groups[0].value
-
-        self._toolkit.register_tool_function(
-            async_wrapper,
-            group_name=primary_group_name,
-            func_name=tool_name,
-            func_description=description,
-        )
         self._funcs[tool_name] = func
         self._registered_funcs[tool_name] = async_wrapper
         self._descriptions[tool_name] = description
         self._tool_groups[tool_name] = normalized_groups
         if normalized_groups:
             self._primary_groups[tool_name] = normalized_groups[0]
+        elif tool_name in self._primary_groups:
+            del self._primary_groups[tool_name]
         self._contracts[tool_name] = normalized_contract
+        self._rebuild_internal_toolkit()
 
     def ensure_group(self, group: ToolGroup | str, active: bool = False) -> ToolGroup:
         """Ensure a ToolGroup exists in the underlying toolkit."""
@@ -213,6 +205,28 @@ class ToolRegistry:
         self._primary_groups.clear()
         self._descriptions.clear()
         self._contracts.clear()
+
+    def _rebuild_internal_toolkit(self) -> None:
+        toolkit = Toolkit()
+        for group in sorted({group for groups in self._tool_groups.values() for group in groups}, key=lambda item: item.value):
+            description, notes = self._GROUP_DETAILS[group]
+            toolkit.create_tool_group(
+                group.value,
+                description=description,
+                active=False,
+                notes=notes,
+            )
+
+        for tool_name, func in self._registered_funcs.items():
+            primary_group_name = self._primary_groups.get(tool_name, ToolGroup.WORKSPACE).value if tool_name in self._primary_groups else "basic"
+            toolkit.register_tool_function(
+                func,
+                group_name=primary_group_name,
+                func_name=tool_name,
+                func_description=self._descriptions[tool_name],
+            )
+
+        self._toolkit = toolkit
 
     def build_toolkit(
         self,
@@ -340,6 +354,20 @@ class ToolRegistry:
             allowed_runtimes = [normalized.default_runtime]
 
         return normalized.model_copy(update={"allowed_runtimes": allowed_runtimes})
+
+    @staticmethod
+    def _normalize_tool_result(result: Any) -> Any:
+        if isinstance(result, ToolResponse) or inspect.isasyncgen(result) or inspect.isgenerator(result):
+            return result
+        return ToolResponse(content=[{"type": "text", "text": ToolRegistry._stringify_tool_result(result)}])
+
+    @staticmethod
+    def _stringify_tool_result(result: Any) -> str:
+        if isinstance(result, str):
+            return result
+        if result is None or isinstance(result, (dict, list, tuple, bool, int, float)):
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        return str(result)
 
     @property
     def toolkit(self) -> Toolkit:

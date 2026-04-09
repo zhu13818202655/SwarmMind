@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from html import unescape
 import json
 import re
+from typing import Literal
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -27,6 +29,9 @@ class SearchResponse:
     provider: str
     query: str
     items: list[SearchResultItem]
+
+
+SearchTopic = Literal["general", "news", "finance"]
 
 
 class SearchTool:
@@ -67,17 +72,43 @@ class SearchTool:
             safe_search=config.safe_search,
         )
 
-    async def search(self, query: str, max_results: int = 5) -> str:
+    async def search(
+        self,
+        query: str,
+        max_results: int = 5,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        topic: SearchTopic | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+    ) -> str:
         normalized_max_results = max_results or self._default_max_results
         try:
-            response = await self.search_results(query, normalized_max_results)
+            response = await self.search_results(
+                query,
+                normalized_max_results,
+                start_date=start_date,
+                end_date=end_date,
+                topic=topic,
+                include_domains=include_domains,
+                exclude_domains=exclude_domains,
+            )
         except Exception as exc:
             return f"Search error [{self._provider}]: {exc}"
         if not response.items:
             return f"Search provider: {response.provider}\nQuery: {query}\nNo results found"
         return self._format_results(response)
 
-    async def search_results(self, query: str, max_results: int) -> SearchResponse:
+    async def search_results(
+        self,
+        query: str,
+        max_results: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        topic: SearchTopic | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+    ) -> SearchResponse:
         async with httpx.AsyncClient(timeout=self._timeout_seconds, follow_redirects=True) as client:
             if self._provider in {"duckduckgo", "ddg"}:
                 items = await self._search_duckduckgo(client, query, max_results)
@@ -86,7 +117,16 @@ class SearchTool:
                 items = await self._search_brave(client, query, max_results)
                 return SearchResponse(provider="brave", query=query, items=items)
             if self._provider == "tavily":
-                items = await self._search_tavily(client, query, max_results)
+                items = await self._search_tavily(
+                    client,
+                    query,
+                    max_results,
+                    start_date=start_date,
+                    end_date=end_date,
+                    topic=topic,
+                    include_domains=include_domains,
+                    exclude_domains=exclude_domains,
+                )
                 return SearchResponse(provider="tavily", query=query, items=items)
             if self._provider == "serpapi":
                 items = await self._search_serpapi(client, query, max_results)
@@ -125,18 +165,40 @@ class SearchTool:
             for index, item in enumerate(items[:max_results], start=1)
         ]
 
-    async def _search_tavily(self, client: httpx.AsyncClient, query: str, max_results: int) -> list[SearchResultItem]:
+    async def _search_tavily(
+        self,
+        client: httpx.AsyncClient,
+        query: str,
+        max_results: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        topic: SearchTopic | None = None,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+    ) -> list[SearchResultItem]:
         self._require_api_key("tavily")
+        request_payload: dict[str, object] = {
+            "api_key": self._api_key,
+            "query": query,
+            "max_results": max_results,
+            "search_depth": "basic",
+            "include_answer": False,
+            "include_raw_content": False,
+        }
+        self._apply_tavily_date_filters(
+            request_payload,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if topic:
+            request_payload["topic"] = topic
+        if include_domains:
+            request_payload["include_domains"] = include_domains
+        if exclude_domains:
+            request_payload["exclude_domains"] = exclude_domains
         response = await client.post(
             self._base_url or "https://api.tavily.com/search",
-            json={
-                "api_key": self._api_key,
-                "query": query,
-                "max_results": max_results,
-                "search_depth": "basic",
-                "include_answer": False,
-                "include_raw_content": False,
-            },
+            json=request_payload,
         )
         response.raise_for_status()
         payload = response.json()
@@ -254,6 +316,25 @@ class SearchTool:
         if not self._api_key:
             raise ValueError(f"Search provider '{provider}' requires an api_key")
 
+    def _apply_tavily_date_filters(
+        self,
+        request_payload: dict[str, object],
+        *,
+        start_date: str | None,
+        end_date: str | None,
+    ) -> None:
+        if start_date:
+            request_payload["start_date"] = self._validate_iso_date(start_date, "start_date")
+        if end_date:
+            request_payload["end_date"] = self._validate_iso_date(end_date, "end_date")
+
+    @staticmethod
+    def _validate_iso_date(value: str, field_name: str) -> str:
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError as exc:
+            raise ValueError(f"{field_name} must use YYYY-MM-DD format") from exc
+
     @staticmethod
     def _format_results(response: SearchResponse) -> str:
         payload = {
@@ -282,16 +363,38 @@ class SearchTool:
         return "\n".join(lines)
 
 
-async def search(query: str, max_results: int = 5, provider: str | None = None) -> str:
+async def search(
+    query: str,
+    max_results: int = 5,
+    provider: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    topic: SearchTopic | None = None,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
+) -> str:
     """Search the web for result-page items.
 
     Args:
         query: Search query
         max_results: Maximum number of results
         provider: Optional provider override
+        start_date: Inclusive lower bound in YYYY-MM-DD format.
+        end_date: Inclusive upper bound in YYYY-MM-DD format.
+        topic: Optional topical hint such as general, news, or finance.
+        include_domains: Optional allow-list of domains to prioritize or restrict.
+        exclude_domains: Optional block-list of domains to skip.
 
     Returns:
         Human-readable results plus a structured JSON payload
     """
     tool = SearchTool.from_settings(provider=provider)
-    return await tool.search(query, max_results)
+    return await tool.search(
+        query,
+        max_results,
+        start_date=start_date,
+        end_date=end_date,
+        topic=topic,
+        include_domains=include_domains,
+        exclude_domains=exclude_domains,
+    )

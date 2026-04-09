@@ -208,7 +208,5 @@ PLANNER_EXECUTION_CONFIGURATION_PROMPT = PromptTemplate(
 - 子任务 JSON：{{{{ subtask_json }}}}
 - 可用 tool groups：{{{{ available_tool_groups_json }}}}
 - 可用 runtime kinds：{{{{ available_runtime_kinds_json }}}}
-- 可用 skill profiles：{{{{ available_skill_profiles_json }}}}
-- 角色定义：
-{{{{ role_definitions }}}}"""
+- 可用 skill profiles：{{{{ available_skill_profiles_json }}}}"""
 )
