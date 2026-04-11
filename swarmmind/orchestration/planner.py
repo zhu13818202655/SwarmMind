@@ -258,7 +258,7 @@ class Planner:
                 "subtask_json": subtask_json,
                 "available_tool_groups_json": json.dumps(self._available_tool_groups(), ensure_ascii=False),
                 "available_runtime_kinds_json": json.dumps(self._available_runtime_kinds(), ensure_ascii=False),
-                "available_skill_profiles_json": json.dumps(self._available_skill_profiles(), ensure_ascii=False)
+                "available_skill_profiles_json": json.dumps(self._available_skill_profiles(subtask.role), ensure_ascii=False)
             },
         )
 
@@ -626,15 +626,14 @@ class Planner:
     def _available_runtime_kinds() -> list[str]:
         return [runtime_kind.value for runtime_kind in RuntimeKind]
 
-    def _available_skill_profiles(self) -> list[str]:
+    def _available_skill_profiles(self, role: AgentRole) -> list[str]:
         if self._agent_profile_store is None:
             return []
-        available: list[str] = []
-        for profile in self._agent_profile_store.list_all():
-            for skill_profile in profile.skill_profiles:
-                if skill_profile not in available:
-                    available.append(skill_profile)
-        return available
+        try:
+            profile = self._agent_profile_store.resolve_for_subtask(role=role)
+        except ValueError:
+            return []
+        return self._normalize_skill_profiles(profile.skill_profiles)
 
     def _normalize_execution_candidate(self, spec: "_ExecutionCandidateSubtaskSpec") -> SubtaskExecutionCandidate:
         tool_groups = self._parse_tool_groups(spec.tool_groups)

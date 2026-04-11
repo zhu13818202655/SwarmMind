@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from jinja2 import UndefinedError
 
+from swarmmind.agents.agent_skill import list_installed_skill_profile_names
 from swarmmind.prompt_template import (
     EXECUTION_SUBTASK_MARKDOWN_PROMPT,
     EXECUTION_SYSTEM_PROMPT,
@@ -38,12 +39,17 @@ def test_render_prompt_fails_fast_when_variable_missing() -> None:
 
 
 def test_planner_prompts_include_aio_only_sandbox_policy() -> None:
+    installed_skill_names = "|".join(list_installed_skill_profile_names())
     assert "当前阶段只负责任务拆解" in PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT.template
     assert "不负责 execution candidate 选择" in PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT.template
     assert PLANNER_SYSTEM_PROMPT is PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT
-    assert "sandbox 能力统一由 `aio` 提供" in PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT.template
-    assert "系统会自动绑定 `aio`" in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
-    assert '"sandbox_profile"' not in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
+    assert "只负责补全 `tool_groups`、`runtime_kinds`、`skill_profiles`" in PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT.template
+    assert "只通过 `runtime_kinds` 是否包含 `sandbox` 表达" in PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT.template
+    assert '"tool_groups": ["file_system|workspace|web_search|browser|code_exec|memory|artifact|communication"]' in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
+    assert '"runtime_kinds": ["llm_only|host_tools|sandbox"]' in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
+    assert f'"skill_profiles": ["{installed_skill_names}"]' in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
+    assert "如果输入中的 `available_skill_profiles` 为空，必须输出 `[]`" in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
+    assert "`llm_only`：只依赖模型推理，不调用外部工具。" in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
 
 
 def test_execution_prompts_include_capability_boundaries() -> None:

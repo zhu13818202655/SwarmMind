@@ -235,6 +235,14 @@ def test_merge_execution_configurations_promotes_dynamic_browser_tasks_to_playwr
     assert execution_configuration.metadata["preferred_browser_runtime"] == "aio"
 
 
+def test_available_skill_profiles_are_scoped_to_subtask_role() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+
+    assert planner._available_skill_profiles(AgentRole.RESEARCHER) == ["deep-research"]
+    assert planner._available_skill_profiles(AgentRole.WRITER) == ["pptx", "pdf", "docx"]
+    assert planner._available_skill_profiles(AgentRole.CODER) == []
+
+
 @pytest.mark.asyncio
 async def test_plan_execution_configurations_runs_per_subtask() -> None:
     planner = Planner(agent_profile_store=AgentProfileStore())

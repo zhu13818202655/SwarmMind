@@ -39,6 +39,12 @@ def normalize_skill_profile_names(skill_names: list[str] | None) -> list[str]:
     return normalized
 
 
+def list_installed_skill_profile_names(*, include_invalid: bool = False) -> list[str]:
+    """List installed skill profile names available in the local skill registry."""
+    registry = load_skill_registry(get_agent_skill_root())
+    return sorted({entry.name for entry in registry.list_entries(include_invalid=include_invalid)})
+
+
 def resolve_agent_skill_entries(
     skill_names: list[str] | None,
     available_tool_names: set[str] | None = None,

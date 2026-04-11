@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
+from swarmmind.agents.agent_skill import list_installed_skill_profile_names
+from swarmmind.models.capability import RuntimeKind, ToolGroup
 from swarmmind.prompt_template.base import PromptTemplate
 
 
@@ -14,6 +15,16 @@ PLANNER_SUPPORTED_ROLES = (
 )
 
 PLANNER_ROLE_ENUM = "|".join(PLANNER_SUPPORTED_ROLES)
+
+PLANNER_TOOL_GROUP_OPTIONS = tuple(tool_group.value for tool_group in ToolGroup)
+
+PLANNER_RUNTIME_KIND_OPTIONS = tuple(runtime_kind.value for runtime_kind in RuntimeKind)
+
+PLANNER_SKILL_PROFILE_OPTIONS = tuple(list_installed_skill_profile_names())
+
+PLANNER_TOOL_GROUP_ENUM = "|".join(PLANNER_TOOL_GROUP_OPTIONS)
+PLANNER_RUNTIME_KIND_ENUM = "|".join(PLANNER_RUNTIME_KIND_OPTIONS)
+PLANNER_SKILL_PROFILE_ENUM = "|".join(PLANNER_SKILL_PROFILE_OPTIONS)
 
 
 # =============================================================================
@@ -103,18 +114,20 @@ PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT = PromptTemplate(
     template="""你是一个任务拆解规划代理，负责将用户目标拆解为结构化的子任务 DAG。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
 
 当前阶段只负责任务拆解：
-- 只关注子任务划分、角色分配、依赖关系、验收标准和预期产物。""",
+- 只关注子任务划分、角色分配、依赖关系、验收标准和预期产物。
+- 不负责 execution candidate 选择。""",
 )
 
 
 PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT = PromptTemplate(
     name="planner_execution_configuration_system",
-    template=f"""你是一个 execution candidate 规划代理，负责为单个已确定的子任务补全执行配置。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
+  template="""你是一个 execution candidate 规划代理，负责为单个已确定的子任务补全执行配置。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
 
-执行环境硬约束：
-- 当前系统的 sandbox 能力统一由 `{DEFAULT_SANDBOX_PROFILE}` 提供。
-- 规划和 execution candidate 输出中，不需要模型选择或输出 sandbox profile；只需要判断任务是否需要 sandbox runtime。
-- 不要把 sandbox profile 当成能力类型枚举来发明新名字；能力边界由 tool groups 和 runtime 决定，不由 profile 名称决定。""",
+执行配置阶段约束：
+- 当前阶段只负责补全 `tool_groups`、`runtime_kinds`、`skill_profiles`。
+- 是否需要隔离执行环境，只通过 `runtime_kinds` 是否包含 `sandbox` 表达。
+- 不要输出 schema 之外的字段，不要补充 agent profile、sandbox profile 或其它执行器内部字段。
+- 能力边界由 tool groups 和 runtime 决定，不由 profile 名称决定。""",
 )
 
 
@@ -199,7 +212,7 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
 {{{{ role_definitions }}}}"""  # TODO 后续添加用户上传skill，知识库等上下文输入
 )
 
-
+# TODO tool_groups 候选值动态传入
 PLANNER_EXECUTION_CONFIGURATION_PROMPT = PromptTemplate(
     name="planner_execution_configuration",
     template=f"""请基于单个子任务事实，从系统给定候选空间中选择 execution candidate。
@@ -207,18 +220,41 @@ PLANNER_EXECUTION_CONFIGURATION_PROMPT = PromptTemplate(
 输出 Schema：
 {{
   "name": "string-kebab-case",
-  "tool_groups": ["file_system|workspace|web_search|browser|code_exec|memory|artifact|communication"],
-  "runtime_kinds": ["llm_only|host_tools|sandbox"],
-  "skill_profiles": ["string"]
+  "tool_groups": ["{PLANNER_TOOL_GROUP_ENUM}"],
+  "runtime_kinds": ["{PLANNER_RUNTIME_KIND_ENUM}"],
+  "skill_profiles": ["{PLANNER_SKILL_PROFILE_ENUM}"]
 }}
+
+字段含义：
+- `tool_groups`：该子任务执行时需要开放的工具能力集合。
+- `runtime_kinds`：该子任务可接受的运行时候选，按优先级从高到低排序。
+- `skill_profiles`：可选的技能增强集合；只能从输入里的 `available_skill_profiles` 选择，不需要时输出空数组。
+
+候选值说明：
+- `tool_groups`
+  - `file_system`：基础文件系统读写、重命名、删除、建目录。
+  - `workspace`：工作区搜索、代码检索、项目级文件定位与修改。
+  - `web_search`：公网搜索候选来源和摘要。
+  - `browser`：打开页面、读取渲染结果、动态交互、截图。
+  - `code_exec`：运行命令、测试、构建、脚本、转换、部署类动作。
+  - `memory`：查询或写入长期记忆。
+  - `artifact`：读取依赖子任务产物、附件和已有输出。
+  - `communication`：发送邮件或其它对外通知。
+- `runtime_kinds`
+  - `llm_only`：只依赖模型推理，不调用外部工具。
+  - `host_tools`：调用宿主机侧工具，但不需要隔离执行环境。
+  - `sandbox`：需要隔离执行环境，通常用于命令执行、浏览器自动化或高风险动作。
+- `skill_profiles`
+  - 仅当某个已提供技能能显著提升该子任务效果时才选择。
+  - 如果输入中的 `available_skill_profiles` 为空，必须输出 `[]`。
 
 规则：
 1. `name` 必须与输入子任务名称完全一致。
 2. `tool_groups` 只能从给定 `available_tool_groups` 中选择。
 3. `runtime_kinds` 只能从给定 `available_runtime_kinds` 中选择，且按优先级排序。
-4. 当 `runtime_kinds` 包含 `sandbox` 时，表示该子任务需要 sandbox 能力；系统会自动绑定 `{DEFAULT_SANDBOX_PROFILE}`，不要额外输出 `sandbox_profile` 字段。
+4. 当 `runtime_kinds` 包含 `sandbox` 时，只表示该子任务需要隔离执行环境。
 5. `skill_profiles` 只能从给定 `available_skill_profiles` 中选择；若不需要技能可输出空数组。
-6. 这是 candidate 选择，不是最终执行决策；不要输出 agent profile、sandbox profile 或其它执行器内部字段。
+6. 这是 candidate 选择，不是最终执行决策；只输出 schema 中定义的字段。
 7. 不要把 tool group 混用成能力幻想：需要动态页面交互时必须包含 `browser`；需要执行命令、测试、构建、转换或部署动作时必须包含 `code_exec`；需要修改仓库文件时必须包含 `workspace`。
 
 合法 JSON 示例：

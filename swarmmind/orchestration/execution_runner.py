@@ -246,7 +246,8 @@ class ExecutionRunner:
         for metadata in self._tool_registry.get_tool_metadata():
             groups = set(metadata.get("groups", []))
             tool_name = str(metadata.get("name"))
-            contract = metadata.get("contract") if isinstance(metadata.get("contract"), dict) else {}
+            raw_contract = metadata.get("contract")
+            contract: dict[str, Any] = raw_contract if isinstance(raw_contract, dict) else {}
             allowed_runtimes = {
                 str(item)
                 for item in contract.get("allowed_runtimes", [])

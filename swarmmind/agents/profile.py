@@ -11,10 +11,10 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         role=AgentRole.PLANNER,
         description="Default planning profile for decomposition and requirement analysis.",
         skill_mode=SkillsMode.INCLUSIVE,
-        skill_profiles=["writing-plans"],
-        default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.MEMORY],
+        skill_profiles=[],
+        default_tool_groups=[],
         recommended_runtime_kinds=[RuntimeKind.LLM_ONLY],
-        allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.MEMORY],
+        allowed_tool_groups=[],
     ),
     "researcher-default": AgentProfile(
         id="researcher-default",
@@ -93,7 +93,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         role=AgentRole.WRITER,
         description="Writing profile for structured reports and summaries.",
         skill_mode=SkillsMode.INCLUSIVE,
-        skill_profiles=[],
+        skill_profiles=["pptx", "pdf", "docx"],
         default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.ARTIFACT, ToolGroup.WEB_SEARCH, ToolGroup.BROWSER],
         recommended_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
         allowed_tool_groups=[
