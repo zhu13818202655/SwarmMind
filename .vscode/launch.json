@@ -63,10 +63,11 @@
   ],
   "compounds": [
     {
-      "name": "Server + Sandbox",
+      "name": "Server + Sandbox + TaskShow",
       "configurations": [
         "Server",
-        "SandBox"
+        "SandBox",
+        "Task Show"
       ],
       "stopAll": true
     }

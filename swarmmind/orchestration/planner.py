@@ -291,8 +291,17 @@ class Planner:
         max_attempts = int(task.constraints.get("planner_execution_candidate_max_attempts", 2))
         if max_attempts < 1:
             max_attempts = 1
+        max_concurrency = int(task.constraints.get("planner_execution_candidate_max_concurrency", 2))
+        if max_concurrency < 1:
+            max_concurrency = 1
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def plan_one(subtask: _NormalizedPlanSubtaskSpec) -> "_ExecutionCandidateSubtaskSpec | None":
+            async with semaphore:
+                return await self._plan_execution_candidate_for_subtask(task, run, subtask, max_attempts)
+
         results = await asyncio.gather(
-            *(self._plan_execution_candidate_for_subtask(task, run, subtask, max_attempts) for subtask in plan_specs)
+            *(plan_one(subtask) for subtask in plan_specs)
         )
         return [candidate for candidate in results if candidate is not None]
 

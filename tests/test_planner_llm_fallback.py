@@ -327,6 +327,81 @@ async def test_plan_execution_configurations_runs_per_subtask() -> None:
     assert candidates[1].skill_profiles == []
 
 
+@pytest.mark.asyncio
+async def test_plan_execution_configurations_respects_max_concurrency() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(
+        id="task-7b",
+        goal="实现并测试",
+        constraints={"planner_execution_candidate_max_concurrency": 1},
+    )
+    run = Run(id="run-7b", task_id=task.id, session_id="session-7b")
+    specs = [
+        planner._normalize_plan_subtask(
+            task,
+            _PlanSubtaskSpec(
+                name="prepare-implementation",
+                description="Implement the feature.",
+                role="coder",
+                acceptance_criteria=["Implementation is complete."],
+                expected_artifacts=["code_changes"],
+            ),
+        ),
+        planner._normalize_plan_subtask(
+            task,
+            _PlanSubtaskSpec(
+                name="verify-result",
+                description="Verify the result.",
+                role="tester",
+                acceptance_criteria=["Tests pass."],
+                expected_artifacts=["test_report"],
+            ),
+        ),
+    ]
+
+    class _FakeResult:
+        def __init__(self, payload: str) -> None:
+            self._payload = payload
+
+        def get_text_content(self) -> str:
+            return self._payload
+
+        def to_dict(self) -> dict[str, object]:
+            return {"text": self._payload}
+
+    active_calls = 0
+    max_active_calls = 0
+
+    class _FakeAgent:
+        async def __call__(self, msg) -> _FakeResult:
+            nonlocal active_calls, max_active_calls
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+            await asyncio.sleep(0.01)
+            if "prepare-implementation" in str(msg.content):
+                payload = (
+                    '{"name":"prepare-implementation","tool_groups":["workspace","code_exec"],'
+                    '"runtime_kinds":["sandbox","host_tools"],"sandbox_profile":"aio","skill_profiles":[]}'
+                )
+            else:
+                payload = (
+                    '{"name":"verify-result","tool_groups":["workspace","artifact"],'
+                    '"runtime_kinds":["host_tools"],"skill_profiles":[]}'
+                )
+            active_calls -= 1
+            return _FakeResult(payload)
+
+    def fake_create_execution_configuration_agent(*, task: Task, run: Run) -> _FakeAgent:
+        return _FakeAgent()
+
+    planner._create_execution_configuration_agent = fake_create_execution_configuration_agent  # type: ignore[method-assign]
+
+    candidates = await planner._plan_execution_configurations(task, run, specs)
+
+    assert len(candidates) == 2
+    assert max_active_calls == 1
+
+
 def test_merge_execution_configurations_preserves_candidate_sandbox_profile() -> None:
     planner = Planner(agent_profile_store=AgentProfileStore())
     task = Task(id="task-8", goal="实现功能", metadata={"profile": "py-basic"})
