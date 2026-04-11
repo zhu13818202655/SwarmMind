@@ -192,6 +192,7 @@ class ExecutionRunner:
         await self._validate_execution_policy(task, run, subtask, execution_profile)
         resolved_runtime_kind = execution_profile.resolved_runtime_kind or RuntimeKind.HOST_TOOLS
 
+
         if subtask.role in {AgentRole.VERIFIER, AgentRole.TESTER, AgentRole.REVIEWER}:
             await self._execute_validation_subtask(task, run, subtask, event)
         elif resolved_runtime_kind == RuntimeKind.SANDBOX and ToolGroup.CODE_EXEC in execution_profile.required_tool_groups:

@@ -239,6 +239,7 @@ def test_merge_execution_configurations_promotes_dynamic_browser_tasks_to_playwr
 async def test_plan_execution_configurations_runs_per_subtask() -> None:
     planner = Planner(agent_profile_store=AgentProfileStore())
     task = Task(id="task-7", goal="实现并测试", constraints={})
+    run = Run(id="run-7", task_id=task.id, session_id="session-7")
     specs = [
         planner._normalize_plan_subtask(
             task,
@@ -296,12 +297,20 @@ async def test_plan_execution_configurations_runs_per_subtask() -> None:
             self.active_calls -= 1
             return _FakeResult(payload)
 
-    fake_agent = _FakeAgent()
+    created_agents: list[_FakeAgent] = []
 
-    candidates = await planner._plan_execution_configurations(task, specs, fake_agent)
+    def fake_create_execution_configuration_agent(*, task: Task, run: Run) -> _FakeAgent:
+        agent = _FakeAgent()
+        created_agents.append(agent)
+        return agent
 
-    assert len(fake_agent.calls) == 2
-    assert fake_agent.max_active_calls == 2
+    planner._create_execution_configuration_agent = fake_create_execution_configuration_agent  # type: ignore[method-assign]
+
+    candidates = await planner._plan_execution_configurations(task, run, specs)
+
+    assert len(created_agents) == 2
+    assert all(len(agent.calls) == 1 for agent in created_agents)
+    assert all(agent.max_active_calls == 1 for agent in created_agents)
     assert len(candidates) == 2
     assert candidates[0].name == "prepare-implementation"
     assert candidates[1].name == "verify-result"

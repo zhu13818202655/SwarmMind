@@ -136,12 +136,6 @@ class Planner:
                 stage="task_planning",
                 system_prompt=render_prompt(self._system_prompt_template),
             )
-            execution_agent = self._create_planner_agent(
-                task=task,
-                run=run,
-                stage="execution_configuration",
-                system_prompt=render_prompt(self._execution_system_prompt_template),
-            )
             prompt = await self._compose_planning_prompt(task)
             result = await planning_agent(Msg(name="user", role="user", content=prompt))
             text = result.get_text_content() or json.dumps(result.to_dict(), ensure_ascii=False)
@@ -151,7 +145,7 @@ class Planner:
 
             plan_result = _PlanResult.model_validate(payload)
             normalized_plan = self._validate_and_normalize_plan(task, plan_result)
-            execution_configuration = await self._plan_execution_configurations(task, normalized_plan, execution_agent)
+            execution_configuration = await self._plan_execution_configurations(task, run, normalized_plan)
             enriched_plan = self._merge_execution_configurations(task, normalized_plan, execution_configuration)
             return self._build_subtasks_from_plan(task, run, enriched_plan)
         except Exception:
@@ -181,6 +175,14 @@ class Planner:
                 stage=stage,
                 payload=payload,
             ),
+        )
+
+    def _create_execution_configuration_agent(self, *, task: Task, run: Run):
+        return self._create_planner_agent(
+            task=task,
+            run=run,
+            stage="execution_configuration",
+            system_prompt=render_prompt(self._execution_system_prompt_template),
         )
 
     async def _publish_planner_event(
@@ -282,25 +284,26 @@ class Planner:
     async def _plan_execution_configurations(
         self,
         task: Task,
+        run: Run,
         plan_specs: list[_NormalizedPlanSubtaskSpec],
-        agent,
     ) -> list["_ExecutionCandidateSubtaskSpec"]:
         max_attempts = int(task.constraints.get("planner_execution_candidate_max_attempts", 2))
         if max_attempts < 1:
             max_attempts = 1
         results = await asyncio.gather(
-            *(self._plan_execution_candidate_for_subtask(task, subtask, agent, max_attempts) for subtask in plan_specs)
+            *(self._plan_execution_candidate_for_subtask(task, run, subtask, max_attempts) for subtask in plan_specs)
         )
         return [candidate for candidate in results if candidate is not None]
 
     async def _plan_execution_candidate_for_subtask(
         self,
         task: Task,
+        run: Run,
         subtask: _NormalizedPlanSubtaskSpec,
-        agent,
         max_attempts: int,
     ) -> "_ExecutionCandidateSubtaskSpec | None":
         for attempt in range(1, max_attempts + 1):
+            agent = self._create_execution_configuration_agent(task=task, run=run)
             prompt = await self._compose_execution_configuration_prompt(task, subtask)
             result = await agent(Msg(name="user", role="user", content=prompt))
             text = result.get_text_content() or json.dumps(result.to_dict(), ensure_ascii=False)

@@ -99,17 +99,17 @@ PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON = """
 
 
 PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT = PromptTemplate(
-  name="planner_task_decomposition_system",
-  template="""你是一个任务拆解规划代理，负责将用户目标拆解为结构化的子任务 DAG。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
+    name="planner_task_decomposition_system",
+    template="""你是一个任务拆解规划代理，负责将用户目标拆解为结构化的子任务 DAG。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
 
-当前阶段只负责任务拆解
-- 只关注子任务划分、角色分配、依赖关系、验收标准和预期产物。
+当前阶段只负责任务拆解：
+- 只关注子任务划分、角色分配、依赖关系、验收标准和预期产物。""",
 )
 
 
 PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT = PromptTemplate(
-  name="planner_execution_configuration_system",
-  template=f"""你是一个 execution candidate 规划代理，负责为单个已确定的子任务补全执行配置。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
+    name="planner_execution_configuration_system",
+    template=f"""你是一个 execution candidate 规划代理，负责为单个已确定的子任务补全执行配置。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
 
 执行环境硬约束：
 - 当前系统的 sandbox 能力统一由 `{DEFAULT_SANDBOX_PROFILE}` 提供。

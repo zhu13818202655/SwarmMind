@@ -49,3 +49,4 @@ agentscope_minimal/logs/
 # artifacts
 data/artifacts/
 data/replays/
+front/
