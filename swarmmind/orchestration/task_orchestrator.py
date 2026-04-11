@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.events.bus import EventBus
 from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.models.event import DomainEvent
@@ -411,6 +412,6 @@ class TaskOrchestrator:
         return ExecutionConfiguration(
             runtime_kind=runtime_kind,
             tool_requirements=tool_requirements,
-            sandbox_profile=(str(task.metadata.get("profile", "py-basic")) if runtime_kind == RuntimeKind.SANDBOX else None),
+            sandbox_profile=(str(task.metadata.get("profile", DEFAULT_SANDBOX_PROFILE)) if runtime_kind == RuntimeKind.SANDBOX else None),
         )
 

@@ -140,11 +140,8 @@ class SandboxProvider(Protocol):
 
 ## 4.5 沙箱规格（Profiles）建议
 
-- `py-basic`：Python + pytest + lint
-- `node-basic`：Node + npm + test
-- `fullstack-lite`：Python + Node 混合
-- `research-net`：允许外网白名单访问
-- `secure-offline`：禁外网、仅本地工具
+
+- `aio`：Python + Node 混合
 
 每个 profile 固定：
 - 镜像
@@ -207,8 +204,7 @@ SwarmMind/
       metrics.py
   configs/
     profiles/
-      py-basic.yaml
-      secure-offline.yaml
+      aio.yaml
   tests/
     unit/
     integration/

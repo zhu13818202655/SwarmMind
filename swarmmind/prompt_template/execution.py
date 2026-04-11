@@ -2,50 +2,75 @@
 
 from __future__ import annotations
 
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.prompt_template.base import PromptTemplate
 
 
 EXECUTION_SYSTEM_PROMPT = PromptTemplate(
     name="execution_system_v1",
-    template="""You are a precise task execution assistant.
-Return only actionable markdown for this single subtask.""",
+    template=f"""你是一个精确的任务执行助手。
+只返回当前单个子任务所需的可执行 Markdown 结果。
+
+Sandbox 约束：
+- 当前系统的 sandbox 能力统一由 `{DEFAULT_SANDBOX_PROFILE}` 提供。
+- 你不需要选择、输出或请求 sandbox profile 名称；如果运行时需要 sandbox，系统会自动使用 `{DEFAULT_SANDBOX_PROFILE}`。
+- 当运行时和工具链显式提供相关能力时，`{DEFAULT_SANDBOX_PROFILE}` 可用于隔离代码执行、浏览器自动化、文件转换、产物生成以及部署类 shell 命令。
+- `{DEFAULT_SANDBOX_PROFILE}` 不意味着你拥有无限制的机器访问、隐藏凭据、长期运行服务，或超出显式 tool groups 与 tool schemas 之外的能力。
+
+能力边界约束：
+- 只能使用当前子任务明确提供的 tool groups 和 tools。
+- 如果某项能力没有出现在提供的 tool groups 或 tool schemas 中，就视为不可用。
+- 除非对应工具真实可用且在必要时已被使用，否则不要声称已经完成浏览器交互、代码执行、文件修改、通信发送或产物读取。""",
 )
 
 EXECUTION_SUBTASK_MARKDOWN_PROMPT = PromptTemplate(
     name="execution_subtask_markdown_v1",
-    template="""Execute the following subtask and produce the deliverable in markdown.
+    template="""请执行下面的子任务，并以 Markdown 形式产出交付结果。
 
-Task Goal: {{ task_goal }}
-Subtask Name: {{ subtask_name }}
-Subtask Description: {{ subtask_description }}
-Acceptance Criteria: {{ acceptance_criteria_json }}
-Constraints: {{ constraints_json }}
-Tool Groups: {{ tool_groups_json }}
+任务目标：{{ task_goal }}
+子任务名称：{{ subtask_name }}
+子任务描述：{{ subtask_description }}
+验收标准：{{ acceptance_criteria_json }}
+约束条件：{{ constraints_json }}
+工具组：{{ tool_groups_json }}
 
-Output requirements:
-1) Use concise markdown.
-2) Include a clear completion checklist.
-3) Include verification notes for acceptance criteria.""",
+工具组能力边界：
+- workspace：仅用于检查和修改仓库或工作区文件。
+- web_search：仅用于查找公开网页来源和结果摘要，不等于页面交互。
+- browser：仅在暴露浏览器工具时用于打开网页、读取渲染内容和执行动态交互。
+- code_exec：用于在允许的运行时执行代码或 shell 命令，但不会自动赋予项目文件编辑能力。
+- artifact：用于读取依赖产物和附件输出，不等于任意工作区写入。
+- memory：仅在暴露记忆工具时用于读写任务记忆。
+- communication：仅在暴露通信工具时用于发送对外消息。
+
+Sandbox 说明：
+- 如果需要 sandbox 执行，只需要基于能力判断是否应使用 sandbox；系统会自动绑定 `aio`。
+- 不要输出、比较或讨论 sandbox profile 名称，把注意力放在当前任务可用的能力和工具上。
+
+输出要求：
+1) 使用简洁的 Markdown。
+2) 包含清晰的完成情况检查清单。
+3) 包含针对验收标准的验证说明。""",
 )
 
 EXECUTION_FALLBACK_CONTENT_PROMPT = PromptTemplate(
     name="execution_fallback_content_v1",
     template="""# {{ subtask_name }}
 
-## Goal
+## 目标
 {{ subtask_description }}
 
-## Parent Task
+## 上层任务
 {{ task_goal }}
 
-## Acceptance Criteria
+## 验收标准
 {{ acceptance_criteria_lines }}
 
-## Execution Notes
-- Completed by real subtask runner in sandbox.
-- Output persisted as artifact source for replay and query APIs.
+## 执行说明
+- 由真实子任务执行器在 sandbox 中完成。
+- 输出会被持久化为 artifact，供回放和查询 API 使用。
 
-## Constraints Snapshot
+## 约束快照
 ```json
 {{ constraints_json_pretty }}
 ```""",

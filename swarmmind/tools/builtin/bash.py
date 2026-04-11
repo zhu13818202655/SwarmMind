@@ -2,6 +2,8 @@
 
 from typing import TYPE_CHECKING
 
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
+
 if TYPE_CHECKING:
     from swarmmind.sandbox.manager import SandboxManager
 
@@ -32,7 +34,7 @@ class BashTool:
             result = await self._sandbox.run_command(sandbox_id, command, cwd)
         else:
             # Create temporary sandbox
-            handle = await self._sandbox.create("py-basic")
+            handle = await self._sandbox.create(DEFAULT_SANDBOX_PROFILE)
             try:
                 result = await self._sandbox.run_command(handle.sandbox_id, command, cwd)
             finally:

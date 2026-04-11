@@ -7,6 +7,8 @@ from pathlib import Path
 from datetime import datetime
 from pydantic import BaseModel, Field
 
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
+
 from swarmmind.utils import utc_now
 
 
@@ -111,7 +113,7 @@ class SkillScriptExecutionPolicy(BaseModel):
     """Policy and runtime options for skill script execution."""
 
     allow_sandbox_exec: bool = Field(default=False)
-    sandbox_profile: str = Field(default="py-basic")
+    sandbox_profile: str = Field(default=DEFAULT_SANDBOX_PROFILE)
     sandbox_root: str = Field(default="/workspace/skill")
     environment: dict[str, str] = Field(default_factory=dict)
     artifact_paths: list[str] = Field(default_factory=list)

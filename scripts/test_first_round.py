@@ -28,7 +28,7 @@ async def main() -> None:
     result = await container.gateway.submit_task(
         TaskSubmitRequest(
             goal="实现一个导出 Excel 功能并补测试",
-            profile="py-basic",
+            profile="aio",
             preferred_strategy="build_app",
             metadata={"source": "smoke-test"},
         ),

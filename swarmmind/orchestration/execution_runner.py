@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 from swarmmind.agents import AgentProfileStore, OmniAgentRequest, OmniAgentRunner
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.events import EventBus
 from swarmmind.memory import LongTermMemoryBase
 from swarmmind.models.artifact import Artifact, ArtifactType
@@ -1323,7 +1324,7 @@ class ExecutionRunner:
                 return sandbox_profile
         if subtask.execution_configuration and subtask.execution_configuration.sandbox_profile:
             return subtask.execution_configuration.sandbox_profile
-        return task.metadata.get("profile", "py-basic")
+        return task.metadata.get("profile", DEFAULT_SANDBOX_PROFILE)
 
     async def _build_command_request(self, task, subtask) -> CommandRequest:
         should_fail = task.constraints.get("force_fail_subtask") == subtask.name
@@ -1745,7 +1746,7 @@ class ExecutionRunner:
             async def run_skill_script(
                 skill_name: str,
                 script_path: str,
-                sandbox_profile: str = "py-basic",
+                sandbox_profile: str = DEFAULT_SANDBOX_PROFILE,
                 sandbox_root: str = "/workspace/skill",
                 allow_sandbox_exec: bool = False,
                 environment: dict[str, str] | None = None,
@@ -1825,13 +1826,13 @@ class ExecutionRunner:
         sandbox_profile: str | None = None,
         **_: Any,
     ) -> dict[str, Any]:
-        profile = sandbox_profile or "browser-playwright"
+        profile = sandbox_profile or DEFAULT_SANDBOX_PROFILE
         lease = await self._sandbox_manager.acquire(
             SandboxLeaseRequest(
                 profile=profile,
-                task_id="browser-playwright",
-                run_id="browser-playwright",
-                subtask_id="browser-playwright",
+                task_id="browser-session",
+                run_id="browser-session",
+                subtask_id="browser-session",
             )
         )
         script_payload = json.dumps(
@@ -1864,7 +1865,7 @@ class ExecutionRunner:
                 "        body_text = await page.locator('body').inner_text()",
                 "        screenshot_path = None",
                 "        if payload['action'] == 'screenshot':",
-                "            artifact_dir = Path('/tmp/browser-playwright')",
+                "            artifact_dir = Path('/tmp/browser-session')",
                 "            artifact_dir.mkdir(parents=True, exist_ok=True)",
                 "            screenshot_path = artifact_dir / 'screenshot.png'",
                 "            await page.screenshot(path=str(screenshot_path), full_page=bool(payload.get('full_page', True)))",

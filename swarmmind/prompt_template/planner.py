@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.prompt_template.base import PromptTemplate
 
 
@@ -85,7 +86,6 @@ PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON = """
   "name": "implement-core-module",
   "tool_groups": ["workspace", "code_exec", "artifact"],
   "runtime_kinds": ["sandbox", "host_tools"],
-  "sandbox_profile": "py-basic",
   "skill_profiles": []
 }
 
@@ -98,10 +98,27 @@ PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON = """
 }"""
 
 
-PLANNER_SYSTEM_PROMPT = PromptTemplate(
-    name="planner_system",
-    template="""你是一个规划代理，负责将用户目标拆解为结构化的子任务 DAG。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。""",
+PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT = PromptTemplate(
+  name="planner_task_decomposition_system",
+  template="""你是一个任务拆解规划代理，负责将用户目标拆解为结构化的子任务 DAG。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
+
+当前阶段只负责任务拆解
+- 只关注子任务划分、角色分配、依赖关系、验收标准和预期产物。
 )
+
+
+PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT = PromptTemplate(
+  name="planner_execution_configuration_system",
+  template=f"""你是一个 execution candidate 规划代理，负责为单个已确定的子任务补全执行配置。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
+
+执行环境硬约束：
+- 当前系统的 sandbox 能力统一由 `{DEFAULT_SANDBOX_PROFILE}` 提供。
+- 规划和 execution candidate 输出中，不需要模型选择或输出 sandbox profile；只需要判断任务是否需要 sandbox runtime。
+- 不要把 sandbox profile 当成能力类型枚举来发明新名字；能力边界由 tool groups 和 runtime 决定，不由 profile 名称决定。""",
+)
+
+
+PLANNER_SYSTEM_PROMPT = PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT
 
 PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
     name="planner_task_decomposition",
@@ -156,6 +173,12 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
     - 需要从全局视角对照验收标准做最终检查并给出通过/不通过结论 → `verifier`
     执行动作的分配：如果 `writer`、`researcher` 或 `coder` 的任务中涉及调用 API、发送通知、运行命令等动作，由该角色在执行阶段直接调用对应工具完成，无需切换角色。
     例如：writer 撰写邮件后可直接调用邮件发送工具；researcher 调研后可直接调用下载工具保存数据；coder 编写脚本后可直接运行测试命令。
+    tool group 能力边界：
+    - `web_search` 只负责搜索候选来源和摘要，不代表能直接完成网页交互。
+    - `browser` 负责打开页面、读取渲染内容、动态交互和截图。
+    - `workspace` 负责仓库内文件读写、搜索和项目级修改。
+    - `artifact` 负责读取依赖产物、附件和已生成输出，不等于任意文件系统访问。
+    - `code_exec` 负责运行代码、命令、测试、构建、转换和部署类命令，不等于自动拥有其它工具组能力。
 4. **数量限制**：子任务总数建议 1-5 个，绝对不要超过 7 个。超过 7 个说明分解过细，请合并同类任务。
 
 ## 合法 JSON 示例：
@@ -186,7 +209,6 @@ PLANNER_EXECUTION_CONFIGURATION_PROMPT = PromptTemplate(
   "name": "string-kebab-case",
   "tool_groups": ["file_system|workspace|web_search|browser|code_exec|memory|artifact|communication"],
   "runtime_kinds": ["llm_only|host_tools|sandbox"],
-  "sandbox_profile": "string|null",
   "skill_profiles": ["string"]
 }}
 
@@ -194,10 +216,10 @@ PLANNER_EXECUTION_CONFIGURATION_PROMPT = PromptTemplate(
 1. `name` 必须与输入子任务名称完全一致。
 2. `tool_groups` 只能从给定 `available_tool_groups` 中选择。
 3. `runtime_kinds` 只能从给定 `available_runtime_kinds` 中选择，且按优先级排序。
-4. 只有当 `runtime_kinds` 包含 `sandbox` 时，才允许输出 `sandbox_profile`；否则必须为 `null` 或省略。
-5. `sandbox_profile` 只能从任务默认 profile 或系统支持的 sandbox profile 中选择，不要自由发明不存在的名字。
-6. `skill_profiles` 只能从给定 `available_skill_profiles` 中选择；若不需要技能可输出空数组。
-7. 这是 candidate 选择，不是最终执行决策；不要输出 agent profile 或其它执行器内部字段。
+4. 当 `runtime_kinds` 包含 `sandbox` 时，表示该子任务需要 sandbox 能力；系统会自动绑定 `{DEFAULT_SANDBOX_PROFILE}`，不要额外输出 `sandbox_profile` 字段。
+5. `skill_profiles` 只能从给定 `available_skill_profiles` 中选择；若不需要技能可输出空数组。
+6. 这是 candidate 选择，不是最终执行决策；不要输出 agent profile、sandbox profile 或其它执行器内部字段。
+7. 不要把 tool group 混用成能力幻想：需要动态页面交互时必须包含 `browser`；需要执行命令、测试、构建、转换或部署动作时必须包含 `code_exec`；需要修改仓库文件时必须包含 `workspace`。
 
 合法 JSON 示例：
 {PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON}

@@ -120,7 +120,7 @@ def test_factory_uses_execution_profile_overrides_in_capability_bundle() -> None
         allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC],
         allowed_tool_names=["project_read", "project_write", "run_skill_script"],
         allowed_skill_scripts=["pptx:scripts/render.py"],
-        default_sandbox_profile="py-basic",
+        default_sandbox_profile="aio",
     )
     execution_profile = ExecutionProfile(
         role=AgentRole.WRITER,
@@ -180,7 +180,7 @@ async def test_omni_agent_acting_emits_tool_and_skill_events(monkeypatch: pytest
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=["pptx"],
         allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC],
-        default_sandbox_profile="py-basic",
+        default_sandbox_profile="aio",
     )
     agent = factory.create_profile_agent(
         profile,

@@ -10,11 +10,18 @@ from opensandbox.config import ConnectionConfig
 from opensandbox import Sandbox
 from opensandbox.models import WriteEntry
 
-from swarmmind.sandbox.profiles import SandboxProfile, DEFAULT_PROFILES
+from swarmmind.sandbox.profiles import (
+    DEFAULT_AIO_IMAGE,
+    DEFAULT_PROFILES,
+    SandboxProfile,
+    normalize_sandbox_profile_name,
+)
 from swarmmind.sandbox.provider import ExecResult, SandboxHandle, SandboxProvider, WriteFileEntry
 
 
 FALLBACK_INTERPRETER_IMAGES = [
+    DEFAULT_AIO_IMAGE,
+    "serverless-registry.cn-hangzhou.cr.aliyuncs.com/functionai/sandbox-all-in-one:v0.9.29",
     "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.1",
     "opensandbox/code-interpreter:v1.0.1",
 ]
@@ -45,15 +52,16 @@ class OpenSandboxAdapter(SandboxProvider):
 
     async def create(self, profile: str, metadata: dict[str, str] | None = None) -> SandboxHandle:
         """Create a sandbox."""
-        if profile not in self._profiles:
+        resolved_profile = normalize_sandbox_profile_name(profile)
+        if resolved_profile not in self._profiles:
             raise ValueError(f"Unknown sandbox profile: {profile}")
 
-        selected = self._profiles[profile]
+        selected = self._profiles[resolved_profile]
         sandbox = await self._create_with_retry(selected, metadata or {})
 
         sandbox_id = self._get_sandbox_id(sandbox)
         self._sandboxes[sandbox_id] = sandbox
-        return SandboxHandle(sandbox_id=sandbox_id, profile=profile, image=selected.image)
+        return SandboxHandle(sandbox_id=sandbox_id, profile=resolved_profile, image=selected.image)
 
     async def run_command(self, sandbox_id: str, cmd: str, cwd: str | None = None) -> ExecResult:
         """Run a command in the sandbox."""

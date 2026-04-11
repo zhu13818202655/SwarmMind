@@ -7,6 +7,7 @@ import re
 
 from swarmmind.agents.agent_skill import normalize_skill_profile_names
 from swarmmind.agents.profile import AgentProfileStore
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.models.agent_profile import AgentProfile
 from swarmmind.models.capability import DEFAULT_ROLE_TOOL_GROUPS, RuntimeKind, ToolGroup
 from swarmmind.models.execution import ExecutionProfile
@@ -172,7 +173,7 @@ class Coordinator:
                 if prefers_browser_playwright:
                     return (
                         RuntimeKind.SANDBOX,
-                        "Resolved to sandbox because the subtask requires browser-playwright for dynamic browsing, clicking, or screenshots.",
+                        "Resolved to sandbox because the subtask requires dynamic browsing, clicking, or screenshots.",
                         backup_runtimes(RuntimeKind.SANDBOX),
                     )
                 if ToolGroup.CODE_EXEC in required_groups or sandbox_profile or agent_profile.default_sandbox_profile:
@@ -200,7 +201,7 @@ class Coordinator:
         if prefers_browser_playwright:
             return (
                 RuntimeKind.SANDBOX,
-                "Resolved to sandbox as a safety fallback because the subtask requires browser-playwright automation.",
+                "Resolved to sandbox as a safety fallback because the subtask requires browser automation.",
                 backup_runtimes(RuntimeKind.SANDBOX),
             )
         if ToolGroup.CODE_EXEC in required_groups:
@@ -227,7 +228,7 @@ class Coordinator:
             return None
         required_tool_groups = list(subtask.execution_configuration.tool_requirements) if subtask.execution_configuration else []
         if Coordinator._prefers_browser_playwright(task, subtask, required_tool_groups):
-            return (subtask.execution_configuration.sandbox_profile if subtask.execution_configuration else None) or "browser-playwright"
+            return (subtask.execution_configuration.sandbox_profile if subtask.execution_configuration else None) or DEFAULT_SANDBOX_PROFILE
         return (
             (subtask.execution_configuration.sandbox_profile if subtask.execution_configuration else None)
             or agent_profile.default_sandbox_profile

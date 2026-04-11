@@ -40,7 +40,7 @@ async def test_coordinator_uses_execution_configuration_for_writer_host_tools() 
 @pytest.mark.asyncio
 async def test_coordinator_prefers_host_tools_for_research_without_legacy_browser_runtime() -> None:
     coordinator = Coordinator(AgentProfileStore())
-    task = Task(id="task-2", goal="调研最近一个月金价走势", metadata={"profile": "research-net"})
+    task = Task(id="task-2", goal="调研最近一个月金价走势", metadata={"profile": "aio"})
     run = Run(id="run-2", task_id=task.id, session_id="session-2")
     subtask = SubTask(
         id="subtask-2",
@@ -65,7 +65,7 @@ async def test_coordinator_prefers_host_tools_for_research_without_legacy_browse
 @pytest.mark.asyncio
 async def test_coordinator_prefers_browser_playwright_for_dynamic_browser_tasks() -> None:
     coordinator = Coordinator(AgentProfileStore())
-    task = Task(id="task-2b", goal="打开动态页面并截图", metadata={"profile": "research-net"})
+    task = Task(id="task-2b", goal="打开动态页面并截图", metadata={"profile": "aio"})
     run = Run(id="run-2b", task_id=task.id, session_id="session-2b")
     subtask = SubTask(
         id="subtask-2b",
@@ -82,9 +82,9 @@ async def test_coordinator_prefers_browser_playwright_for_dynamic_browser_tasks(
     profile = ExecutionProfile.model_validate(assigned_subtask.metadata["execution_profile"])
 
     assert profile.resolved_runtime_kind == RuntimeKind.SANDBOX
-    assert profile.sandbox_profile == "browser-playwright"
+    assert profile.sandbox_profile == "aio"
     assert profile.runtime_resolution_reason is not None
-    assert "browser-playwright" in profile.runtime_resolution_reason
+    assert "dynamic browsing" in profile.runtime_resolution_reason
 
 
 @pytest.mark.asyncio

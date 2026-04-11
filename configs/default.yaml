@@ -4,7 +4,7 @@ sandbox:
   provider: opensandbox
   api_key: ${OPEN_SANDBOX_API_KEY}
   base_url: ${OPEN_SANDBOX_BASE_URL}
-  default_profile: py-basic
+  default_profile: aio
   create_retries: 3
   create_backoff: 1.0
   request_timeout_seconds: 600

@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.models.execution import ExecutionConfiguration
 from swarmmind.utils import utc_now
@@ -166,7 +167,7 @@ class TaskRequest(BaseModel):
     goal: str = Field(..., description="Task goal")
     constraints: dict[str, Any] = Field(default_factory=dict)
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
-    profile: str = Field(default="py-basic", description="Sandbox profile")
+    profile: str = Field(default=DEFAULT_SANDBOX_PROFILE, description="Sandbox profile")
     agent_profile_id: str | None = Field(default=None, description="Default agent profile for generated subtasks")
     required_tool_groups: list[ToolGroup] = Field(
         default_factory=list,

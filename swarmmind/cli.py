@@ -8,6 +8,7 @@ from typing import Optional
 import click
 from agentscope.message import Msg
 from swarmmind.config import get_settings
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.models.task import TaskRequest
 from swarmmind.gateway.gateway import Gateway
 from swarmmind.sandbox.opensandbox_adapter import OpenSandboxAdapter
@@ -28,7 +29,7 @@ def cli():
 @cli.command()
 @click.argument("goal")
 @click.option("--output", "-o", type=click.Path(), help="Output file for result")
-@click.option("--profile", default="py-basic", help="Sandbox profile")
+@click.option("--profile", default=DEFAULT_SANDBOX_PROFILE, help="Sandbox profile")
 @click.option("--api-key", envvar="OPENAI_API_KEY", help="OpenAI API key")
 @click.option("--sandbox-key", envvar="OPEN_SANDBOX_API_KEY", help="OpenSandbox API key")
 def run(goal: str, output: Optional[str], profile: str, api_key: Optional[str], sandbox_key: Optional[str]):

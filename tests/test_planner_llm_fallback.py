@@ -118,7 +118,7 @@ def test_build_subtasks_from_plan_applies_default_execution_configuration() -> N
 
 def test_planner_prefers_browser_playwright_for_dynamic_browser_subtask() -> None:
     planner = Planner(agent_profile_store=AgentProfileStore())
-    task = Task(id="task-4b", goal="抓取动态页面并截图", metadata={"profile": "research-net"})
+    task = Task(id="task-4b", goal="抓取动态页面并截图", metadata={"profile": "aio"})
 
     configuration = planner._default_execution_configuration(
         task,
@@ -127,9 +127,9 @@ def test_planner_prefers_browser_playwright_for_dynamic_browser_subtask() -> Non
     )
 
     assert configuration.runtime_kind == RuntimeKind.SANDBOX
-    assert configuration.sandbox_profile == "browser-playwright"
+    assert configuration.sandbox_profile == "aio"
     assert ToolGroup.BROWSER in configuration.tool_requirements
-    assert configuration.metadata["preferred_browser_runtime"] == "browser-playwright"
+    assert configuration.metadata["preferred_browser_runtime"] == "aio"
 
 
 def test_build_subtasks_from_plan_records_validation_warnings_for_missing_expected_artifacts() -> None:
@@ -201,7 +201,7 @@ def test_merge_execution_configurations_prefers_llm_execution_output() -> None:
 
 def test_merge_execution_configurations_promotes_dynamic_browser_tasks_to_playwright() -> None:
     planner = Planner(agent_profile_store=AgentProfileStore())
-    task = Task(id="task-6b", goal="检查动态网页登录流程", metadata={"profile": "research-net"})
+    task = Task(id="task-6b", goal="检查动态网页登录流程", metadata={"profile": "aio"})
     plan_result = _PlanResult(
         subtasks=[
             _PlanSubtaskSpec(
@@ -231,8 +231,8 @@ def test_merge_execution_configurations_promotes_dynamic_browser_tasks_to_playwr
     execution_configuration = merged[0].execution_configuration
     assert execution_configuration is not None
     assert execution_configuration.runtime_kind == RuntimeKind.SANDBOX
-    assert execution_configuration.sandbox_profile == "browser-playwright"
-    assert execution_configuration.metadata["preferred_browser_runtime"] == "browser-playwright"
+    assert execution_configuration.sandbox_profile == "aio"
+    assert execution_configuration.metadata["preferred_browser_runtime"] == "aio"
 
 
 @pytest.mark.asyncio
@@ -286,7 +286,7 @@ async def test_plan_execution_configurations_runs_per_subtask() -> None:
             if "prepare-implementation" in str(msg.content):
                 payload = (
                     '{"name":"prepare-implementation","tool_groups":["workspace","code_exec"],'
-                    '"runtime_kinds":["sandbox","host_tools"],"sandbox_profile":"py-basic","skill_profiles":[]}'
+                    '"runtime_kinds":["sandbox","host_tools"],"sandbox_profile":"aio","skill_profiles":[]}'
                 )
             else:
                 payload = (
@@ -305,7 +305,7 @@ async def test_plan_execution_configurations_runs_per_subtask() -> None:
     assert len(candidates) == 2
     assert candidates[0].name == "prepare-implementation"
     assert candidates[1].name == "verify-result"
-    assert candidates[0].sandbox_profile == "py-basic"
+    assert candidates[0].sandbox_profile == "aio"
     assert candidates[0].skill_profiles == []
     assert candidates[1].skill_profiles == []
 

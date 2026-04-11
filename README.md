@@ -9,7 +9,11 @@ opensandbox-server
 
 opensandbox支持的image:
 - serverless-registry.cn-hangzhou.cr.aliyuncs.com/functionai/sandbox-all-in-one   v0.9.29
-- sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter    v1.0.1
+
+当前默认统一使用单一 sandbox profile:
+- aio -> serverless-registry.cn-hangzhou.cr.aliyuncs.com/functionai/sandbox-all-in-one:v0.9.29
+
+docker pull enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
 
 相关文档
 - https://github.com/agent-infra/sandbox/tree/main

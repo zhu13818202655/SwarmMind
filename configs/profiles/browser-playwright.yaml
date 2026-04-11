@@ -1,9 +1,0 @@
-# Browser Playwright Profile - Chromium/Playwright browser automation in sandbox
-
-name: browser-playwright
-image: sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/playwright:latest
-timeout_seconds: 300
-
-resource_limits:
-  cpu: 2
-  memory: 2048

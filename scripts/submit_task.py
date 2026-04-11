@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Submit a task to SwarmMind API")
     parser.add_argument("--goal", help="Task goal text. If omitted, the script will prompt for input.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000", help="SwarmMind API base URL")
-    parser.add_argument("--profile", default="py-basic", help="Sandbox profile")
+    parser.add_argument("--profile", default="aio", help="Sandbox profile")
     parser.add_argument("--agent-profile-id", help="Optional default agent profile id for the task")
     parser.add_argument("--preferred-strategy", help="Optional preferred top-level execution strategy")
     parser.add_argument("--priority", default="normal", help="Task priority")

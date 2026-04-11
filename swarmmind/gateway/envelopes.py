@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.models.artifact import Artifact
 from swarmmind.models.run import Run
 from swarmmind.models.session import Session
@@ -20,7 +21,7 @@ class TaskSubmitRequest(BaseModel):
     goal: str = Field(..., description="Task goal")
     constraints: dict[str, Any] = Field(default_factory=dict)
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
-    profile: str = Field(default="py-basic")
+    profile: str = Field(default=DEFAULT_SANDBOX_PROFILE)
     session_id: str | None = None
     agent_profile_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

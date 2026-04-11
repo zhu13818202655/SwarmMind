@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from swarmmind.config.env import resolve_env_value
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 
 
 class ValidatedDefaultsModel(BaseModel):
@@ -42,7 +43,7 @@ class SandboxConfig(ValidatedDefaultsModel):
     provider: str = Field(default="opensandbox", description="Sandbox provider")
     api_key: str | None = Field(default=None, description="API key")
     base_url: str = Field(default="http://localhost:45698", description="Base URL")
-    default_profile: str = Field(default="py-basic", description="Default sandbox profile")
+    default_profile: str = Field(default=DEFAULT_SANDBOX_PROFILE, description="Default sandbox profile")
     create_retries: int = Field(default=3, description="Number of retries for sandbox creation")
     create_backoff: float = Field(default=1.0, description="Backoff seconds between retries")
     request_timeout_seconds: int = Field(

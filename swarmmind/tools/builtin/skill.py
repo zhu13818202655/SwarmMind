@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.skill_system import SkillExecutionContext, SkillExecutionService, SkillScriptExecutionPolicy
 
 
@@ -23,7 +24,7 @@ class SkillTool:
         self,
         skill_name: str,
         script_path: str,
-        sandbox_profile: str = "py-basic",
+        sandbox_profile: str = DEFAULT_SANDBOX_PROFILE,
         sandbox_root: str = "/workspace/skill",
         allow_sandbox_exec: bool = False,
         environment: dict[str, str] | None = None,
@@ -69,7 +70,7 @@ async def get_skill_details(skill_name: str) -> dict[str, object]:
 async def run_skill_script(
     skill_name: str,
     script_path: str,
-    sandbox_profile: str = "py-basic",
+    sandbox_profile: str = DEFAULT_SANDBOX_PROFILE,
     sandbox_root: str = "/workspace/skill",
     allow_sandbox_exec: bool = False,
     environment: dict[str, str] | None = None,

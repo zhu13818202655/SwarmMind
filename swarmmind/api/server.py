@@ -13,6 +13,7 @@ from starlette.responses import StreamingResponse
 
 from swarmmind.app import get_container
 from swarmmind.config import SwarmMindConfig, get_settings
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.gateway import RunDetail, TaskDetail, TaskSubmitRequest
 from swarmmind.models.run import RunPhase, RunStatus
 from swarmmind.models.task import TaskPriority, TaskStatus
@@ -33,7 +34,7 @@ class TaskCreateRequest(BaseModel):
     goal: str = Field(..., description="Task goal description")
     constraints: dict[str, Any] = Field(default_factory=dict)
     priority: TaskPriority = Field(default=TaskPriority.NORMAL)
-    profile: str = Field(default="py-basic")
+    profile: str = Field(default=DEFAULT_SANDBOX_PROFILE)
     agent_profile_id: str | None = Field(default=None)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

@@ -2,6 +2,16 @@
 
 from dataclasses import dataclass
 
+from swarmmind.defaults import DEFAULT_AIO_IMAGE, DEFAULT_SANDBOX_PROFILE
+LEGACY_SANDBOX_PROFILE_ALIASES: dict[str, str] = {
+    "py-basic": DEFAULT_SANDBOX_PROFILE,
+    "py-full": DEFAULT_SANDBOX_PROFILE,
+    "node-basic": DEFAULT_SANDBOX_PROFILE,
+    "research-net": DEFAULT_SANDBOX_PROFILE,
+    "browser-playwright": DEFAULT_SANDBOX_PROFILE,
+    "secure-offline": DEFAULT_SANDBOX_PROFILE,
+}
+
 
 @dataclass
 class SandboxProfile:
@@ -15,46 +25,22 @@ class SandboxProfile:
     resource_limits: dict[str, str] | None = None
 
 
-# Default sandbox profiles
-DEFAULT_INTERPRETER_IMAGE = "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/code-interpreter:v1.0.1"
-DEFAULT_PLAYWRIGHT_IMAGE = "sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/playwright:latest"
+def normalize_sandbox_profile_name(profile: str | None) -> str:
+    """Resolve a requested sandbox profile to the canonical profile name."""
+    normalized = (profile or DEFAULT_SANDBOX_PROFILE).strip()
+    if not normalized:
+        return DEFAULT_SANDBOX_PROFILE
+    return LEGACY_SANDBOX_PROFILE_ALIASES.get(normalized, normalized)
 
+
+# Default sandbox profiles
 DEFAULT_PROFILES: dict[str, SandboxProfile] = {
-    "py-basic": SandboxProfile(
-        name="py-basic",
-        image=DEFAULT_INTERPRETER_IMAGE,
-        entrypoint=["/opt/opensandbox/code-interpreter.sh"],
-        timeout_seconds=300,
-        env={"PYTHONPATH": "/tmp", "PYTHON_VERSION": "3.11"},
-        resource_limits={"cpu": "1000m", "memory": "1024Mi"},
-    ),
-    "py-full": SandboxProfile(
-        name="py-full",
-        image=DEFAULT_INTERPRETER_IMAGE,
+    DEFAULT_SANDBOX_PROFILE: SandboxProfile(
+        name=DEFAULT_SANDBOX_PROFILE,
+        image=DEFAULT_AIO_IMAGE,
         entrypoint=["/opt/opensandbox/code-interpreter.sh"],
         timeout_seconds=600,
         env={"PYTHONPATH": "/tmp", "PYTHON_VERSION": "3.11"},
         resource_limits={"cpu": "2000m", "memory": "2048Mi"},
-    ),
-    "node-basic": SandboxProfile(
-        name="node-basic",
-        image=DEFAULT_INTERPRETER_IMAGE,
-        entrypoint=["/opt/opensandbox/code-interpreter.sh"],
-        timeout_seconds=300,
-        resource_limits={"cpu": "1000m", "memory": "1024Mi"},
-    ),
-    "browser-playwright": SandboxProfile(
-        name="browser-playwright",
-        image=DEFAULT_PLAYWRIGHT_IMAGE,
-        timeout_seconds=300,
-        resource_limits={"cpu": "1000m", "memory": "1024Mi"},
-    ),
-    "secure-offline": SandboxProfile(
-        name="secure-offline",
-        image=DEFAULT_INTERPRETER_IMAGE,
-        entrypoint=["/opt/opensandbox/code-interpreter.sh"],
-        timeout_seconds=300,
-        env={"ALLOW_NETWORK": "false", "PYTHON_VERSION": "3.11"},
-        resource_limits={"cpu": "500m", "memory": "512Mi"},
     ),
 }

@@ -1,0 +1,15 @@
+# AIO Profile - unified all-in-one sandbox for coding, execution, conversion, and browser tasks
+
+name: aio
+image: serverless-registry.cn-hangzhou.cr.aliyuncs.com/functionai/sandbox-all-in-one:v0.9.29
+entrypoint: /opt/opensandbox/code-interpreter.sh
+timeout_seconds: 3600
+
+env:
+  PYTHONPATH: /tmp
+  PIP_NO_CACHE_DIR: "1"
+  PYTHON_VERSION: "3.11"
+
+resource_limits:
+  cpu: 2
+  memory: 2048

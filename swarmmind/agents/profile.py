@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.models.agent_profile import AgentProfile, HandoffPolicy, SkillsMode
 from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 
 DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
     "planner-default": AgentProfile(
         id="planner-default",
-        name="Planner Default",
+        name="PlannerDefault",
         role=AgentRole.PLANNER,
         description="Default planning profile for decomposition and requirement analysis.",
         skill_mode=SkillsMode.INCLUSIVE,
@@ -17,7 +18,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
     ),
     "researcher-default": AgentProfile(
         id="researcher-default",
-        name="Researcher Default",
+        name="ResearcherDefault",
         role=AgentRole.RESEARCHER,
         description="Research profile for web-backed information gathering.",
         skill_mode=SkillsMode.INCLUSIVE,
@@ -32,11 +33,11 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
             ToolGroup.MEMORY,
             ToolGroup.ARTIFACT,
         ],
-        default_sandbox_profile="research-net",
+        default_sandbox_profile=DEFAULT_SANDBOX_PROFILE,
     ),
     "coder-default": AgentProfile(
         id="coder-default",
-        name="Coder Default",
+        name="CoderDefault",
         role=AgentRole.CODER,
         description="Default coding profile for implementation subtasks.",
         skill_mode=SkillsMode.INCLUSIVE,
@@ -49,11 +50,11 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
             ToolGroup.ARTIFACT,
             ToolGroup.MEMORY,
         ],
-        default_sandbox_profile="py-basic",
+        default_sandbox_profile=DEFAULT_SANDBOX_PROFILE,
     ),
     "verifier-default": AgentProfile(
         id="verifier-default",
-        name="Verifier Default",
+        name="VerifierDefault",
         role=AgentRole.VERIFIER,
         description="Verification-focused profile for structured acceptance checks.",
         skill_mode=SkillsMode.INCLUSIVE,
@@ -61,11 +62,11 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
         recommended_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
         allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT, ToolGroup.MEMORY],
-        default_sandbox_profile="py-basic",
+        default_sandbox_profile=DEFAULT_SANDBOX_PROFILE,
     ),
     "tester-default": AgentProfile(
         id="tester-default",
-        name="Tester Default",
+        name="TesterDefault",
         role=AgentRole.TESTER,
         description="Verification-focused profile with restricted artifact and sandbox access.",
         skill_mode=SkillsMode.INCLUSIVE,
@@ -73,7 +74,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
         recommended_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
         allowed_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT, ToolGroup.MEMORY],
-        default_sandbox_profile="py-basic",
+        default_sandbox_profile=DEFAULT_SANDBOX_PROFILE,
     ),
     "reviewer-default": AgentProfile(
         id="reviewer-default",

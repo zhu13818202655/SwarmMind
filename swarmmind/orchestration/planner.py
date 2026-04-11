@@ -16,6 +16,7 @@ from swarmmind.agents.agent_skill import normalize_skill_profile_names
 from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.agents.config import AgentConfig, AgentScopeConfig
 from swarmmind.agents.factory import AgentFactory
+from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.events import EventBus
 from swarmmind.memory import LongTermMemoryBase
 from swarmmind.models.event import DomainEvent
@@ -29,8 +30,10 @@ from swarmmind.models.execution import ExecutionConfiguration, SubtaskExecutionC
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
 from swarmmind.prompt_template import (
+    PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT,
     PLANNER_EXECUTION_CONFIGURATION_PROMPT,
     PLANNER_SYSTEM_PROMPT,
+    PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT,
     PLANNER_TASK_DECOMPOSITION_PROMPT,
     PromptTemplate,
     render_prompt,
@@ -96,8 +99,9 @@ class Planner:
         model_base_url: str | None = None,
         model_temperature: float = 0.2,
         model_max_tokens: int = 2048,
-        system_prompt_template: PromptTemplate = PLANNER_SYSTEM_PROMPT,
+        system_prompt_template: PromptTemplate = PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT,
         user_prompt_template: PromptTemplate = PLANNER_TASK_DECOMPOSITION_PROMPT,
+        execution_system_prompt_template: PromptTemplate = PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT,
         execution_prompt_template: PromptTemplate = PLANNER_EXECUTION_CONFIGURATION_PROMPT,
         agent_profile_store: AgentProfileStore | None = None,
         long_term_memory: LongTermMemoryBase | None = None,
@@ -110,6 +114,7 @@ class Planner:
         self._model_max_tokens = model_max_tokens
         self._system_prompt_template = system_prompt_template
         self._user_prompt_template = user_prompt_template
+        self._execution_system_prompt_template = execution_system_prompt_template
         self._execution_prompt_template = execution_prompt_template
         self._agent_profile_store = agent_profile_store
         self._long_term_memory = long_term_memory
@@ -125,31 +130,20 @@ class Planner:
     async def _plan_with_model(self, task: Task, run: Run) -> List[SubTask]:
 
         try:
-            agent_factory = AgentFactory(
-                AgentConfig(
-                    name="planner-agent",
-                    scope_config=AgentScopeConfig(
-                        model_name=self._model_name,
-                        api_key=self._model_api_key,
-                        base_url=self._model_base_url,
-                        temperature=self._model_temperature,
-                        max_tokens=self._model_max_tokens,
-                    ),
-                    max_steps=3,
-                    system_prompt=render_prompt(self._system_prompt_template),
-                )
+            planning_agent = self._create_planner_agent(
+                task=task,
+                run=run,
+                stage="task_planning",
+                system_prompt=render_prompt(self._system_prompt_template),
             )
-            agent = agent_factory.create_main_agent(
-                tools=[],
-                event_publisher=lambda topic, payload: self._publish_planner_event(
-                    topic=topic,
-                    task=task,
-                    run=run,
-                    payload=payload,
-                ),
+            execution_agent = self._create_planner_agent(
+                task=task,
+                run=run,
+                stage="execution_configuration",
+                system_prompt=render_prompt(self._execution_system_prompt_template),
             )
             prompt = await self._compose_planning_prompt(task)
-            result = await agent(Msg(name="user", role="user", content=prompt))
+            result = await planning_agent(Msg(name="user", role="user", content=prompt))
             text = result.get_text_content() or json.dumps(result.to_dict(), ensure_ascii=False)
             payload = self._extract_json_payload(text)
             if payload is None:
@@ -157,13 +151,46 @@ class Planner:
 
             plan_result = _PlanResult.model_validate(payload)
             normalized_plan = self._validate_and_normalize_plan(task, plan_result)
-            execution_configuration = await self._plan_execution_configurations(task, normalized_plan, agent)
+            execution_configuration = await self._plan_execution_configurations(task, normalized_plan, execution_agent)
             enriched_plan = self._merge_execution_configurations(task, normalized_plan, execution_configuration)
             return self._build_subtasks_from_plan(task, run, enriched_plan)
         except Exception:
             return []
 
-    async def _publish_planner_event(self, topic: str, task: Task, run: Run, payload: dict[str, object]) -> None:
+    def _create_planner_agent(self, *, task: Task, run: Run, stage: str, system_prompt: str):
+        agent_factory = AgentFactory(
+            AgentConfig(
+                name=f"planner-agent-{stage}",
+                scope_config=AgentScopeConfig(
+                    model_name=self._model_name,
+                    api_key=self._model_api_key,
+                    base_url=self._model_base_url,
+                    temperature=self._model_temperature,
+                    max_tokens=self._model_max_tokens,
+                ),
+                max_steps=3,
+                system_prompt=system_prompt,
+            )
+        )
+        return agent_factory.create_main_agent(
+            tools=[],
+            event_publisher=lambda topic, payload: self._publish_planner_event(
+                topic=topic,
+                task=task,
+                run=run,
+                stage=stage,
+                payload=payload,
+            ),
+        )
+
+    async def _publish_planner_event(
+        self,
+        topic: str,
+        task: Task,
+        run: Run,
+        stage: str,
+        payload: dict[str, object],
+    ) -> None:
         if self._event_bus is None:
             return
         await self._event_bus.publish(
@@ -174,7 +201,7 @@ class Planner:
                 session_id=run.session_id,
                 task_id=task.id,
                 run_id=run.id,
-                payload={"planner_stage": "task_planning", **payload},
+                payload={"planner_stage": stage, **payload},
             )
         )
 
@@ -527,7 +554,7 @@ class Planner:
         tool_requirements = self._default_tool_groups_for_role(role)
         runtime_kind = RuntimeKind.SANDBOX if ToolGroup.CODE_EXEC in tool_requirements else RuntimeKind.HOST_TOOLS
         skill_profiles: list[str] = []
-        sandbox_profile = str(task.metadata.get("profile", "py-basic")) if runtime_kind == RuntimeKind.SANDBOX else None
+        sandbox_profile = str(task.metadata.get("profile", DEFAULT_SANDBOX_PROFILE)) if runtime_kind == RuntimeKind.SANDBOX else None
         if self._agent_profile_store is not None:
             profile = self._agent_profile_store.resolve_for_subtask(role=role)
             if profile.default_tool_groups:
@@ -577,12 +604,12 @@ class Planner:
         if ToolGroup.BROWSER not in tool_requirements:
             return execution_configuration
         metadata = dict(execution_configuration.metadata)
-        metadata["preferred_browser_runtime"] = "browser-playwright"
+        metadata["preferred_browser_runtime"] = DEFAULT_SANDBOX_PROFILE
         return execution_configuration.model_copy(
             update={
                 "runtime_kind": RuntimeKind.SANDBOX,
                 "tool_requirements": tool_requirements,
-                "sandbox_profile": "browser-playwright",
+                "sandbox_profile": DEFAULT_SANDBOX_PROFILE,
                 "metadata": metadata,
             }
         )
@@ -623,7 +650,7 @@ class Planner:
     @staticmethod
     def _candidate_to_execution_configuration(task: Task, candidate: SubtaskExecutionCandidate) -> ExecutionConfiguration:
         runtime_kind = candidate.runtime_kinds[0] if candidate.runtime_kinds else None
-        sandbox_profile = candidate.sandbox_profile or str(task.metadata.get("profile", "py-basic"))
+        sandbox_profile = candidate.sandbox_profile or str(task.metadata.get("profile", DEFAULT_SANDBOX_PROFILE))
         if runtime_kind != RuntimeKind.SANDBOX:
             sandbox_profile = None
         return ExecutionConfiguration(

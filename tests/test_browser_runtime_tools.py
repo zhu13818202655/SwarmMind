@@ -60,12 +60,12 @@ async def test_select_tool_names_exposes_playwright_for_sandbox_browser_runtime(
                 execution_configuration=ExecutionConfiguration(
                     runtime_kind=RuntimeKind.SANDBOX,
                     tool_requirements=[ToolGroup.BROWSER, ToolGroup.WORKSPACE],
-                    sandbox_profile="browser-playwright",
+                    sandbox_profile="aio",
                 ),
                 required_tool_groups=[ToolGroup.BROWSER, ToolGroup.WORKSPACE],
                 resolved_runtime_kind=RuntimeKind.SANDBOX,
                 allowed_tool_groups=[ToolGroup.BROWSER, ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC],
-                sandbox_profile="browser-playwright",
+                sandbox_profile="aio",
             ).model_dump(mode="json")
         },
     )
@@ -112,7 +112,7 @@ async def test_browser_screenshot_alias_uses_playwright(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_execute_subtask_routes_sandbox_browser_runtime_to_inline_agent(monkeypatch) -> None:
     runner = await _build_runner()
-    task = Task(id="task-browser-inline", goal="Inspect dynamic site", metadata={"profile": "browser-playwright"})
+    task = Task(id="task-browser-inline", goal="Inspect dynamic site", metadata={"profile": "aio"})
     subtask = SubTask(
         id="subtask-browser-inline",
         task_id=task.id,
@@ -125,12 +125,12 @@ async def test_execute_subtask_routes_sandbox_browser_runtime_to_inline_agent(mo
                 execution_configuration=ExecutionConfiguration(
                     runtime_kind=RuntimeKind.SANDBOX,
                     tool_requirements=[ToolGroup.BROWSER, ToolGroup.WORKSPACE],
-                    sandbox_profile="browser-playwright",
+                    sandbox_profile="aio",
                 ),
                 required_tool_groups=[ToolGroup.BROWSER, ToolGroup.WORKSPACE],
                 resolved_runtime_kind=RuntimeKind.SANDBOX,
                 allowed_tool_groups=[ToolGroup.BROWSER, ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC],
-                sandbox_profile="browser-playwright",
+                sandbox_profile="aio",
             ).model_dump(mode="json")
         },
     )
