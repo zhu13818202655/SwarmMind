@@ -103,23 +103,34 @@ class AgentFactory:
         skill_profiles: list[str] | None = None,
         event_publisher: Any = None,
         execution_profile: ExecutionProfile | None = None,
+
+        allow_tools: bool = True,
+        allow_skills: bool = True,
     ) -> OmniAgent:
         """Create an OmniAgent."""
         effective_prompt = sys_prompt or self.config.system_prompt or ""
-        equipped_tool_groups = self._resolve_equipped_tool_groups(execution_profile=execution_profile)
-        active_tool_names = self._resolve_active_tool_names(execution_profile=execution_profile)
-        effective_skill_profiles = self._resolve_effective_skill_profiles(
-            explicit_skill_profiles=skill_profiles,
-            fallback_skill_profiles=self.config.skill_profiles,
-            execution_profile=execution_profile,
+        equipped_tool_groups = self._resolve_equipped_tool_groups(execution_profile=execution_profile) if allow_tools else []
+        active_tool_names = self._resolve_active_tool_names(execution_profile=execution_profile) if allow_tools else []
+        effective_skill_profiles = (
+            self._resolve_effective_skill_profiles(
+                explicit_skill_profiles=skill_profiles,
+                fallback_skill_profiles=self.config.skill_profiles,
+                execution_profile=execution_profile,
+            )
+            if allow_skills
+            else []
         )
-        toolkit, effective_tools = self._assemble_tooling(
-            tools=tools or [],
-            skill_profiles=effective_skill_profiles,
-            tool_groups=equipped_tool_groups,
-            active_tool_names=active_tool_names,
-            runtime_kind=execution_profile.resolved_runtime_kind if execution_profile is not None else None,
-        )
+        if allow_tools:
+            toolkit, effective_tools = self._assemble_tooling(
+                tools=tools or [],
+                skill_profiles=effective_skill_profiles,
+                tool_groups=equipped_tool_groups,
+                active_tool_names=active_tool_names,
+                runtime_kind=execution_profile.resolved_runtime_kind if execution_profile is not None else None,
+                allow_skills=allow_skills,
+            )
+        else:
+            toolkit, effective_tools = Toolkit(), []
         capability_bundle = CapabilityResolver.resolve(
             role=execution_profile.role if execution_profile is not None else self.config.role,
             system_prompt=effective_prompt,
@@ -144,6 +155,8 @@ class AgentFactory:
         tools: list[Any] | None = None,
         event_publisher: Any = None,
         execution_profile: ExecutionProfile | None = None,
+        allow_tools: bool = True,
+        allow_skills: bool = True,
     ) -> OmniAgent:
         """Create main agent."""
         return self.create_agent(
@@ -151,6 +164,8 @@ class AgentFactory:
             sys_prompt=self.config.system_prompt,
             event_publisher=event_publisher,
             execution_profile=execution_profile,
+            allow_tools=allow_tools,
+            allow_skills=allow_skills,
         )
 
     def create_profile_agent(
@@ -160,6 +175,8 @@ class AgentFactory:
         system_prompt: str | None = None,
         event_publisher: Any = None,
         execution_profile: ExecutionProfile | None = None,
+        allow_tools: bool = True,
+        allow_skills: bool = True,
     ) -> OmniAgent:
         """Create an agent constrained by an AgentProfile."""
         config = self.config.model_copy()
@@ -169,20 +186,28 @@ class AgentFactory:
             if part and part not in prompt_parts:
                 prompt_parts.append(part)
         effective_prompt = "\n\n".join(prompt_parts)
-        equipped_tool_groups = self._resolve_equipped_tool_groups(profile=profile, execution_profile=execution_profile)
-        active_tool_names = self._resolve_active_tool_names(profile=profile, execution_profile=execution_profile)
-        effective_skill_profiles = self._resolve_effective_skill_profiles(
-            explicit_skill_profiles=None,
-            fallback_skill_profiles=self._resolve_profile_skill_profiles(profile),
-            execution_profile=execution_profile,
+        equipped_tool_groups = self._resolve_equipped_tool_groups(profile=profile, execution_profile=execution_profile) if allow_tools else []
+        active_tool_names = self._resolve_active_tool_names(profile=profile, execution_profile=execution_profile) if allow_tools else []
+        effective_skill_profiles = (
+            self._resolve_effective_skill_profiles(
+                explicit_skill_profiles=None,
+                fallback_skill_profiles=self._resolve_profile_skill_profiles(profile),
+                execution_profile=execution_profile,
+            )
+            if allow_skills
+            else []
         )
-        toolkit, capability_tools = self._assemble_tooling(
-            tools=tools or [],
-            skill_profiles=effective_skill_profiles,
-            tool_groups=equipped_tool_groups,
-            active_tool_names=active_tool_names,
-            runtime_kind=execution_profile.resolved_runtime_kind if execution_profile is not None else None,
-        )
+        if allow_tools:
+            toolkit, capability_tools = self._assemble_tooling(
+                tools=tools or [],
+                skill_profiles=effective_skill_profiles,
+                tool_groups=equipped_tool_groups,
+                active_tool_names=active_tool_names,
+                runtime_kind=execution_profile.resolved_runtime_kind if execution_profile is not None else None,
+                allow_skills=allow_skills,
+            )
+        else:
+            toolkit, capability_tools = Toolkit(), []
         capability_bundle = CapabilityResolver.resolve(
             role=execution_profile.role if execution_profile is not None else profile.role,
             system_prompt=effective_prompt,
@@ -211,25 +236,35 @@ class AgentFactory:
         system_prompt: str | None = None,
         event_publisher: Any = None,
         execution_profile: ExecutionProfile | None = None,
+        allow_tools: bool = True,
+        allow_skills: bool = True,
     ) -> OmniAgent:
         """Create a sub-agent."""
         config = self.config.model_copy()
         config.name = name
         effective_prompt = system_prompt or config.system_prompt or ""
-        equipped_tool_groups = self._resolve_equipped_tool_groups(execution_profile=execution_profile)
-        active_tool_names = self._resolve_active_tool_names(execution_profile=execution_profile)
-        effective_skill_profiles = self._resolve_effective_skill_profiles(
-            explicit_skill_profiles=None,
-            fallback_skill_profiles=config.skill_profiles,
-            execution_profile=execution_profile,
+        equipped_tool_groups = self._resolve_equipped_tool_groups(execution_profile=execution_profile) if allow_tools else []
+        active_tool_names = self._resolve_active_tool_names(execution_profile=execution_profile) if allow_tools else []
+        effective_skill_profiles = (
+            self._resolve_effective_skill_profiles(
+                explicit_skill_profiles=None,
+                fallback_skill_profiles=config.skill_profiles,
+                execution_profile=execution_profile,
+            )
+            if allow_skills
+            else []
         )
-        toolkit, effective_tools = self._assemble_tooling(
-            tools=tools,
-            skill_profiles=effective_skill_profiles,
-            tool_groups=equipped_tool_groups,
-            active_tool_names=active_tool_names,
-            runtime_kind=execution_profile.resolved_runtime_kind if execution_profile is not None else None,
-        )
+        if allow_tools:
+            toolkit, effective_tools = self._assemble_tooling(
+                tools=tools,
+                skill_profiles=effective_skill_profiles,
+                tool_groups=equipped_tool_groups,
+                active_tool_names=active_tool_names,
+                runtime_kind=execution_profile.resolved_runtime_kind if execution_profile is not None else None,
+                allow_skills=allow_skills,
+            )
+        else:
+            toolkit, effective_tools = Toolkit(), []
         capability_bundle = CapabilityResolver.resolve(
             role=execution_profile.role if execution_profile is not None else config.role,
             system_prompt=effective_prompt,
@@ -279,6 +314,7 @@ class AgentFactory:
         tool_groups: list[ToolGroup],
         active_tool_names: list[str],
         runtime_kind: Any | None,
+        allow_skills: bool,
     ) -> tuple[Toolkit, list[Any]]:
         registry = self._build_tool_registry(tools, fallback_groups=tool_groups)
         strict_tool_names = bool(active_tool_names)
@@ -295,17 +331,21 @@ class AgentFactory:
             strict_tool_names=strict_tool_names,
         )
         seen_names = {getattr(tool, "__name__", repr(tool)) for tool in effective_tools}
-        skill_entries = resolve_agent_skill_entries(skill_profiles, seen_names)
-        for entry in skill_entries:
-            toolkit.register_agent_skill(str(entry.root_dir))
-        toolkit._swarmmind_skill_catalog = build_agent_skill_catalog(  # type: ignore[attr-defined]
-            skill_profiles,
-            seen_names,
-        )
-        toolkit._swarmmind_skill_details = build_agent_skill_details(  # type: ignore[attr-defined]
-            skill_profiles,
-            seen_names,
-        )
+        if allow_skills:
+            skill_entries = resolve_agent_skill_entries(skill_profiles, seen_names)
+            for entry in skill_entries:
+                toolkit.register_agent_skill(str(entry.root_dir))
+            toolkit._swarmmind_skill_catalog = build_agent_skill_catalog(  # type: ignore[attr-defined]
+                skill_profiles,
+                seen_names,
+            )
+            toolkit._swarmmind_skill_details = build_agent_skill_details(  # type: ignore[attr-defined]
+                skill_profiles,
+                seen_names,
+            )
+        else:
+            toolkit._swarmmind_skill_catalog = []  # type: ignore[attr-defined]
+            toolkit._swarmmind_skill_details = []  # type: ignore[attr-defined]
         return toolkit, effective_tools
 
     @staticmethod

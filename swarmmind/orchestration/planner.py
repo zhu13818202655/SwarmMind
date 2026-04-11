@@ -167,7 +167,8 @@ class Planner:
             )
         )
         return agent_factory.create_main_agent(
-            tools=[],
+            allow_tools=False,
+            allow_skills=False,
             event_publisher=lambda topic, payload: self._publish_planner_event(
                 topic=topic,
                 task=task,

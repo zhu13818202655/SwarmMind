@@ -94,6 +94,23 @@ def test_factory_creates_omni_agent_with_capability_bundle() -> None:
     assert agent.capability_bundle.default_tool_runtime["run_skill_script"] == RuntimeKind.SANDBOX
 
 
+def test_factory_can_create_lightweight_agent_without_tools_or_skills() -> None:
+    factory = _build_factory()
+
+    agent = factory.create_main_agent(
+        tools=[project_read, project_write, run_skill_script],
+        allow_tools=False,
+        allow_skills=False,
+    )
+
+    assert isinstance(agent, OmniAgent)
+    assert agent.toolkit.get_json_schemas() == []
+    assert agent.capability_bundle.allowed_tool_names == []
+    assert agent.capability_bundle.resolved_tool_functions == []
+    assert agent.capability_bundle.resolved_skills == []
+    assert agent.sys_prompt == "You are the coding agent."
+
+
 def test_factory_create_toolkit_activates_only_requested_groups() -> None:
     factory = _build_factory()
 

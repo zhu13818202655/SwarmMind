@@ -44,7 +44,11 @@ def resolve_agent_skill_entries(
     available_tool_names: set[str] | None = None,
 ) -> list[SkillEntry]:
     """Resolve configured skill names into usable local skill entries."""
-    registry = load_skill_registry(get_agent_skill_root(), normalize_skill_profile_names(skill_names))
+    normalized_names = normalize_skill_profile_names(skill_names)
+    if not normalized_names:
+        return []
+
+    registry = load_skill_registry(get_agent_skill_root(), normalized_names)
     entries = registry.list_entries(include_invalid=False)
     return [entry for entry in entries if _is_skill_entry_usable(entry, available_tool_names or set())]
 
