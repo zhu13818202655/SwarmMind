@@ -13,6 +13,7 @@ from swarmmind.models.task import SubTask, Task
 from swarmmind.orchestration.planner import (
     Planner,
     _ExecutionCandidateSubtaskSpec,
+    _NormalizedPlanSubtaskSpec,
     _PlanResult,
     _PlanSubtaskSpec,
 )
@@ -199,6 +200,90 @@ def test_merge_execution_configurations_prefers_llm_execution_output() -> None:
     assert planner_candidate["runtime_kinds"] == [RuntimeKind.HOST_TOOLS.value, RuntimeKind.LLM_ONLY.value]
 
 
+def test_merge_execution_configurations_filters_disallowed_tool_groups() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-6c", goal="整理研究摘要", metadata={"profile": "py-basic"})
+    plan_result = _PlanResult(
+        subtasks=[
+            _PlanSubtaskSpec(
+                name="research-gold-market",
+                description="Collect gold market data from public sources.",
+                role="researcher",
+                acceptance_criteria=["Research summary is complete."],
+                expected_artifacts=["research_summary"],
+            )
+        ]
+    )
+
+    normalized = planner._validate_and_normalize_plan(task, plan_result)
+    merged = planner._merge_execution_configurations(
+        task,
+        normalized,
+        [
+            _ExecutionCandidateSubtaskSpec(
+                name="research-gold-market",
+                runtime_kinds=["host_tools", "llm_only"],
+                tool_groups=["web_search", "browser", "workspace", "communication"],
+                skill_profiles=["deep-research"],
+            )
+        ],
+    )
+
+    assert len(merged) == 1
+    execution_configuration = merged[0].execution_configuration
+    assert execution_configuration is not None
+    assert execution_configuration.tool_requirements == [ToolGroup.WEB_SEARCH, ToolGroup.BROWSER, ToolGroup.WORKSPACE]
+    assert merged[0].metadata["planner_execution_candidate_filtered_out_tool_groups"] == ["communication"]
+    assert merged[0].metadata["planner_execution_candidate"]["tool_groups"] == [
+        ToolGroup.WEB_SEARCH.value,
+        ToolGroup.BROWSER.value,
+        ToolGroup.WORKSPACE.value,
+    ]
+
+
+def test_merge_execution_configurations_discards_candidate_when_all_tool_groups_filtered() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-6d", goal="写一份摘要", metadata={"profile": "py-basic"})
+    plan_result = _PlanResult(
+        subtasks=[
+            _PlanSubtaskSpec(
+                name="draft-release-summary",
+                description="Draft the summary.",
+                role="writer",
+                acceptance_criteria=["Summary is complete."],
+                expected_artifacts=["report"],
+            )
+        ]
+    )
+
+    normalized = planner._validate_and_normalize_plan(task, plan_result)
+    merged = planner._merge_execution_configurations(
+        task,
+        normalized,
+        [
+            _ExecutionCandidateSubtaskSpec(
+                name="draft-release-summary",
+                runtime_kinds=["host_tools"],
+                tool_groups=["communication"],
+                skill_profiles=[],
+            )
+        ],
+    )
+
+    assert len(merged) == 1
+    execution_configuration = merged[0].execution_configuration
+    assert execution_configuration is not None
+    assert execution_configuration.tool_requirements == [
+        ToolGroup.WORKSPACE,
+        ToolGroup.FILE_SYSTEM,
+        ToolGroup.ARTIFACT,
+        ToolGroup.WEB_SEARCH,
+        ToolGroup.BROWSER,
+    ]
+    assert merged[0].metadata["planner_execution_candidate_discarded"] is True
+    assert merged[0].metadata["planner_execution_candidate_discard_reason"] == "no_allowed_tool_groups_after_filtering"
+
+
 def test_merge_execution_configurations_promotes_dynamic_browser_tasks_to_playwright() -> None:
     planner = Planner(agent_profile_store=AgentProfileStore())
     task = Task(id="task-6b", goal="检查动态网页登录流程", metadata={"profile": "aio"})
@@ -241,6 +326,33 @@ def test_available_skill_profiles_are_scoped_to_subtask_role() -> None:
     assert planner._available_skill_profiles(AgentRole.RESEARCHER) == ["deep-research"]
     assert planner._available_skill_profiles(AgentRole.WRITER) == ["pptx", "pdf", "docx"]
     assert planner._available_skill_profiles(AgentRole.CODER) == []
+
+
+def test_available_tool_groups_are_scoped_to_role_policy() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+
+    assert planner._available_tool_groups(AgentRole.RESEARCHER) == ["web_search", "browser", "workspace", "artifact", "code_exec"]
+    assert planner._available_tool_groups(AgentRole.WRITER) == ["file_system", "web_search", "browser", "workspace", "code_exec", "memory", "artifact"]
+    assert planner._available_tool_groups(AgentRole.CODER) == ["workspace", "code_exec", "artifact"]
+
+
+@pytest.mark.asyncio
+async def test_execution_configuration_prompt_uses_role_scoped_tool_groups() -> None:
+    planner = Planner(agent_profile_store=AgentProfileStore())
+    task = Task(id="task-7a", goal="做一份黄金投资建议 PPT", metadata={"profile": "aio"})
+    subtask = _NormalizedPlanSubtaskSpec(
+        name="research-gold-price-trends",
+        description="收集金价走势并整理研究摘要。",
+        role=AgentRole.RESEARCHER,
+        acceptance_criteria=["输出研究摘要"],
+        expected_artifacts=["research_summary"],
+        dependencies=[],
+    )
+
+    prompt = await planner._compose_execution_configuration_prompt(task, subtask)
+
+    assert '- 可用 tool groups：["web_search", "browser", "workspace", "artifact", "code_exec"]' in prompt
+    assert '"communication"' not in prompt.split('- 可用 tool groups：', 1)[1].split('\n', 1)[0]
 
 
 @pytest.mark.asyncio

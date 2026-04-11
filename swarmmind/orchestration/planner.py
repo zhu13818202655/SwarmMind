@@ -256,7 +256,7 @@ class Planner:
                 "task_goal": task.goal,
                 "constraints_json": json.dumps(task.constraints, ensure_ascii=False),
                 "subtask_json": subtask_json,
-                "available_tool_groups_json": json.dumps(self._available_tool_groups(), ensure_ascii=False),
+                "available_tool_groups_json": json.dumps(self._available_tool_groups(subtask.role), ensure_ascii=False),
                 "available_runtime_kinds_json": json.dumps(self._available_runtime_kinds(), ensure_ascii=False),
                 "available_skill_profiles_json": json.dumps(self._available_skill_profiles(subtask.role), ensure_ascii=False)
             },
@@ -346,15 +346,29 @@ class Planner:
         plan_specs: list[_NormalizedPlanSubtaskSpec],
         execution_specs: list["_ExecutionCandidateSubtaskSpec"],
     ) -> list[_NormalizedPlanSubtaskSpec]:
-        normalized_by_name: dict[str, tuple[ExecutionConfiguration, dict[str, Any]]] = {}
+        plan_specs_by_name = {self._normalize_name(spec.name): spec for spec in plan_specs}
+        normalized_by_name: dict[str, tuple[ExecutionConfiguration | None, dict[str, Any]]] = {}
         for execution_spec in execution_specs:
             normalized_name = self._normalize_name(execution_spec.name)
             if not normalized_name:
                 continue
+            plan_spec = plan_specs_by_name.get(normalized_name)
+            if plan_spec is None:
+                continue
             candidate = self._normalize_execution_candidate(execution_spec)
+            candidate, candidate_metadata = self._filter_execution_candidate_for_role(plan_spec.role, candidate)
+            if candidate is None:
+                normalized_by_name[normalized_name] = (
+                    None,
+                    candidate_metadata,
+                )
+                continue
             normalized_by_name[normalized_name] = (
                 self._candidate_to_execution_configuration(task, candidate),
-                {"planner_execution_candidate": candidate.model_dump(mode="json")},
+                {
+                    "planner_execution_candidate": candidate.model_dump(mode="json"),
+                    **candidate_metadata,
+                },
             )
 
         merged: list[_NormalizedPlanSubtaskSpec] = []
@@ -387,6 +401,33 @@ class Planner:
                 )
             )
         return merged
+
+    def _filter_execution_candidate_for_role(
+        self,
+        role: AgentRole,
+        candidate: SubtaskExecutionCandidate,
+    ) -> tuple[SubtaskExecutionCandidate | None, dict[str, Any]]:
+        allowed_groups = self._allowed_tool_groups_for_role(role)
+        if not allowed_groups:
+            return candidate, {}
+
+        allowed_group_set = set(allowed_groups)
+        filtered_tool_groups = [group for group in candidate.tool_groups if group in allowed_group_set]
+        dropped_tool_groups = [group for group in candidate.tool_groups if group not in allowed_group_set]
+        if not dropped_tool_groups:
+            return candidate, {}
+
+        metadata: dict[str, Any] = {
+            "planner_execution_candidate_raw": candidate.model_dump(mode="json"),
+            "planner_execution_candidate_filtered_out_tool_groups": [group.value for group in dropped_tool_groups],
+        }
+        if not filtered_tool_groups:
+            metadata["planner_execution_candidate_discarded"] = True
+            metadata["planner_execution_candidate_discard_reason"] = "no_allowed_tool_groups_after_filtering"
+            return None, metadata
+
+        filtered_candidate = candidate.model_copy(update={"tool_groups": filtered_tool_groups})
+        return filtered_candidate, metadata
 
     def _build_subtasks_from_plan(
         self,
@@ -627,9 +668,20 @@ class Planner:
             }
         )
 
-    @staticmethod
-    def _available_tool_groups() -> list[str]:
-        return [tool_group.value for tool_group in ToolGroup]
+    def _available_tool_groups(self, role: AgentRole) -> list[str]:
+        return [tool_group.value for tool_group in self._allowed_tool_groups_for_role(role)]
+
+    def _allowed_tool_groups_for_role(self, role: AgentRole) -> list[ToolGroup]:
+        if self._agent_profile_store is not None:
+            try:
+                profile = self._agent_profile_store.resolve_for_subtask(role=role)
+            except ValueError:
+                profile = None
+            if profile is not None:
+                scoped_groups = profile.allowed_tool_groups or profile.default_tool_groups
+                if scoped_groups:
+                    return list(scoped_groups)
+        return self._default_tool_groups_for_role(role)
 
     @staticmethod
     def _available_runtime_kinds() -> list[str]:

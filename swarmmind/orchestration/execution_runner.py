@@ -303,7 +303,7 @@ class ExecutionRunner:
             self._tool_registry.register(
                 self._tool_sandbox_exec,
                 name="sandbox_exec",
-                description="Execute a command inside an acquired sandbox lease.",
+                description="在已获取的沙箱租约中执行命令。",
                 groups=["code_exec"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.SANDBOX,
@@ -317,7 +317,7 @@ class ExecutionRunner:
             self._tool_registry.register(
                 self._tool_browser_playwright,
                 name="browser_playwright",
-                description="Use Playwright inside a sandbox to inspect or screenshot a web page.",
+                description="在沙箱中使用 Playwright 检查网页或生成截图。",
                 groups=["browser"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.SANDBOX,
@@ -331,7 +331,7 @@ class ExecutionRunner:
             self._tool_registry.register(
                 self._tool_browser_screenshot,
                 name="browser_screenshot",
-                description="Capture a web page screenshot with Playwright inside a sandbox.",
+                description="在沙箱中使用 Playwright 捕获网页截图。",
                 groups=["browser"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.SANDBOX,
@@ -345,7 +345,7 @@ class ExecutionRunner:
             self._tool_registry.register(
                 self._tool_artifact_read,
                 name="artifact_read",
-                description="Read artifacts associated with dependency subtasks.",
+                description="读取依赖子任务关联的产物。",
                 groups=["artifact"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
@@ -357,7 +357,7 @@ class ExecutionRunner:
             self._tool_registry.register(
                 self._tool_memory_lookup,
                 name="memory_lookup",
-                description="Retrieve related long-term memory items.",
+                description="检索相关的长期记忆条目。",
                 groups=["memory"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
@@ -369,7 +369,7 @@ class ExecutionRunner:
             self._tool_registry.register(
                 self._tool_memory_write,
                 name="memory_write",
-                description="Store a concise long-term memory summary.",
+                description="保存简明的长期记忆摘要。",
                 groups=["memory"],
                 contract=ToolExecutionContract(
                     default_runtime=RuntimeKind.HOST_TOOLS,
@@ -1491,7 +1491,7 @@ class ExecutionRunner:
         if "read_file" in selected_tools:
             async def read_file(path: str, encoding: str = "utf-8") -> str:
                 return await self._run_tool("read_file", task=task, run=run, subtask=subtask, path=path, encoding=encoding)
-            register("read_file", "Read a workspace file.", read_file)
+            register("read_file", "读取工作区文件。", read_file)
 
         if "write_file" in selected_tools:
             async def write_file(path: str, content: str, encoding: str = "utf-8") -> str:
@@ -1504,22 +1504,22 @@ class ExecutionRunner:
                     content=content,
                     encoding=encoding,
                 )
-            register("write_file", "Write a workspace file.", write_file)
+            register("write_file", "写入工作区文件。", write_file)
 
         if "list_files" in selected_tools:
             async def list_files(path: str = ".") -> str:
                 return await self._run_tool("list_files", task=task, run=run, subtask=subtask, path=path)
-            register("list_files", "List workspace files.", list_files)
+            register("list_files", "列出工作区文件。", list_files)
 
         if "file_exists" in selected_tools:
             async def file_exists(path: str) -> str:
                 return await self._run_tool("file_exists", task=task, run=run, subtask=subtask, path=path)
-            register("file_exists", "Check whether a workspace path exists.", file_exists)
+            register("file_exists", "检查工作区路径是否存在。", file_exists)
 
         if "delete_file" in selected_tools:
             async def delete_file(path: str) -> str:
                 return await self._run_tool("delete_file", task=task, run=run, subtask=subtask, path=path)
-            register("delete_file", "Delete a workspace file or directory.", delete_file)
+            register("delete_file", "删除工作区文件或目录。", delete_file)
 
         if "rename_file" in selected_tools:
             async def rename_file(source_path: str, destination_path: str) -> str:
@@ -1531,12 +1531,12 @@ class ExecutionRunner:
                     source_path=source_path,
                     destination_path=destination_path,
                 )
-            register("rename_file", "Rename or move a workspace file or directory.", rename_file)
+            register("rename_file", "重命名或移动工作区文件或目录。", rename_file)
 
         if "make_directory" in selected_tools:
             async def make_directory(path: str) -> str:
                 return await self._run_tool("make_directory", task=task, run=run, subtask=subtask, path=path)
-            register("make_directory", "Create a workspace directory recursively.", make_directory)
+            register("make_directory", "递归创建工作区目录。", make_directory)
 
         if "glob_search" in selected_tools:
             async def glob_search(pattern: str, base_path: str = ".", max_results: int = 200) -> list[str]:
@@ -1549,7 +1549,7 @@ class ExecutionRunner:
                     base_path=base_path,
                     max_results=max_results,
                 )
-            register("glob_search", "Find workspace files by glob pattern.", glob_search)
+            register("glob_search", "按 glob 模式查找工作区文件。", glob_search)
 
         if "grep_search" in selected_tools:
             async def grep_search(
@@ -1570,7 +1570,7 @@ class ExecutionRunner:
                     is_regex=is_regex,
                     max_results=max_results,
                 )
-            register("grep_search", "Search text content inside workspace files.", grep_search)
+            register("grep_search", "在工作区文件内容中搜索文本。", grep_search)
 
         if "web_search" in selected_tools:
             async def web_search(
@@ -1599,7 +1599,7 @@ class ExecutionRunner:
                 )
             register(
                 "web_search",
-                "Search public web result pages. Use this to find candidate URLs and snippets, not to read full page details. Use start_date and end_date with YYYY-MM-DD when the user asks for a specific time window. Use topic for general, news, or finance. Use include_domains to restrict trusted sites and exclude_domains to avoid unwanted sources.",
+                "搜索公开网页结果页。这个工具用于查找候选 URL 和摘要片段，不用于读取页面全文详情。当用户要求特定时间范围时，使用 YYYY-MM-DD 格式传入 start_date 和 end_date。topic 可选 general、news 或 finance。include_domains 用于限制可信站点，exclude_domains 用于排除不需要的来源。",
                 web_search,
             )
 
@@ -1615,7 +1615,7 @@ class ExecutionRunner:
                 )
             register(
                 "browser_get",
-                "Fetch one known page URL and extract detail content. Use this after search when you already know which page to inspect.",
+                "获取一个已知页面 URL 并提取详情内容。当你已经通过搜索确定要查看哪个页面时使用。",
                 browser_get,
             )
 
@@ -1642,7 +1642,7 @@ class ExecutionRunner:
                 )
             register(
                 "browser_screenshot",
-                "Capture a web page screenshot with Playwright inside a sandbox.",
+                "在沙箱中使用 Playwright 捕获网页截图。",
                 browser_screenshot,
             )
 
@@ -1671,7 +1671,7 @@ class ExecutionRunner:
                 )
             register(
                 "browser_playwright",
-                "Use Playwright inside a sandbox for dynamic browser inspection or screenshots. This tool is sandbox-only.",
+                "在沙箱中使用 Playwright 进行动态网页检查或截图。这个工具只能在沙箱中运行。",
                 browser_playwright,
             )
 
@@ -1700,12 +1700,12 @@ class ExecutionRunner:
                     username=username,
                     password=password,
                 )
-            register("send_mail", "Send an email through configured SMTP.", send_mail)
+            register("send_mail", "通过已配置的 SMTP 发送邮件。", send_mail)
 
         if "memory_lookup" in selected_tools:
             async def memory_lookup(query: str, top_k: int = 3) -> list[dict[str, Any]]:
                 return await self._run_tool("memory_lookup", task=task, run=run, subtask=subtask, query=query, top_k=top_k)
-            register("memory_lookup", "Retrieve related long-term memory items.", memory_lookup)
+            register("memory_lookup", "检索相关的长期记忆条目。", memory_lookup)
 
         if "memory_write" in selected_tools:
             async def memory_write(content: str, metadata: dict[str, Any] | None = None) -> str | None:
@@ -1717,7 +1717,7 @@ class ExecutionRunner:
                     content=content,
                     metadata=metadata,
                 )
-            register("memory_write", "Store a concise long-term memory summary.", memory_write)
+            register("memory_write", "保存简明的长期记忆摘要。", memory_write)
 
         if "artifact_read" in selected_tools:
             dependency_ids = list(subtask.dependencies)
@@ -1732,17 +1732,17 @@ class ExecutionRunner:
                     dependency_ids=dependency_ids,
                 )
                 return self._summarize_artifacts(artifacts)
-            register("artifact_read", "Read artifacts associated with dependency subtasks.", artifact_read)
+            register("artifact_read", "读取依赖子任务关联的产物。", artifact_read)
 
         if "list_skill_scripts" in selected_tools:
             async def list_skill_scripts(skill_name: str) -> list[str]:
                 return await self._run_tool("list_skill_scripts", task=task, run=run, subtask=subtask, skill_name=skill_name)
-            register("list_skill_scripts", "List declared scripts for a skill package.", list_skill_scripts)
+            register("list_skill_scripts", "列出某个技能包声明的脚本。", list_skill_scripts)
 
         if "get_skill_details" in selected_tools:
             async def get_skill_details(skill_name: str) -> dict[str, object]:
                 return await self._run_tool("get_skill_details", task=task, run=run, subtask=subtask, skill_name=skill_name)
-            register("get_skill_details", "Inspect expanded metadata and resources for a skill package.", get_skill_details)
+            register("get_skill_details", "查看某个技能包展开后的元数据和资源信息。", get_skill_details)
 
         if "run_skill_script" in selected_tools:
             async def run_skill_script(
@@ -1772,7 +1772,7 @@ class ExecutionRunner:
                     run_id=run.id,
                     subtask_id=subtask.id,
                 )
-            register("run_skill_script", "Execute a declared skill script inside a sandbox with audit context.", run_skill_script)
+            register("run_skill_script", "在带审计上下文的沙箱中执行已声明的技能脚本。", run_skill_script)
 
         return tools
 

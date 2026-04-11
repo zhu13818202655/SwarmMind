@@ -29,6 +29,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
             ToolGroup.WEB_SEARCH,
             ToolGroup.BROWSER,
             ToolGroup.WORKSPACE,
+            ToolGroup.ARTIFACT,
             ToolGroup.CODE_EXEC,
         ],
         default_sandbox_profile=DEFAULT_SANDBOX_PROFILE,
@@ -40,7 +41,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         description="Default coding profile for implementation subtasks.",
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=[],
-        default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC, ToolGroup.MEMORY],
+        default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC],
         recommended_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
         allowed_tool_groups=[
             ToolGroup.WORKSPACE,
@@ -91,9 +92,10 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         description="Writing profile for structured reports and summaries.",
         skill_mode=SkillsMode.INCLUSIVE,
         skill_profiles=["pptx", "pdf", "docx"],
-        default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.ARTIFACT, ToolGroup.WEB_SEARCH, ToolGroup.BROWSER],
+        default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.FILE_SYSTEM, ToolGroup.ARTIFACT, ToolGroup.WEB_SEARCH, ToolGroup.BROWSER],
         recommended_runtime_kinds=[RuntimeKind.HOST_TOOLS, RuntimeKind.SANDBOX],
         allowed_tool_groups=[
+            ToolGroup.FILE_SYSTEM,
             ToolGroup.WEB_SEARCH,
             ToolGroup.BROWSER,
             ToolGroup.WORKSPACE,

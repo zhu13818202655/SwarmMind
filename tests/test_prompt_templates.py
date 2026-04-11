@@ -45,11 +45,14 @@ def test_planner_prompts_include_aio_only_sandbox_policy() -> None:
     assert PLANNER_SYSTEM_PROMPT is PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT
     assert "只负责补全 `tool_groups`、`runtime_kinds`、`skill_profiles`" in PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT.template
     assert "只通过 `runtime_kinds` 是否包含 `sandbox` 表达" in PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT.template
+    assert "只能根据当前输入中提供的候选 `tool_groups`、`runtime_kinds`、`skill_profiles` 做选择" in PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT.template
     assert '"tool_groups": ["file_system|workspace|web_search|browser|code_exec|memory|artifact|communication"]' in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
     assert '"runtime_kinds": ["llm_only|host_tools|sandbox"]' in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
     assert f'"skill_profiles": ["{installed_skill_names}"]' in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
     assert "如果输入中的 `available_skill_profiles` 为空，必须输出 `[]`" in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
     assert "`llm_only`：只依赖模型推理，不调用外部工具。" in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
+    assert "只有在需要读取依赖产物、附件或已有输出时才包含 `artifact`" in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
+    assert "`file_system` 用于基础文件读写、重命名和建目录" in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
 
 
 def test_execution_prompts_include_capability_boundaries() -> None:

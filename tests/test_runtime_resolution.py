@@ -38,6 +38,57 @@ async def test_coordinator_uses_execution_configuration_for_writer_host_tools() 
 
 
 @pytest.mark.asyncio
+async def test_coordinator_writer_profile_allows_file_system_for_ppt_generation() -> None:
+    coordinator = Coordinator(AgentProfileStore())
+    task = Task(id="task-1b", goal="基于研究结果生成 PPT 文件", metadata={"profile": "py-basic"})
+    run = Run(id="run-1b", task_id=task.id, session_id="session-1b")
+    subtask = SubTask(
+        id="subtask-1b",
+        task_id=task.id,
+        name="draft-gold-investment-ppt",
+        description="Generate a PPTX presentation file from the research summary.",
+        role=AgentRole.WRITER,
+        execution_configuration=ExecutionConfiguration(
+            runtime_kind=RuntimeKind.HOST_TOOLS,
+            tool_requirements=[ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+            skill_profiles=["pptx"],
+        ),
+    )
+
+    [assigned_subtask] = await coordinator.assign(task, run, [subtask])
+    profile = ExecutionProfile.model_validate(assigned_subtask.metadata["execution_profile"])
+
+    assert ToolGroup.FILE_SYSTEM in profile.allowed_tool_groups
+    assert ToolGroup.FILE_SYSTEM in profile.required_tool_groups
+    assert profile.agent_profile_id == "writer-default"
+
+
+@pytest.mark.asyncio
+async def test_coordinator_allows_writer_file_system_tools() -> None:
+    coordinator = Coordinator(AgentProfileStore())
+    task = Task(id="task-1b", goal="整理研究并生成 PPT 文件", metadata={"profile": "py-basic"})
+    run = Run(id="run-1b", task_id=task.id, session_id="session-1b")
+    subtask = SubTask(
+        id="subtask-1b",
+        task_id=task.id,
+        name="generate-pptx-file",
+        description="Generate and save the final presentation deck as a PPTX file.",
+        role=AgentRole.WRITER,
+        execution_configuration=ExecutionConfiguration(
+            runtime_kind=RuntimeKind.HOST_TOOLS,
+            tool_requirements=[ToolGroup.FILE_SYSTEM, ToolGroup.ARTIFACT, ToolGroup.CODE_EXEC],
+            skill_profiles=["pptx"],
+        ),
+    )
+
+    [assigned_subtask] = await coordinator.assign(task, run, [subtask])
+    profile = ExecutionProfile.model_validate(assigned_subtask.metadata["execution_profile"])
+
+    assert ToolGroup.FILE_SYSTEM in profile.allowed_tool_groups
+    assert ToolGroup.FILE_SYSTEM in profile.required_tool_groups
+
+
+@pytest.mark.asyncio
 async def test_coordinator_prefers_host_tools_for_research_without_legacy_browser_runtime() -> None:
     coordinator = Coordinator(AgentProfileStore())
     task = Task(id="task-2", goal="调研最近一个月金价走势", metadata={"profile": "aio"})
@@ -60,6 +111,31 @@ async def test_coordinator_prefers_host_tools_for_research_without_legacy_browse
     assert profile.runtime_fallback_chain == [RuntimeKind.SANDBOX, RuntimeKind.LLM_ONLY]
     assert profile.runtime_resolution_reason is not None
     assert "host_tools" in profile.runtime_resolution_reason
+
+
+@pytest.mark.asyncio
+async def test_coordinator_researcher_profile_allows_artifact_reads() -> None:
+    coordinator = Coordinator(AgentProfileStore())
+    task = Task(id="task-2c", goal="调研金价并读取附件资料", metadata={"profile": "aio"})
+    run = Run(id="run-2c", task_id=task.id, session_id="session-2c")
+    subtask = SubTask(
+        id="subtask-2c",
+        task_id=task.id,
+        name="research-gold-price-trends",
+        description="Read uploaded research notes and browse public sources for gold price trends.",
+        role=AgentRole.RESEARCHER,
+        execution_configuration=ExecutionConfiguration(
+            tool_requirements=[ToolGroup.WEB_SEARCH, ToolGroup.BROWSER, ToolGroup.WORKSPACE, ToolGroup.ARTIFACT],
+            skill_profiles=["deep-research"],
+        ),
+    )
+
+    [assigned_subtask] = await coordinator.assign(task, run, [subtask])
+    profile = ExecutionProfile.model_validate(assigned_subtask.metadata["execution_profile"])
+
+    assert ToolGroup.ARTIFACT in profile.allowed_tool_groups
+    assert ToolGroup.ARTIFACT in profile.required_tool_groups
+    assert profile.agent_profile_id == "researcher-default"
 
 
 @pytest.mark.asyncio

@@ -95,7 +95,7 @@ PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON = """
 合法 JSON 示例 1（代码实现子任务）：
 {
   "name": "implement-core-module",
-  "tool_groups": ["workspace", "code_exec", "artifact"],
+  "tool_groups": ["workspace", "code_exec"],
   "runtime_kinds": ["sandbox", "host_tools"],
   "skill_profiles": []
 }
@@ -103,7 +103,7 @@ PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON = """
 合法 JSON 示例 2（调研子任务）：
 {
   "name": "research-gold-market",
-  "tool_groups": ["web_search", "browser", "workspace", "artifact"],
+  "tool_groups": ["web_search", "browser", "workspace"],
   "runtime_kinds": ["host_tools", "llm_only"],
   "skill_profiles": ["deep-research"]
 }"""
@@ -127,7 +127,7 @@ PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT = PromptTemplate(
 - 当前阶段只负责补全 `tool_groups`、`runtime_kinds`、`skill_profiles`。
 - 是否需要隔离执行环境，只通过 `runtime_kinds` 是否包含 `sandbox` 表达。
 - 不要输出 schema 之外的字段，不要补充 agent profile、sandbox profile 或其它执行器内部字段。
-- 能力边界由 tool groups 和 runtime 决定，不由 profile 名称决定。""",
+- 只能根据当前输入中提供的候选 `tool_groups`、`runtime_kinds`、`skill_profiles` 做选择，不要假设角色拥有额外能力。""",
 )
 
 
@@ -250,12 +250,14 @@ PLANNER_EXECUTION_CONFIGURATION_PROMPT = PromptTemplate(
 
 规则：
 1. `name` 必须与输入子任务名称完全一致。
-2. `tool_groups` 只能从给定 `available_tool_groups` 中选择。
+2. `tool_groups` 只能从给定 `available_tool_groups` 中选择；该列表已经是当前角色和策略允许的范围，不要补充列表外能力。
 3. `runtime_kinds` 只能从给定 `available_runtime_kinds` 中选择，且按优先级排序。
 4. 当 `runtime_kinds` 包含 `sandbox` 时，只表示该子任务需要隔离执行环境。
 5. `skill_profiles` 只能从给定 `available_skill_profiles` 中选择；若不需要技能可输出空数组。
 6. 这是 candidate 选择，不是最终执行决策；只输出 schema 中定义的字段。
 7. 不要把 tool group 混用成能力幻想：需要动态页面交互时必须包含 `browser`；需要执行命令、测试、构建、转换或部署动作时必须包含 `code_exec`；需要修改仓库文件时必须包含 `workspace`。
+8. 只有在需要读取依赖产物、附件或已有输出时才包含 `artifact`；系统自动持久化当前子任务结果这件事本身，不构成选择 `artifact` 的理由。
+9. `file_system` 用于基础文件读写、重命名和建目录；`workspace` 用于项目级搜索、定位和修改。不要因为需要生成单个导出文件就默认加 `workspace`，也不要因为需要搜索项目文件就只加 `file_system`。
 
 合法 JSON 示例：
 {PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON}
