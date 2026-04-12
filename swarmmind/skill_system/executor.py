@@ -46,6 +46,7 @@ class SkillScriptExecutor:
                 script_path,
                 policy.environment,
                 policy.artifact_paths,
+                policy.script_args,
             )
             exec_result = await self._sandbox_manager.run_command(
                 handle.sandbox_id,
@@ -109,6 +110,7 @@ class SkillScriptExecutor:
         script_path: str,
         environment: dict[str, str],
         artifact_paths: list[str],
+        script_args: list[str],
     ) -> str:
         normalized_script = script_path.strip().lstrip("/")
         env_prefix = "; ".join(
@@ -116,7 +118,7 @@ class SkillScriptExecutor:
             for key, value in sorted(environment.items())
         )
 
-        command = self._build_script_invocation(normalized_script)
+        command = self._build_script_invocation(normalized_script, script_args)
         artifact_dir_preamble = self._build_artifact_dir_preamble(artifact_paths)
         if artifact_dir_preamble:
             command = f"{artifact_dir_preamble} && {command}"
@@ -137,14 +139,16 @@ class SkillScriptExecutor:
         quoted_dirs = " ".join(shlex.quote(directory) for directory in directories)
         return f"mkdir -p {quoted_dirs}"
 
-    def _build_script_invocation(self, normalized_script: str) -> str:
+    def _build_script_invocation(self, normalized_script: str, script_args: list[str]) -> str:
         quoted_script = shlex.quote(normalized_script)
-        suffix = Path(normalized_script).suffix.lower()
-        if suffix == ".py":
-            return f"python3 {quoted_script}"
-        if suffix == ".sh":
-            return f"sh {quoted_script}"
-        return f"./{quoted_script}"
+        quoted_args = " ".join(shlex.quote(arg) for arg in script_args)
+        arg_suffix = f" {quoted_args}" if quoted_args else ""
+        extension = Path(normalized_script).suffix.lower()
+        if extension == ".py":
+            return f"python3 {quoted_script}{arg_suffix}"
+        if extension == ".sh":
+            return f"sh {quoted_script}{arg_suffix}"
+        return f"./{quoted_script}{arg_suffix}"
 
     async def _collect_artifacts(
         self,

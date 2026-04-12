@@ -62,6 +62,10 @@ def test_execution_prompts_include_capability_boundaries() -> None:
     assert "系统会自动绑定 `aio`" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "Markdown 只是一份摘要，不能替代文件本身" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "依赖子任务摘要：{{ dependency_summary_json }}" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "当前可用技能脚本：{{ skill_script_inventory_json }}" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "先调用 `list_skill_scripts` 或 `get_skill_details` 查询后再执行" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "必须通过 `script_args` 传入有序参数" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "必须设置 `allow_sandbox_exec=true`" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
 
 
 def test_planner_execution_configuration_prompt_requires_code_exec_for_real_files() -> None:

@@ -136,7 +136,7 @@ $env:OPEN_SANDBOX_API_KEY="change-me-strong-key"
 Ubuntu/Linux（bash/zsh）：
 
 ```bash
-export OPEN_SANDBOX_API_KEY="osb_4f9d1c3a7b8e2f6049a1d5e7c2b3f8a6c9d0e1f2a3b4c5d6"
+export OPEN_SANDBOX_API_KEY="change-me-strong-key"
 ```
 
 ## 5.1 创建 sandbox

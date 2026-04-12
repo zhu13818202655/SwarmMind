@@ -18,6 +18,8 @@ dependencies = [
     "click>=8.0.0",
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
+    "agent-sandbox==0.0.18",
+    "loguru>=0.7.3",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +43,10 @@ all = [
 [project.scripts]
 swarmmind = "swarmmind.cli:main"
 swarmmind-api = "swarmmind.api.server:run_server"
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
 
 [build-system]
 requires = ["setuptools>=68.0"]

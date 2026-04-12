@@ -1,8 +1,8 @@
 # AIO Profile - unified all-in-one sandbox for coding, execution, conversion, and browser tasks
 
 name: aio
-image: serverless-registry.cn-hangzhou.cr.aliyuncs.com/functionai/sandbox-all-in-one:v0.9.29
-entrypoint: /opt/opensandbox/code-interpreter.sh
+image: ghcr.io/agent-infra/sandbox:latest
+entrypoint: /opt/gem/run.sh
 timeout_seconds: 3600
 
 env:

@@ -12,6 +12,20 @@ async def grouped_file_reader(path: str) -> str:
     return path
 
 
+async def run_skill_script(
+    skill_name: str,
+    script_path: str,
+    allow_sandbox_exec: bool = False,
+    script_args: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "skill_name": skill_name,
+        "script_path": script_path,
+        "allow_sandbox_exec": allow_sandbox_exec,
+        "script_args": list(script_args or []),
+    }
+
+
 setattr(
     grouped_file_reader,
     "__swarmmind_tool_contract__",
@@ -119,3 +133,27 @@ async def test_registry_wraps_string_results_as_tool_response() -> None:
 
     assert isinstance(result, ToolResponse)
     assert result.content == [{"type": "text", "text": "hello"}]
+
+
+def test_registry_preserves_async_tool_parameter_schema() -> None:
+    registry = ToolRegistry()
+    registry.register(
+        run_skill_script,
+        name="run_skill_script",
+        groups=[ToolGroup.CODE_EXEC],
+        contract=ToolExecutionContract(
+            default_runtime=RuntimeKind.SANDBOX,
+            allowed_runtimes=[RuntimeKind.SANDBOX],
+            audit_required=True,
+            dangerous=True,
+            sandbox_only=True,
+        ),
+    )
+
+    toolkit = registry.build_toolkit(active_groups=[ToolGroup.CODE_EXEC])
+    schema = next(item for item in toolkit.get_json_schemas() if item["function"]["name"] == "run_skill_script")
+    parameters = schema["function"]["parameters"]
+
+    assert parameters["type"] == "object"
+    assert set(parameters["properties"]) >= {"skill_name", "script_path", "allow_sandbox_exec", "script_args"}
+    assert set(parameters["required"]) >= {"skill_name", "script_path"}

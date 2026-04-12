@@ -38,9 +38,9 @@ DEFAULT_PROFILES: dict[str, SandboxProfile] = {
     DEFAULT_SANDBOX_PROFILE: SandboxProfile(
         name=DEFAULT_SANDBOX_PROFILE,
         image=DEFAULT_AIO_IMAGE,
-        entrypoint=["/opt/opensandbox/code-interpreter.sh"],
+        entrypoint=["/opt/gem/run.sh"],
         timeout_seconds=600,
-        env={"PYTHONPATH": "/tmp", "PYTHON_VERSION": "3.11"},
-        resource_limits={"cpu": "2000m", "memory": "2048Mi"},
+        env={"PYTHONPATH": "/tmp", "PYTHON_VERSION": "3.12"},
+        resource_limits={"cpu": "2000m", "memory": "4096Mi"},
     ),
 }

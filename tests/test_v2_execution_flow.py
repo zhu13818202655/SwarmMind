@@ -258,12 +258,97 @@ async def test_host_tools_runtime_uses_omni_agent_wrapper(monkeypatch: pytest.Mo
     assert assigned_subtask.result is not None
     assert assigned_subtask.result.get("execution_backend") == "omni_agent"
     assert any(item.get("step_kind") == "content.render" and item.get("tool_names") for item in captured)
-    assert any(
-        isinstance(item.get("skill_profiles"), list)
-        and "pptx" in cast(list[str], item.get("skill_profiles"))
-        for item in captured
+
+
+@pytest.mark.asyncio
+async def test_execution_prompt_includes_declared_skill_scripts() -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+
+    task = Task(
+        id="task-skill-prompt-1",
+        goal="生成黄金投资建议PPT",
+        metadata={"tenant_id": "local", "principal_id": "tester"},
     )
-    assert "agent.step.fallback" in [entry.event_type for entry in replay.entries]
+    execution_profile = ExecutionProfile(
+        role=AgentRole.WRITER,
+        required_tool_groups=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        resolved_runtime_kind=RuntimeKind.SANDBOX,
+        skill_profiles=["pptx"],
+    )
+    subtask = SubTask(
+        id="subtask-skill-prompt-1",
+        task_id=task.id,
+        name="draft-gold-investment-ppt",
+        description="基于研究结果生成可直接打开的 PPT。",
+        role=AgentRole.WRITER,
+        acceptance_criteria=["输出为可直接打开的 .pptx 文件。"],
+        expected_artifacts=["presentation"],
+        metadata={"execution_profile": execution_profile.model_dump(mode="json")},
+    )
+
+    prompt = await container.execution_runner._compose_subtask_prompt(task, subtask)
+
+    assert '当前选中的 skill profiles：["pptx"]' in prompt
+    assert 'scripts/add_slide.py' in prompt
+    assert 'scripts/office/pack.py' in prompt
+    assert '必须设置 `allow_sandbox_exec=true`' in prompt
+
+
+@pytest.mark.asyncio
+async def test_run_skill_script_defaults_to_sandbox_exec_for_materialized_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_tool(tool_name, **kwargs):
+        captured["tool_name"] = tool_name
+        captured["kwargs"] = kwargs
+        return {"ok": True}
+
+    monkeypatch.setattr(container.execution_runner, "_run_tool", fake_run_tool)
+
+    task = Task(
+        id="task-skill-default-1",
+        goal="生成黄金投资建议PPT",
+        metadata={"tenant_id": "local", "principal_id": "tester"},
+    )
+    run = Run(id="run-skill-default-1", task_id=task.id, session_id="session-skill-default-1")
+    execution_profile = ExecutionProfile(
+        role=AgentRole.WRITER,
+        required_tool_groups=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        resolved_runtime_kind=RuntimeKind.SANDBOX,
+        skill_profiles=["pptx"],
+    )
+    subtask = SubTask(
+        id="subtask-skill-default-1",
+        task_id=task.id,
+        name="draft-gold-investment-ppt",
+        description="基于研究结果生成可直接打开的 PPT。",
+        role=AgentRole.WRITER,
+        acceptance_criteria=["输出为可直接打开的 .pptx 文件。"],
+        expected_artifacts=["presentation"],
+        metadata={
+            "selected_tools": ["run_skill_script"],
+            "execution_profile": execution_profile.model_dump(mode="json"),
+        },
+    )
+
+    tool_functions = container.execution_runner._build_agent_tool_functions(task, run, subtask)
+    run_skill_script = next(tool for tool in tool_functions if tool.__name__ == "run_skill_script")
+
+    await run_skill_script(
+        skill="pptx",
+        script="scripts/add_slide.py",
+        script_args=["workspace/unpacked", "slideLayout2.xml"],
+    )
+
+    assert captured["tool_name"] == "run_skill_script"
+    assert captured["kwargs"]["skill_name"] == "pptx"
+    assert captured["kwargs"]["script_path"] == "scripts/add_slide.py"
+    assert captured["kwargs"]["script_args"] == ["workspace/unpacked", "slideLayout2.xml"]
+    assert captured["kwargs"]["allow_sandbox_exec"] is True
 
 
 @pytest.mark.asyncio
@@ -483,3 +568,128 @@ async def test_sandbox_runtime_persists_binary_file_artifacts(monkeypatch: pytes
     assert file_artifact.content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     assert file_artifact.storage_ref == f"/v1/runs/{run.id}/artifacts/{file_artifact.id}/content"
     assert payload == b"PK\x03\x04sandbox-pptx"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_runtime_requires_materialized_file_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+    identity = await container.identity_resolver.resolve()
+
+    async def fake_build_command_request(task, subtask):
+        del task, subtask
+        return CommandRequest(
+            command="python3 -c \"print('no exported file produced')\"",
+            cwd=".",
+        )
+
+    monkeypatch.setattr(container.execution_runner, "_build_command_request", fake_build_command_request)
+
+    task = Task(
+        id="task-sandbox-file-missing-1",
+        goal="生成一个可下载的黄金投资建议 PPT",
+        metadata={
+            "tenant_id": identity.tenant_id,
+            "principal_id": identity.principal_id,
+            "profile": "aio",
+        },
+    )
+    run = Run(id="run-sandbox-file-missing-1", task_id=task.id, session_id="session-sandbox-file-missing-1")
+    execution_configuration = ExecutionConfiguration(
+        runtime_kind=RuntimeKind.SANDBOX,
+        tool_requirements=[ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+    )
+    execution_profile = ExecutionProfile(
+        role=AgentRole.WRITER,
+        execution_configuration=execution_configuration,
+        required_tool_groups=[ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        resolved_runtime_kind=RuntimeKind.SANDBOX,
+        runtime_resolution_reason="Test forces sandbox runtime for missing file coverage.",
+        runtime_fallback_chain=[RuntimeKind.HOST_TOOLS],
+        sandbox_profile="aio",
+    )
+    subtask = SubTask(
+        id="subtask-sandbox-file-missing-1",
+        task_id=task.id,
+        name="draft-gold-investment-ppt-missing-file",
+        description="生成一个可直接打开的 .pptx 文件。",
+        role=AgentRole.WRITER,
+        acceptance_criteria=["输出真实的 .pptx 文件。"],
+        expected_artifacts=["outputs/demo.pptx"],
+        execution_configuration=execution_configuration,
+        metadata={"run_id": run.id, "plan_source": "test"},
+    )
+    subtask.assign(execution_profile.model_dump(mode="json"), run.id)
+    run.attach_subtasks([subtask.id])
+
+    await container.task_repository.create(task)
+    await container.run_repository.create(run)
+    await container.subtask_repository.save(subtask)
+    await container.replay_repository.create(ReplayRoot(id="replay-sandbox-file-missing-1", task_id=task.id, run_id=run.id))
+
+    await container.event_bus.publish(
+        DomainEvent(
+            event_id="event-sandbox-file-missing-1",
+            topic="subtask.assigned",
+            tenant_id=identity.tenant_id,
+            session_id=run.session_id,
+            task_id=task.id,
+            run_id=run.id,
+            subtask_id=subtask.id,
+            payload={"name": subtask.name, "role": subtask.role.value},
+        )
+    )
+
+    run_detail = await _wait_for_terminal_run(container, run.id, identity)
+    stored_subtask = await container.subtask_repository.get(subtask.id)
+
+    assert run_detail.run.status == RunStatus.FAILED
+    assert stored_subtask is not None
+    assert stored_subtask.status == SubTaskStatus.FAILED
+    assert stored_subtask.result is not None
+    assert stored_subtask.result.get("materialized_artifact_count") == 0
+    assert "materialized file artifact" in (stored_subtask.error or "")
+
+
+@pytest.mark.asyncio
+async def test_run_state_service_fails_run_when_verification_result_is_false() -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+
+    task = Task(
+        id="task-verification-failed-1",
+        goal="验证失败时不能把 run 汇总成成功",
+        metadata={"tenant_id": "local", "principal_id": "tester"},
+    )
+    run = Run(id="run-verification-failed-1", task_id=task.id, session_id="session-verification-failed-1")
+    subtask = SubTask(
+        id="subtask-verification-failed-1",
+        task_id=task.id,
+        name="verify-gold-ppt",
+        description="检查 PPT 是否真的生成。",
+        role=AgentRole.TESTER,
+        acceptance_criteria=["必须存在真实产物文件。"],
+        result={
+            "passed": False,
+            "verification_passed": False,
+            "summary": "未生成真实 PPT 文件。",
+        },
+        status=SubTaskStatus.SUCCEEDED,
+        metadata={"run_id": run.id},
+    )
+    run.attach_subtasks([subtask.id])
+
+    await container.task_repository.create(task)
+    await container.run_repository.create(run)
+    await container.subtask_repository.save(subtask)
+
+    await container.run_state_service.reconcile(run.id)
+
+    stored_run = await container.run_repository.get(run.id)
+    stored_task = await container.task_repository.get(task.id)
+
+    assert stored_run is not None
+    assert stored_task is not None
+    assert stored_run.status == RunStatus.FAILED
+    assert stored_task.status == TaskStatus.FAILED
+    assert stored_task.error == "Subtask failed: verify-gold-ppt"

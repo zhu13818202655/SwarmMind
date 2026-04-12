@@ -518,7 +518,8 @@ class ExecutionRunner:
 
             total_artifact_count = len(artifacts) + len(exported_file_artifacts)
 
-            if execution.exit_code == 0:
+            materialized_output_required = self._requires_materialized_output(task, subtask)
+            if execution.exit_code == 0 and (not materialized_output_required or exported_file_artifacts):
                 subtask.complete(
                     {
                         "exit_code": execution.exit_code,
@@ -533,6 +534,27 @@ class ExecutionRunner:
                     "exit_code": execution.exit_code,
                     "artifact_count": total_artifact_count,
                     "materialized_artifact_count": len(exported_file_artifacts),
+                }
+            elif execution.exit_code == 0:
+                error = (
+                    "Subtask requires a materialized file artifact, but sandbox execution completed without exporting any files."
+                )
+                subtask.fail(
+                    error,
+                    result={
+                        "exit_code": execution.exit_code,
+                        "artifact_count": total_artifact_count,
+                        "materialized_artifact_count": 0,
+                        "materialized_artifacts": [],
+                        "stdout_preview": execution.stdout[:300],
+                    },
+                )
+                completion_topic = "subtask.failed"
+                completion_payload = {
+                    "exit_code": execution.exit_code,
+                    "artifact_count": total_artifact_count,
+                    "materialized_artifact_count": 0,
+                    "error": error,
                 }
             else:
                 error = execution.stderr or execution.stdout or f"Command failed with exit code {execution.exit_code}"
@@ -603,13 +625,18 @@ class ExecutionRunner:
         if self._is_verification_role(subtask.role):
             verification = structured_result if isinstance(structured_result, VerificationResult) else self._build_verification_result(subtask, dependencies, dependency_artifacts)
             backend = "agent" if isinstance(structured_result, VerificationResult) else "rules_fallback"
-            subtask.complete(
-                {
-                    **verification.model_dump(mode="json"),
-                    "verification_passed": verification.passed,
-                    "validation_backend": backend,
-                }
-            )
+            verification_payload = {
+                **verification.model_dump(mode="json"),
+                "verification_passed": verification.passed,
+                "validation_backend": backend,
+            }
+            if verification.passed:
+                subtask.complete(verification_payload)
+                completion_topic = "subtask.completed"
+            else:
+                verification_error = verification.summary or "Verification failed"
+                subtask.fail(verification_error, result=verification_payload)
+                completion_topic = "subtask.failed"
             artifact = self._create_inline_artifact(
                 task=task,
                 run=run,
@@ -637,6 +664,7 @@ class ExecutionRunner:
                     "validation_backend": backend,
                 }
             )
+            completion_topic = "subtask.completed"
             artifact = self._create_inline_artifact(
                 task=task,
                 run=run,
@@ -657,7 +685,7 @@ class ExecutionRunner:
         await self._event_bus.publish(
             DomainEvent(
                 event_id=str(uuid.uuid4()),
-                topic="subtask.completed",
+                topic=completion_topic,
                 tenant_id=task.metadata.get("tenant_id", event.tenant_id),
                 session_id=run.session_id,
                 task_id=task.id,
@@ -1893,6 +1921,12 @@ class ExecutionRunner:
             register("get_skill_details", "查看某个技能包展开后的元数据和资源信息。", get_skill_details)
 
         if "run_skill_script" in selected_tools:
+            execution_profile = self._load_execution_profile(subtask)
+            default_allow_sandbox_exec = bool(
+                execution_profile.resolved_runtime_kind == RuntimeKind.SANDBOX
+                or self._requires_materialized_output(task, subtask)
+            )
+
             async def run_skill_script(
                 skill_name: str | None = None,
                 script_path: str | None = None,
@@ -1901,6 +1935,7 @@ class ExecutionRunner:
                 allow_sandbox_exec: bool = False,
                 environment: dict[str, str] | None = None,
                 artifact_paths: list[str] | None = None,
+                script_args: list[str] | None = None,
                 skill: str | None = None,
                 script: str | None = None,
                 args: dict[str, Any] | None = None,
@@ -1909,6 +1944,8 @@ class ExecutionRunner:
                 resolved_script_path = script_path or script
                 resolved_environment = dict(environment or {})
                 resolved_artifact_paths = list(artifact_paths or [])
+                resolved_script_args = [str(item) for item in (script_args or [])]
+                effective_allow_sandbox_exec = allow_sandbox_exec or default_allow_sandbox_exec
                 if args:
                     if resolved_skill_name is None and isinstance(args.get("skill_name"), str):
                         resolved_skill_name = str(args["skill_name"])
@@ -1919,13 +1956,19 @@ class ExecutionRunner:
                     if isinstance(args.get("sandbox_root"), str):
                         sandbox_root = str(args["sandbox_root"])
                     if isinstance(args.get("allow_sandbox_exec"), bool):
-                        allow_sandbox_exec = bool(args["allow_sandbox_exec"])
+                        effective_allow_sandbox_exec = bool(args["allow_sandbox_exec"]) or default_allow_sandbox_exec
                     if isinstance(args.get("environment"), dict):
                         resolved_environment.update({str(key): str(value) for key, value in args["environment"].items()})
                     if isinstance(args.get("artifact_paths"), list):
                         resolved_artifact_paths = [str(item) for item in args["artifact_paths"]]
+                    if isinstance(args.get("script_args"), list):
+                        resolved_script_args = [str(item) for item in args["script_args"]]
                 if not resolved_skill_name or not resolved_script_path:
                     raise ValueError("run_skill_script requires skill_name/script_path or skill/script aliases")
+                resolved_script_path = await self._resolve_declared_skill_script_path(
+                    resolved_skill_name,
+                    resolved_script_path,
+                )
                 return await self._run_tool(
                     "run_skill_script",
                     task=task,
@@ -1935,9 +1978,10 @@ class ExecutionRunner:
                     script_path=resolved_script_path,
                     sandbox_profile=sandbox_profile,
                     sandbox_root=sandbox_root,
-                    allow_sandbox_exec=allow_sandbox_exec,
+                    allow_sandbox_exec=effective_allow_sandbox_exec,
                     environment=resolved_environment,
                     artifact_paths=resolved_artifact_paths,
+                    script_args=resolved_script_args,
                     tenant_id=task.metadata.get("tenant_id", "local"),
                     session_id=run.session_id,
                     task_id=task.id,
@@ -1964,6 +2008,9 @@ class ExecutionRunner:
             artifact_summaries = self._summarize_artifacts(
                 [artifact for artifact in artifacts if artifact.subtask_id in dependency_ids]
             )
+        execution_profile = self._load_execution_profile(subtask)
+        skill_profiles = self._effective_skill_profiles(execution_profile, subtask)
+        skill_script_inventory = await self._build_skill_script_inventory(skill_profiles)
 
         prompt = render_prompt(
             self._user_prompt_template,
@@ -1979,6 +2026,8 @@ class ExecutionRunner:
                 ),
                 "dependency_summary_json": json.dumps(dependency_summaries, ensure_ascii=False),
                 "artifact_summary_json": json.dumps(artifact_summaries, ensure_ascii=False),
+                "skill_profiles_json": json.dumps(skill_profiles, ensure_ascii=False),
+                "skill_script_inventory_json": json.dumps(skill_script_inventory, ensure_ascii=False),
                 "output_contract_json": json.dumps(
                     {
                         "requires_materialized_output": self._requires_materialized_output(task, subtask),
@@ -2157,3 +2206,38 @@ class ExecutionRunner:
         if self._long_term_memory is None:
             return None
         return await self._long_term_memory.store(content, metadata=metadata)
+
+    async def _build_skill_script_inventory(self, skill_profiles: list[str]) -> dict[str, list[str]]:
+        if self._skill_execution_service is None:
+            return {}
+
+        inventory: dict[str, list[str]] = {}
+        for skill_name in skill_profiles:
+            try:
+                inventory[skill_name] = self._skill_execution_service.list_skill_scripts(skill_name)
+            except Exception:
+                inventory[skill_name] = []
+        return inventory
+
+    async def _resolve_declared_skill_script_path(self, skill_name: str, script_path: str) -> str:
+        normalized_script = script_path.strip().lstrip("/")
+        if not normalized_script or self._skill_execution_service is None:
+            return normalized_script
+
+        try:
+            declared_scripts = self._skill_execution_service.list_skill_scripts(skill_name)
+        except Exception:
+            return normalized_script
+
+        if normalized_script in declared_scripts:
+            return normalized_script
+
+        matches = [
+            candidate
+            for candidate in declared_scripts
+            if PurePosixPath(candidate).name == normalized_script
+            or PurePosixPath(candidate).stem == normalized_script
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        return normalized_script

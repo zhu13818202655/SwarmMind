@@ -184,6 +184,68 @@ async def test_skill_tool_accepts_legacy_skill_script_aliases(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_skill_tool_forwards_script_args(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "argv_tool_skill")
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "Path('outputs').mkdir(exist_ok=True)\n"
+        "Path('outputs/out.txt').write_text('|'.join(sys.argv[1:]), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    service = SkillExecutionService(
+        executor=SkillScriptExecutor(SandboxManager(LocalSandboxAdapter())),
+        skill_root=tmp_path,
+    )
+    tool = SkillTool(service)
+
+    result = await tool.run_skill_script(
+        skill_name="argv_tool_skill",
+        script_path="scripts/run.py",
+        allow_sandbox_exec=True,
+        artifact_paths=["outputs/out.txt"],
+        script_args=["first", "second value"],
+    )
+
+    assert result["exit_code"] == 0
+    assert result["artifacts"] == {"outputs/out.txt": "first|second value"}
+
+
+@pytest.mark.asyncio
+async def test_skill_tool_accepts_script_args_via_legacy_args_dict(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "argv_alias_skill")
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "Path('outputs').mkdir(exist_ok=True)\n"
+        "Path('outputs/out.txt').write_text('|'.join(sys.argv[1:]), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    service = SkillExecutionService(
+        executor=SkillScriptExecutor(SandboxManager(LocalSandboxAdapter())),
+        skill_root=tmp_path,
+    )
+    tool = SkillTool(service)
+
+    result = await tool.run_skill_script(
+        skill="argv_alias_skill",
+        script="scripts/run.py",
+        allow_sandbox_exec=True,
+        args={
+            "artifact_paths": ["outputs/out.txt"],
+            "script_args": ["first", "second value"],
+        },
+    )
+
+    assert result["exit_code"] == 0
+    assert result["artifacts"] == {"outputs/out.txt": "first|second value"}
+
+
+@pytest.mark.asyncio
 async def test_skill_execution_service_persists_binary_artifacts(tmp_path: Path) -> None:
     skill_dir = _write_skill(tmp_path, "binary_skill")
     (skill_dir / "scripts").mkdir()

@@ -55,6 +55,11 @@ class RunStateService:
             if subtask.status == SubTaskStatus.FAILED and subtask.id not in covered_failure_ids
         ]
         succeeded = [subtask for subtask in subtasks if subtask.status == SubTaskStatus.SUCCEEDED]
+        verification_failed = [
+            subtask
+            for subtask in succeeded
+            if (subtask.result or {}).get("verification_passed") is False and not subtask.metadata.get("rework_generated")
+        ]
         pending = [
             subtask
             for subtask in subtasks
@@ -67,8 +72,8 @@ class RunStateService:
             and not subtask.metadata.get("rework_generated")
         ]
 
-        if failed:
-            first_failed = failed[0]
+        if failed or verification_failed:
+            first_failed = (failed or verification_failed)[0]
             run.set_phase(RunPhase.REVIEWING)
             if run.status != RunStatus.FAILED:
                 run.fail(first_failed.error or f"Subtask failed: {first_failed.name}")
@@ -78,7 +83,7 @@ class RunStateService:
                 task.result = {
                     "run_id": run.id,
                     "succeeded_subtasks": len(succeeded),
-                    "failed_subtasks": [subtask.name for subtask in failed],
+                    "failed_subtasks": [subtask.name for subtask in failed] + [subtask.name for subtask in verification_failed],
                     "artifact_count": len(artifacts),
                 }
         elif unresolved_rework and not pending:
@@ -173,7 +178,7 @@ class RunStateService:
                     payload={
                         **terminal_payload,
                         "completed_subtasks": [subtask.name for subtask in succeeded],
-                        "failed_subtasks": [subtask.name for subtask in failed],
+                        "failed_subtasks": [subtask.name for subtask in failed] + [subtask.name for subtask in verification_failed],
                         "pending_subtasks": [subtask.name for subtask in pending],
                     },
                 )

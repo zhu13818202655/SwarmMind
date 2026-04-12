@@ -389,6 +389,35 @@ async def test_skill_script_executor_runs_declared_script_and_collects_artifacts
 
 
 @pytest.mark.asyncio
+async def test_skill_script_executor_appends_script_args_to_command(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "argv_skill")
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "Path('out').mkdir(exist_ok=True)\n"
+        "Path('out/result.txt').write_text('|'.join(sys.argv[1:]), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    parsed_entry = load_skill_dir(skill_dir)
+
+    executor = SkillScriptExecutor(SandboxManager(LocalSandboxAdapter()))
+    result = await executor.execute(
+        parsed_entry,
+        "scripts/run.py",
+        SkillScriptExecutionPolicy(
+            allow_sandbox_exec=True,
+            artifact_paths=["out/result.txt"],
+            script_args=["alpha", "beta gamma"],
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert result.command.endswith("scripts/run.py alpha 'beta gamma'")
+    assert result.artifacts == {"out/result.txt": "alpha|beta gamma"}
+
+
+@pytest.mark.asyncio
 async def test_skill_script_executor_rejects_undeclared_script(tmp_path: Path) -> None:
     skill_dir = _write_skill(tmp_path, "scripted_skill")
     parsed_entry = load_skill_dir(skill_dir)

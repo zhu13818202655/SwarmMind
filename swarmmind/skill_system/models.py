@@ -117,6 +117,7 @@ class SkillScriptExecutionPolicy(BaseModel):
     sandbox_root: str = Field(default="/workspace/skill")
     environment: dict[str, str] = Field(default_factory=dict)
     artifact_paths: list[str] = Field(default_factory=list)
+    script_args: list[str] = Field(default_factory=list)
 
 
 class SkillExecutionContext(BaseModel):

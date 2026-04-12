@@ -151,10 +151,12 @@ class SubTask(BaseModel):
         self.finished_at = utc_now()
         self.updated_at = utc_now()
 
-    def fail(self, error: str) -> None:
+    def fail(self, error: str, result: dict[str, Any] | None = None) -> None:
         """Mark sub-task as failed."""
         self.status = SubTaskStatus.FAILED
         self.error = error
+        if result is not None:
+            self.result = result
         self.finished_at = utc_now()
         self.updated_at = utc_now()
 

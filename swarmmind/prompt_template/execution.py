@@ -35,6 +35,8 @@ EXECUTION_SUBTASK_MARKDOWN_PROMPT = PromptTemplate(
 工具组：{{ tool_groups_json }}
 依赖子任务摘要：{{ dependency_summary_json }}
 依赖产物摘要：{{ artifact_summary_json }}
+当前选中的 skill profiles：{{ skill_profiles_json }}
+当前可用技能脚本：{{ skill_script_inventory_json }}
 输出契约：{{ output_contract_json }}
 
 工具组能力边界：
@@ -49,6 +51,13 @@ EXECUTION_SUBTASK_MARKDOWN_PROMPT = PromptTemplate(
 Sandbox 说明：
 - 如果需要 sandbox 执行，只需要基于能力判断是否应使用 sandbox；系统会自动绑定 `aio`。
 - 不要输出、比较或讨论 sandbox profile 名称，把注意力放在当前任务可用的能力和工具上。
+
+技能脚本调用规则：
+- 如果需要调用 `run_skill_script`，优先使用上面的“当前可用技能脚本”；如果仍不确定，先调用 `list_skill_scripts` 或 `get_skill_details` 查询后再执行。
+- `script_path` 必须使用技能包中已声明的完整相对路径，例如 `scripts/run.py`；不要臆造 `build`、`create_presentation`、`generate_pptx` 这类未声明名称。
+- 如果脚本需要命令行参数，必须通过 `script_args` 传入有序参数；不要假设系统会自动补齐脚本所需的位置参数。
+- 只要实际执行技能脚本，就必须设置 `allow_sandbox_exec=true`。
+- 当输出契约要求真实文件产物，且存在对应 skill profile 时，优先使用已声明技能脚本完成文件物化；如果没有合适脚本，不要伪称已经生成文件。
 
 输出要求：
 1) 始终返回简洁的 Markdown 摘要，说明你实际完成了什么。

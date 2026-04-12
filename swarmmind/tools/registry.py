@@ -1,8 +1,8 @@
 """Tool registry for SwarmMind."""
 
-import json
-from typing import Any, Callable, Sequence
 import inspect
+import json
+from typing import Any, Callable, Sequence, get_type_hints
 
 from agentscope.tool import ToolResponse, Toolkit
 from swarmmind.models.capability import RuntimeKind, ToolExecutionContract, ToolGroup
@@ -77,6 +77,14 @@ class ToolRegistry:
             else:
                 result = func(*args, **kwargs)
             return self._normalize_tool_result(result)
+
+        async_wrapper.__name__ = getattr(func, "__name__", tool_name)
+        async_wrapper.__doc__ = description
+        async_wrapper.__module__ = getattr(func, "__module__", async_wrapper.__module__)
+        try:
+            async_wrapper.__signature__ = self._resolve_tool_signature(func)  # type: ignore[attr-defined]
+        except (TypeError, ValueError):
+            pass
 
         normalized_contract = self._normalize_contract(contract)
         normalized_groups = self._normalize_groups(groups)
@@ -328,6 +336,23 @@ class ToolRegistry:
             seen.add(name)
 
         return selected
+
+    @staticmethod
+    def _resolve_tool_signature(func: Callable) -> inspect.Signature:
+        signature = inspect.signature(func)
+        try:
+            resolved_hints = get_type_hints(func, globalns=getattr(func, "__globals__", {}), include_extras=True)
+        except Exception:
+            resolved_hints = {}
+
+        resolved_parameters = [
+            parameter.replace(annotation=resolved_hints.get(name, parameter.annotation))
+            for name, parameter in signature.parameters.items()
+        ]
+        return signature.replace(
+            parameters=resolved_parameters,
+            return_annotation=resolved_hints.get("return", signature.return_annotation),
+        )
 
     def _tool_schema(self, name: str) -> dict[str, Any]:
         tool = self._toolkit.tools.get(name)

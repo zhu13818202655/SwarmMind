@@ -312,7 +312,7 @@ def _build_sandbox_provider(settings: SwarmMindConfig):
     if provider_name == "local":
         return LocalSandboxAdapter()
 
-    if provider_name == "opensandbox" and settings.sandbox.api_key:
+    if provider_name == "opensandbox":
         return OpenSandboxAdapter(
             api_key=settings.sandbox.api_key,
             base_url=settings.sandbox.base_url,
