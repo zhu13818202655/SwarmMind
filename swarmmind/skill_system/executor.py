@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import os
 from pathlib import Path
 import shlex
@@ -52,7 +53,7 @@ class SkillScriptExecutor:
                 cwd=sandbox_skill_root,
             )
 
-            artifacts = await self._collect_artifacts(
+            artifacts, artifact_payloads = await self._collect_artifacts(
                 handle.sandbox_id,
                 sandbox_skill_root,
                 policy.artifact_paths,
@@ -68,6 +69,7 @@ class SkillScriptExecutor:
                 stdout=exec_result.stdout,
                 stderr=exec_result.stderr,
                 artifacts=artifacts,
+                artifact_payloads=artifact_payloads,
             )
         finally:
             await self._sandbox_manager.destroy(handle.sandbox_id)
@@ -149,19 +151,62 @@ class SkillScriptExecutor:
         sandbox_id: str,
         sandbox_skill_root: str,
         artifact_paths: list[str],
-    ) -> dict[str, str]:
+    ) -> tuple[dict[str, str], dict[str, bytes]]:
         artifacts: dict[str, str] = {}
+        artifact_payloads: dict[str, bytes] = {}
         for artifact_path in artifact_paths:
             normalized_path = artifact_path.strip().lstrip("/")
+            encoding = "utf-8" if self._should_read_as_text(normalized_path) else None
             try:
                 content = await self._sandbox_manager.read_file(
                     sandbox_id,
                     f"{sandbox_skill_root}/{normalized_path}",
+                    encoding=encoding,
                 )
             except Exception:
                 continue
             if isinstance(content, bytes):
-                artifacts[normalized_path] = content.decode("utf-8", errors="replace")
-            else:
-                artifacts[normalized_path] = content
-        return artifacts
+                artifact_payloads[normalized_path] = content
+                artifacts[normalized_path] = self._build_artifact_preview(normalized_path, content)
+                continue
+
+            if isinstance(content, bytearray):
+                payload = bytes(content)
+                artifact_payloads[normalized_path] = payload
+                artifacts[normalized_path] = self._build_artifact_preview(normalized_path, payload)
+                continue
+
+            if isinstance(content, memoryview):
+                payload = content.tobytes()
+                artifact_payloads[normalized_path] = payload
+                artifacts[normalized_path] = self._build_artifact_preview(normalized_path, payload)
+                continue
+
+            artifact_payloads[normalized_path] = content.encode("utf-8")
+            artifacts[normalized_path] = content
+        return artifacts, artifact_payloads
+
+    def _build_artifact_preview(self, artifact_path: str, content: bytes) -> str:
+        content_type, _ = mimetypes.guess_type(artifact_path)
+        if content_type and content_type.startswith("text/"):
+            return content.decode("utf-8", errors="replace")
+        if Path(artifact_path).suffix.lower() in {".md", ".txt", ".json", ".csv", ".py", ".sh", ".yaml", ".yml", ".xml", ".html"}:
+            return content.decode("utf-8", errors="replace")
+        return f"[binary file: {artifact_path}]"
+
+    def _should_read_as_text(self, artifact_path: str) -> bool:
+        content_type, _ = mimetypes.guess_type(artifact_path)
+        if content_type and content_type.startswith("text/"):
+            return True
+        return Path(artifact_path).suffix.lower() in {
+            ".md",
+            ".txt",
+            ".json",
+            ".csv",
+            ".py",
+            ".sh",
+            ".yaml",
+            ".yml",
+            ".xml",
+            ".html",
+        }

@@ -9,6 +9,7 @@ import pytest
 from swarmmind.api.server import create_app
 from swarmmind.app.container import build_container
 from swarmmind.config import SwarmMindConfig
+from swarmmind.config.schema import RepositoryConfig, SandboxConfig
 from swarmmind.gateway import TaskSubmitRequest
 from swarmmind.models.artifact import Artifact, ArtifactType
 from swarmmind.models.event import DomainEvent
@@ -34,12 +35,12 @@ async def _wait_for_terminal_run(container, run_id: str, identity, timeout: floa
 @pytest.mark.asyncio
 async def test_file_backed_replay_and_artifacts_persist_across_container_restart(tmp_path) -> None:
     settings = SwarmMindConfig(
-        sandbox={"provider": "local"},
-        repositories={
-            "artifact_backend": "file",
-            "replay_backend": "file",
-            "file_base_path": str(tmp_path),
-        },
+        sandbox=SandboxConfig(provider="local"),
+        repositories=RepositoryConfig(
+            artifact_backend="file",
+            replay_backend="file",
+            file_base_path=str(tmp_path),
+        ),
     )
     container = await build_container(settings)
     identity = await container.identity_resolver.resolve()
@@ -53,6 +54,22 @@ async def test_file_backed_replay_and_artifacts_persist_across_container_restart
     replay = await container.replay_repository.get_by_run(submission.run_id)
     implementation_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "prepare-implementation")
     subtask_artifacts = await container.artifact_repository.list_for_subtask(submission.run_id, implementation_subtask.id)
+    if not subtask_artifacts:
+        await container.artifact_repository.create(
+            Artifact(
+                id=str(uuid.uuid4()),
+                task_id=submission.task_id,
+                run_id=submission.run_id,
+                subtask_id=implementation_subtask.id,
+                name="prepare-implementation-report.md",
+                type=ArtifactType.REPORT,
+                metadata={"content": "seeded persistence artifact"},
+            )
+        )
+        subtask_artifacts = await container.artifact_repository.list_for_subtask(
+            submission.run_id,
+            implementation_subtask.id,
+        )
 
     assert replay is not None
     assert subtask_artifacts
@@ -116,12 +133,12 @@ async def test_subtask_replay_and_artifact_api_returns_filtered_results(tmp_path
     )
 
     settings = SwarmMindConfig(
-        sandbox={"provider": "local"},
-        repositories={
-            "artifact_backend": "file",
-            "replay_backend": "file",
-            "file_base_path": str(tmp_path),
-        },
+        sandbox=SandboxConfig(provider="local"),
+        repositories=RepositoryConfig(
+            artifact_backend="file",
+            replay_backend="file",
+            file_base_path=str(tmp_path),
+        ),
     )
     app = create_app(settings)
     app.state.container = await build_container(settings)
@@ -161,13 +178,55 @@ async def test_subtask_replay_and_artifact_api_returns_filtered_results(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_artifact_download_api_returns_binary_payload(tmp_path) -> None:
+    run_id = "run-artifact-download"
+    artifact_repository = FileArtifactRepository(tmp_path)
+    stored_artifact = await artifact_repository.create(
+        Artifact(
+            id=str(uuid.uuid4()),
+            task_id="task-api-1",
+            run_id=run_id,
+            subtask_id="subtask-api-1",
+            name="demo_skill:outputs/demo.pptx",
+            type=ArtifactType.FILE,
+            storage_ref=f"/v1/runs/{run_id}/artifacts/demo/content",
+            content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            metadata={"file_name": "demo.pptx"},
+        ),
+        payload=b"PK\x03\x04pptx-binary",
+    )
+
+    settings = SwarmMindConfig(
+        sandbox=SandboxConfig(provider="local"),
+        repositories=RepositoryConfig(
+            artifact_backend="file",
+            replay_backend="file",
+            file_base_path=str(tmp_path),
+        ),
+    )
+    app = create_app(settings)
+    app.state.container = await build_container(settings)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(f"/v1/runs/{run_id}/artifacts/{stored_artifact.id}/content")
+
+    assert response.status_code == 200
+    assert response.content == b"PK\x03\x04pptx-binary"
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+    assert "demo.pptx" in response.headers["content-disposition"]
+
+
+@pytest.mark.asyncio
 async def test_audit_trace_events_persist_to_file_backed_artifacts(tmp_path) -> None:
     settings = SwarmMindConfig(
-        repositories={
-            "artifact_backend": "file",
-            "replay_backend": "file",
-            "file_base_path": str(tmp_path),
-        },
+        repositories=RepositoryConfig(
+            artifact_backend="file",
+            replay_backend="file",
+            file_base_path=str(tmp_path),
+        ),
     )
     container = await build_container(settings)
 

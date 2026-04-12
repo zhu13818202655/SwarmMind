@@ -258,6 +258,7 @@ PLANNER_EXECUTION_CONFIGURATION_PROMPT = PromptTemplate(
 7. 不要把 tool group 混用成能力幻想：需要动态页面交互时必须包含 `browser`；需要执行命令、测试、构建、转换或部署动作时必须包含 `code_exec`；需要修改仓库文件时必须包含 `workspace`。
 8. 只有在需要读取依赖产物、附件或已有输出时才包含 `artifact`；系统自动持久化当前子任务结果这件事本身，不构成选择 `artifact` 的理由。
 9. `file_system` 用于基础文件读写、重命名和建目录；`workspace` 用于项目级搜索、定位和修改。不要因为需要生成单个导出文件就默认加 `workspace`，也不要因为需要搜索项目文件就只加 `file_system`。
+10. 如果子任务验收要求真实文件产物，例如 `.pptx`、`.pdf`、`.docx`、`.xlsx`，或描述明确要求“导出/生成可直接打开的文件”，则必须包含 `code_exec`，并优先把 `sandbox` 放在 `runtime_kinds` 的第一位；仅返回 Markdown 说明不算完成此类任务。
 
 合法 JSON 示例：
 {PLANNER_EXECUTION_CANDIDATE_EXAMPLE_JSON}

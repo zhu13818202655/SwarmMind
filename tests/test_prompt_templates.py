@@ -60,3 +60,11 @@ def test_execution_prompts_include_capability_boundaries() -> None:
     assert "工具组能力边界：" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "workspace：仅用于检查和修改仓库或工作区文件。" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "系统会自动绑定 `aio`" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "Markdown 只是一份摘要，不能替代文件本身" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "依赖子任务摘要：{{ dependency_summary_json }}" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+
+
+def test_planner_execution_configuration_prompt_requires_code_exec_for_real_files() -> None:
+    assert "真实文件产物" in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
+    assert "必须包含 `code_exec`" in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template
+    assert "优先把 `sandbox` 放在 `runtime_kinds` 的第一位" in PLANNER_EXECUTION_CONFIGURATION_PROMPT.template

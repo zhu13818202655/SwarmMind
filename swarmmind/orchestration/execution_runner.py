@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+from pathlib import Path
 from pathlib import PurePosixPath
 import re
 import shlex
@@ -41,6 +43,35 @@ from swarmmind.sandbox.artifact_collector import ArtifactCollector
 from swarmmind.skill_system import SkillExecutionService
 from swarmmind.tools import ToolRegistry
 
+
+_MATERIALIZED_OUTPUT_HINTS: tuple[str, ...] = (
+    ".pptx",
+    ".pdf",
+    ".docx",
+    ".xlsx",
+    "pptx",
+    "pdf",
+    "docx",
+    "xlsx",
+    "演示文稿",
+    "幻灯片",
+    "可直接打开",
+)
+
+_TEXT_ARTIFACT_SUFFIXES: frozenset[str] = frozenset({
+    ".md",
+    ".txt",
+    ".json",
+    ".csv",
+    ".py",
+    ".sh",
+    ".yaml",
+    ".yml",
+    ".xml",
+    ".html",
+})
+
+_MATERIALIZED_FILE_SUFFIXES: frozenset[str] = frozenset({".pptx", ".pdf", ".docx", ".xlsx"})
 
 class ExecutionRunner:
     """Consume assigned subtasks and execute them via resolved runtimes and tools."""
@@ -283,6 +314,8 @@ class ExecutionRunner:
             AgentRole.REVIEWER,
         }:
             required.update({"memory_lookup", "memory_write"})
+        if self._effective_skill_profiles(execution_profile, subtask):
+            required.update({"list_skill_scripts", "get_skill_details"})
         return required
 
     def _tool_allowed_by_execution_profile(self, tool_name: str, execution_profile: ExecutionProfile) -> bool:
@@ -477,21 +510,29 @@ class ExecutionRunner:
             )
 
             artifacts = self._artifact_collector.collect(task, run, subtask, lease, execution)
+            exported_file_artifacts = await self._collect_sandbox_file_artifacts(task, run, subtask, lease, execution)
             for artifact in artifacts:
                 await self._store_artifact(task, run, subtask, artifact, lease.sandbox_id)
+            for artifact, payload in exported_file_artifacts:
+                await self._store_artifact(task, run, subtask, artifact, lease.sandbox_id, payload=payload)
+
+            total_artifact_count = len(artifacts) + len(exported_file_artifacts)
 
             if execution.exit_code == 0:
                 subtask.complete(
                     {
                         "exit_code": execution.exit_code,
-                        "artifact_count": len(artifacts),
+                        "artifact_count": total_artifact_count,
+                        "materialized_artifact_count": len(exported_file_artifacts),
+                        "materialized_artifacts": [artifact.name for artifact, _ in exported_file_artifacts],
                         "stdout_preview": execution.stdout[:300],
                     }
                 )
                 completion_topic = "subtask.completed"
                 completion_payload = {
                     "exit_code": execution.exit_code,
-                    "artifact_count": len(artifacts),
+                    "artifact_count": total_artifact_count,
+                    "materialized_artifact_count": len(exported_file_artifacts),
                 }
             else:
                 error = execution.stderr or execution.stdout or f"Command failed with exit code {execution.exit_code}"
@@ -664,6 +705,11 @@ class ExecutionRunner:
                 payload=start_payload,
             )
         )
+
+        if self._requires_materialized_output(task, subtask):
+            raise RuntimeError(
+                f"Subtask {subtask.name} requires a real file artifact and cannot complete via inline {runtime_kind.value} execution."
+            )
 
         content = await self._render_subtask_content(task, subtask, run=run)
         artifact_name = f"{subtask.name}-{runtime_kind.value}.md"
@@ -1206,8 +1252,16 @@ class ExecutionRunner:
             return ExecutionRunner._summarize_tool_payload(value.model_dump(mode="json"))
         return str(value)
 
-    async def _store_artifact(self, task, run, subtask, artifact: Artifact, sandbox_id: str | None = None) -> None:
-        await self._artifact_repository.create(artifact)
+    async def _store_artifact(
+        self,
+        task,
+        run,
+        subtask,
+        artifact: Artifact,
+        sandbox_id: str | None = None,
+        payload: bytes | None = None,
+    ) -> None:
+        stored_artifact = await self._artifact_repository.create(artifact, payload=payload)
         await self._event_bus.publish(
             DomainEvent(
                 event_id=str(uuid.uuid4()),
@@ -1219,12 +1273,106 @@ class ExecutionRunner:
                 subtask_id=subtask.id,
                 sandbox_id=sandbox_id,
                 payload={
-                    "artifact_id": artifact.id,
-                    "name": artifact.name,
-                    "type": artifact.type,
+                    "artifact_id": stored_artifact.id,
+                    "name": stored_artifact.name,
+                    "type": stored_artifact.type,
                 },
             )
         )
+
+    async def _collect_sandbox_file_artifacts(self, task, run, subtask, lease, execution) -> list[tuple[Artifact, bytes]]:
+        artifact_specs: list[tuple[Artifact, bytes]] = []
+        for sandbox_path in self._extract_sandbox_artifact_paths(subtask, execution):
+            payload = await self._read_sandbox_artifact_payload(lease.sandbox_id, sandbox_path)
+            if payload is None:
+                continue
+            artifact_specs.append(
+                (
+                    self._create_sandbox_file_artifact(
+                        task=task,
+                        run=run,
+                        subtask=subtask,
+                        lease=lease,
+                        sandbox_path=sandbox_path,
+                        payload=payload,
+                    ),
+                    payload,
+                )
+            )
+        return artifact_specs
+
+    def _extract_sandbox_artifact_paths(self, subtask, execution) -> list[str]:
+        candidates: list[str] = []
+        for stream in (execution.stdout, execution.stderr):
+            for match in re.finditer(r"^WROTE_ARTIFACT_FILE=(.+)$", stream, flags=re.MULTILINE):
+                path = match.group(1).strip()
+                if path:
+                    candidates.append(path)
+
+        for expected_artifact in subtask.expected_artifacts:
+            if not isinstance(expected_artifact, str):
+                continue
+            normalized = expected_artifact.strip()
+            suffix = PurePosixPath(normalized).suffix.lower()
+            if suffix in _MATERIALIZED_FILE_SUFFIXES:
+                candidates.append(normalized)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            normalized = candidate.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
+    async def _read_sandbox_artifact_payload(self, sandbox_id: str, sandbox_path: str) -> bytes | None:
+        encoding = "utf-8" if self._should_read_sandbox_artifact_as_text(sandbox_path) else None
+        try:
+            content = await self._sandbox_manager.read_file(sandbox_id, sandbox_path, encoding=encoding)
+        except Exception:
+            return None
+
+        if isinstance(content, bytes):
+            return content
+        if isinstance(content, bytearray):
+            return bytes(content)
+        if isinstance(content, memoryview):
+            return content.tobytes()
+        return content.encode("utf-8")
+
+    def _create_sandbox_file_artifact(self, *, task, run, subtask, lease, sandbox_path: str, payload: bytes) -> Artifact:
+        artifact_id = str(uuid.uuid4())
+        file_name = PurePosixPath(sandbox_path).name or f"artifact-{artifact_id}"
+        content_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+        metadata: dict[str, object] = {
+            "source": "sandbox_file",
+            "sandbox_id": lease.sandbox_id,
+            "lease_id": lease.lease_id,
+            "sandbox_path": sandbox_path,
+            "file_name": file_name,
+        }
+        if self._should_read_sandbox_artifact_as_text(sandbox_path):
+            metadata["content"] = payload.decode("utf-8", errors="replace")
+        return Artifact(
+            id=artifact_id,
+            task_id=task.id,
+            run_id=run.id,
+            subtask_id=subtask.id,
+            name=file_name,
+            type=ArtifactType.FILE,
+            storage_ref=f"/v1/runs/{run.id}/artifacts/{artifact_id}/content",
+            content_type=content_type,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _should_read_sandbox_artifact_as_text(sandbox_path: str) -> bool:
+        content_type, _ = mimetypes.guess_type(sandbox_path)
+        if content_type and content_type.startswith("text/"):
+            return True
+        return PurePosixPath(sandbox_path).suffix.lower() in _TEXT_ARTIFACT_SUFFIXES
 
     def _create_inline_artifact(
         self,
@@ -1746,26 +1894,50 @@ class ExecutionRunner:
 
         if "run_skill_script" in selected_tools:
             async def run_skill_script(
-                skill_name: str,
-                script_path: str,
+                skill_name: str | None = None,
+                script_path: str | None = None,
                 sandbox_profile: str = DEFAULT_SANDBOX_PROFILE,
                 sandbox_root: str = "/workspace/skill",
                 allow_sandbox_exec: bool = False,
                 environment: dict[str, str] | None = None,
                 artifact_paths: list[str] | None = None,
+                skill: str | None = None,
+                script: str | None = None,
+                args: dict[str, Any] | None = None,
             ) -> dict[str, object]:
+                resolved_skill_name = skill_name or skill
+                resolved_script_path = script_path or script
+                resolved_environment = dict(environment or {})
+                resolved_artifact_paths = list(artifact_paths or [])
+                if args:
+                    if resolved_skill_name is None and isinstance(args.get("skill_name"), str):
+                        resolved_skill_name = str(args["skill_name"])
+                    if resolved_script_path is None and isinstance(args.get("script_path"), str):
+                        resolved_script_path = str(args["script_path"])
+                    if isinstance(args.get("sandbox_profile"), str):
+                        sandbox_profile = str(args["sandbox_profile"])
+                    if isinstance(args.get("sandbox_root"), str):
+                        sandbox_root = str(args["sandbox_root"])
+                    if isinstance(args.get("allow_sandbox_exec"), bool):
+                        allow_sandbox_exec = bool(args["allow_sandbox_exec"])
+                    if isinstance(args.get("environment"), dict):
+                        resolved_environment.update({str(key): str(value) for key, value in args["environment"].items()})
+                    if isinstance(args.get("artifact_paths"), list):
+                        resolved_artifact_paths = [str(item) for item in args["artifact_paths"]]
+                if not resolved_skill_name or not resolved_script_path:
+                    raise ValueError("run_skill_script requires skill_name/script_path or skill/script aliases")
                 return await self._run_tool(
                     "run_skill_script",
                     task=task,
                     run=run,
                     subtask=subtask,
-                    skill_name=skill_name,
-                    script_path=script_path,
+                    skill_name=resolved_skill_name,
+                    script_path=resolved_script_path,
                     sandbox_profile=sandbox_profile,
                     sandbox_root=sandbox_root,
                     allow_sandbox_exec=allow_sandbox_exec,
-                    environment=environment,
-                    artifact_paths=artifact_paths,
+                    environment=resolved_environment,
+                    artifact_paths=resolved_artifact_paths,
                     tenant_id=task.metadata.get("tenant_id", "local"),
                     session_id=run.session_id,
                     task_id=task.id,
@@ -1777,6 +1949,22 @@ class ExecutionRunner:
         return tools
 
     async def _compose_subtask_prompt(self, task, subtask) -> str:
+        dependency_summaries: list[dict[str, object]] = []
+        artifact_summaries: list[dict[str, object]] = []
+        current_run = await self._run_repository.get(
+            subtask.metadata.get("run_id")
+            or subtask.metadata.get("assigned_run_id")
+            or ""
+        )
+        if current_run is not None and subtask.dependencies:
+            dependencies = await self._load_dependency_subtasks(current_run.id, subtask)
+            dependency_summaries = self._summarize_dependency_subtasks(dependencies)
+            dependency_ids = {dependency.id for dependency in dependencies}
+            artifacts = await self._artifact_repository.list_for_run(current_run.id)
+            artifact_summaries = self._summarize_artifacts(
+                [artifact for artifact in artifacts if artifact.subtask_id in dependency_ids]
+            )
+
         prompt = render_prompt(
             self._user_prompt_template,
             {
@@ -1787,6 +1975,15 @@ class ExecutionRunner:
                 "constraints_json": json.dumps(task.constraints, ensure_ascii=False),
                 "tool_groups_json": json.dumps(
                     [group.value for group in self._load_execution_profile(subtask).required_tool_groups],
+                    ensure_ascii=False,
+                ),
+                "dependency_summary_json": json.dumps(dependency_summaries, ensure_ascii=False),
+                "artifact_summary_json": json.dumps(artifact_summaries, ensure_ascii=False),
+                "output_contract_json": json.dumps(
+                    {
+                        "requires_materialized_output": self._requires_materialized_output(task, subtask),
+                        "expected_artifacts": list(subtask.expected_artifacts),
+                    },
                     ensure_ascii=False,
                 ),
             },
@@ -1923,6 +2120,24 @@ class ExecutionRunner:
         artifacts = await self._artifact_repository.list_for_run(run_id)
         dependency_set = set(dependency_ids)
         return [artifact for artifact in artifacts if artifact.subtask_id in dependency_set]
+
+    @staticmethod
+    def _requires_materialized_output(task, subtask) -> bool:
+        if subtask.role not in {AgentRole.CODER, AgentRole.WRITER, AgentRole.RESEARCHER}:
+            return False
+        text = "\n".join(
+            part
+            for part in [
+                task.goal,
+                subtask.name,
+                subtask.description,
+                *subtask.acceptance_criteria,
+                *subtask.expected_artifacts,
+            ]
+            if isinstance(part, str) and part.strip()
+        ).lower()
+        text = re.sub(r"\s+", " ", text)
+        return any(keyword in text for keyword in _MATERIALIZED_OUTPUT_HINTS)
 
     async def _tool_memory_lookup(self, query: str, top_k: int = 3, **_: Any) -> list[dict[str, Any]]:
         if self._long_term_memory is None:

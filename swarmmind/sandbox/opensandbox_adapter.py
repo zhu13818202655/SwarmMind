@@ -92,7 +92,7 @@ class OpenSandboxAdapter(SandboxProvider):
         write_entries = [WriteEntry(path=f.path, data=f.data, mode=f.mode) for f in files]
         await sandbox.files.write_files(write_entries)
 
-    async def read_file(self, sandbox_id: str, path: str, *, encoding: str = "utf-8") -> str | bytes:
+    async def read_file(self, sandbox_id: str, path: str, *, encoding: str | None = "utf-8") -> str | bytes:
         """Read a file from the sandbox."""
         sandbox = self._get_sandbox(sandbox_id)
         try:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from html import unescape
+import os
 import re
 
 import httpx
@@ -16,7 +17,7 @@ class BrowserTool:
     def __init__(
         self,
         detail_provider: str = "direct",
-        reader_base_url: str = "https://r.jina.ai/http://",
+        reader_base_url: str = "https://r.jina.ai/",
         timeout_seconds: float = 30.0,
         user_agent: str = "SwarmMindBrowser/1.0",
     ):
@@ -47,7 +48,10 @@ class BrowserTool:
         """Get detail-page content using the configured extraction provider."""
         try:
             if self._detail_provider in {"reader", "jina", "jina_reader"}:
-                return await self._get_via_reader(url)
+                try:
+                    return await self._get_via_reader(url)
+                except Exception:
+                    return await self._get_direct(url)
             return await self._get_direct(url)
         except Exception as exc:
             return f"Error fetching {url}: {exc}"
@@ -61,13 +65,9 @@ class BrowserTool:
         return self._extract_document(response.text, url)
 
     async def _get_via_reader(self, url: str) -> str:
-        response = await self._client.get(self._build_reader_url(url))
+        response = await self._client.get(os.path.join(self._reader_base_url, url))
         response.raise_for_status()
         return response.text[:15000]
-
-    def _build_reader_url(self, url: str) -> str:
-        normalized = re.sub(r"^https?://", "", url.strip())
-        return f"{self._reader_base_url}{normalized}"
 
     def _extract_document(self, html: str, url: str) -> str:
         title = self._extract_title(html)

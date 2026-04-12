@@ -73,9 +73,9 @@ class SandboxManager:
         """Write files to the sandbox."""
         await self._provider.write_files(sandbox_id, files)
 
-    async def read_file(self, sandbox_id: str, path: str) -> str | bytes:
+    async def read_file(self, sandbox_id: str, path: str, *, encoding: str | None = "utf-8") -> str | bytes:
         """Read a file from the sandbox."""
-        return await self._provider.read_file(sandbox_id, path)
+        return await self._provider.read_file(sandbox_id, path, encoding=encoding)
 
     async def destroy(self, sandbox_id: str) -> None:
         """Destroy a sandbox and remove from tracking."""

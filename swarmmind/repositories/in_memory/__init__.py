@@ -102,10 +102,16 @@ class InMemoryArtifactRepository:
 
     def __init__(self):
         self._items: dict[str, Artifact] = {}
+        self._payloads: dict[str, bytes] = {}
 
-    async def create(self, artifact: Artifact) -> Artifact:
+    async def create(self, artifact: Artifact, payload: bytes | None = None) -> Artifact:
         self._items[artifact.id] = artifact
+        if payload is not None:
+            self._payloads[artifact.id] = payload
         return artifact
+
+    async def get(self, artifact_id: str) -> Artifact | None:
+        return self._items.get(artifact_id)
 
     async def list_for_run(self, run_id: str) -> list[Artifact]:
         return [artifact for artifact in self._items.values() if artifact.run_id == run_id]
@@ -116,6 +122,16 @@ class InMemoryArtifactRepository:
             for artifact in self._items.values()
             if artifact.run_id == run_id and artifact.subtask_id == subtask_id
         ]
+
+    async def read_content(self, artifact: Artifact) -> bytes | None:
+        payload = self._payloads.get(artifact.id)
+        if payload is not None:
+            return payload
+
+        content = artifact.metadata.get("content")
+        if isinstance(content, str):
+            return content.encode("utf-8")
+        return None
 
 
 class InMemoryReplayRepository:

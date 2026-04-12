@@ -52,7 +52,7 @@ class SandboxProvider(Protocol):
         """Write files to the sandbox."""
         ...
 
-    async def read_file(self, sandbox_id: str, path: str, *, encoding: str = "utf-8") -> str | bytes:
+    async def read_file(self, sandbox_id: str, path: str, *, encoding: str | None = "utf-8") -> str | bytes:
         """Read a file from the sandbox."""
         ...
 

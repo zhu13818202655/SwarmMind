@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import uuid
 from pathlib import Path
 
@@ -117,38 +118,42 @@ class SkillExecutionService:
 
         artifact_ids: list[str] = []
         for artifact_path, content in result.artifacts.items():
+            artifact_id = str(uuid.uuid4())
+            payload = result.artifact_payloads.get(artifact_path, content.encode("utf-8"))
+            content_type = mimetypes.guess_type(artifact_path)[0] or "application/octet-stream"
             artifact = Artifact(
-                id=str(uuid.uuid4()),
+                id=artifact_id,
                 task_id=context.task_id or "skill-script",
                 run_id=context.run_id,
                 subtask_id=context.subtask_id,
                 name=f"{result.skill_name}:{artifact_path}",
                 type=ArtifactType.FILE,
-                storage_ref=f"skill://{result.skill_name}/{artifact_path}",
-                content_type="text/plain",
+                storage_ref=f"/v1/runs/{context.run_id}/artifacts/{artifact_id}/content",
+                content_type=content_type,
                 metadata={
                     "skill_name": result.skill_name,
                     "script_path": result.script_path,
                     "artifact_path": artifact_path,
+                    "file_name": Path(artifact_path).name,
                     "sandbox_id": result.sandbox_id,
                     "content": content,
                 },
             )
-            await self._artifact_repository.create(artifact)
+            stored_artifact = await self._artifact_repository.create(artifact, payload=payload)
             await self._publish_event(
                 "artifact.created",
                 context,
                 payload={
-                    "artifact_id": artifact.id,
-                    "artifact_name": artifact.name,
-                    "artifact_type": artifact.type.value,
+                    "artifact_id": stored_artifact.id,
+                    "artifact_name": stored_artifact.name,
+                    "artifact_type": stored_artifact.type.value,
                     "skill_name": result.skill_name,
                     "script_path": result.script_path,
                     "artifact_path": artifact_path,
                 },
                 sandbox_id=result.sandbox_id,
             )
-            artifact_ids.append(artifact.id)
+            artifact_ids.append(stored_artifact.id)
         return artifact_ids
 
     async def _publish_event(

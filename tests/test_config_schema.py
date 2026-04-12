@@ -39,3 +39,11 @@ def test_browser_config_resolves_detail_provider_from_env(monkeypatch) -> None:
 
     assert config.detail_provider == "reader"
     assert config.reader_base_url == "https://reader.example/"
+
+
+def test_browser_config_normalizes_jina_provider_alias(monkeypatch) -> None:
+    monkeypatch.setenv("SWARMMIND_BROWSER__DETAIL_PROVIDER", "jina")
+
+    config = BrowserConfig()
+
+    assert config.detail_provider == "jina_reader"

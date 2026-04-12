@@ -22,13 +22,16 @@ class SkillTool:
 
     async def run_skill_script(
         self,
-        skill_name: str,
-        script_path: str,
+        skill_name: str | None = None,
+        script_path: str | None = None,
         sandbox_profile: str = DEFAULT_SANDBOX_PROFILE,
         sandbox_root: str = "/workspace/skill",
         allow_sandbox_exec: bool = False,
         environment: dict[str, str] | None = None,
         artifact_paths: list[str] | None = None,
+        skill: str | None = None,
+        script: str | None = None,
+        args: dict[str, object] | None = None,
         tenant_id: str = "system",
         session_id: str | None = None,
         task_id: str | None = None,
@@ -36,15 +39,36 @@ class SkillTool:
         subtask_id: str | None = None,
     ) -> dict[str, object]:
         """Execute a declared skill script through the formal skill service."""
+        resolved_skill_name = skill_name or skill
+        resolved_script_path = script_path or script
+        resolved_environment = dict(environment or {})
+        resolved_artifact_paths = list(artifact_paths or [])
+        if args:
+            if resolved_skill_name is None and isinstance(args.get("skill_name"), str):
+                resolved_skill_name = str(args["skill_name"])
+            if resolved_script_path is None and isinstance(args.get("script_path"), str):
+                resolved_script_path = str(args["script_path"])
+            if isinstance(args.get("sandbox_profile"), str):
+                sandbox_profile = str(args["sandbox_profile"])
+            if isinstance(args.get("sandbox_root"), str):
+                sandbox_root = str(args["sandbox_root"])
+            if isinstance(args.get("allow_sandbox_exec"), bool):
+                allow_sandbox_exec = bool(args["allow_sandbox_exec"])
+            if isinstance(args.get("environment"), dict):
+                resolved_environment.update({str(key): str(value) for key, value in args["environment"].items()})
+            if isinstance(args.get("artifact_paths"), list):
+                resolved_artifact_paths = [str(item) for item in args["artifact_paths"]]
+        if not resolved_skill_name or not resolved_script_path:
+            raise ValueError("run_skill_script requires skill_name/script_path or skill/script aliases")
         result = await self._service.run_skill_script(
-            skill_name=skill_name,
-            script_path=script_path,
+            skill_name=resolved_skill_name,
+            script_path=resolved_script_path,
             policy=SkillScriptExecutionPolicy(
                 allow_sandbox_exec=allow_sandbox_exec,
                 sandbox_profile=sandbox_profile,
                 sandbox_root=sandbox_root,
-                environment=environment or {},
-                artifact_paths=artifact_paths or [],
+                environment=resolved_environment,
+                artifact_paths=resolved_artifact_paths,
             ),
             context=SkillExecutionContext(
                 tenant_id=tenant_id,
@@ -68,13 +92,16 @@ async def get_skill_details(skill_name: str) -> dict[str, object]:
 
 
 async def run_skill_script(
-    skill_name: str,
-    script_path: str,
+    skill_name: str | None = None,
+    script_path: str | None = None,
     sandbox_profile: str = DEFAULT_SANDBOX_PROFILE,
     sandbox_root: str = "/workspace/skill",
     allow_sandbox_exec: bool = False,
     environment: dict[str, str] | None = None,
     artifact_paths: list[str] | None = None,
+    skill: str | None = None,
+    script: str | None = None,
+    args: dict[str, object] | None = None,
     tenant_id: str = "system",
     session_id: str | None = None,
     task_id: str | None = None,

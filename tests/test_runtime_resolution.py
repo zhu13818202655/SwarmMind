@@ -13,18 +13,18 @@ from swarmmind.orchestration.coordinator import Coordinator
 @pytest.mark.asyncio
 async def test_coordinator_uses_execution_configuration_for_writer_host_tools() -> None:
     coordinator = Coordinator(AgentProfileStore())
-    task = Task(id="task-1", goal="整理月度金价研究并输出 PPT", metadata={"profile": "py-basic"})
+    task = Task(id="task-1", goal="整理月度金价研究并输出摘要", metadata={"profile": "py-basic"})
     run = Run(id="run-1", task_id=task.id, session_id="session-1")
     subtask = SubTask(
         id="subtask-1",
         task_id=task.id,
-        name="generate-pptx",
-        description="Generate the final presentation deck.",
+        name="draft-investment-summary",
+        description="Draft the final investment summary for the user.",
         role=AgentRole.WRITER,
         execution_configuration=ExecutionConfiguration(
             runtime_kind=RuntimeKind.HOST_TOOLS,
             tool_requirements=[ToolGroup.WORKSPACE, ToolGroup.ARTIFACT],
-            skill_profiles=["pptx"],
+            skill_profiles=[],
         ),
     )
 
@@ -33,7 +33,7 @@ async def test_coordinator_uses_execution_configuration_for_writer_host_tools() 
 
     assert profile.resolved_runtime_kind == RuntimeKind.HOST_TOOLS
     assert profile.runtime_fallback_chain == [RuntimeKind.SANDBOX, RuntimeKind.LLM_ONLY]
-    assert profile.skill_profiles == ["pptx"]
+    assert profile.skill_profiles == ["pptx", "pdf", "docx"]
     assert profile.sandbox_profile is None
 
 
@@ -86,6 +86,35 @@ async def test_coordinator_allows_writer_file_system_tools() -> None:
 
     assert ToolGroup.FILE_SYSTEM in profile.allowed_tool_groups
     assert ToolGroup.FILE_SYSTEM in profile.required_tool_groups
+
+
+@pytest.mark.asyncio
+async def test_coordinator_promotes_real_file_writer_tasks_to_sandbox_code_exec() -> None:
+    coordinator = Coordinator(AgentProfileStore())
+    task = Task(id="task-file-1", goal="基于研究结果产出可直接打开的黄金投资建议 PPT", metadata={"profile": "aio"})
+    run = Run(id="run-file-1", task_id=task.id, session_id="session-file-1")
+    subtask = SubTask(
+        id="subtask-file-1",
+        task_id=task.id,
+        name="draft-gold-investment-ppt",
+        description="基于研究结果生成可直接打开的 .pptx 文件。",
+        role=AgentRole.WRITER,
+        acceptance_criteria=["最终输出为可直接打开的 .pptx 文件。"],
+        dependencies=["dep-1", "dep-2"],
+        execution_configuration=ExecutionConfiguration(
+            runtime_kind=RuntimeKind.HOST_TOOLS,
+            tool_requirements=[ToolGroup.FILE_SYSTEM],
+            skill_profiles=["pptx"],
+        ),
+    )
+
+    [assigned_subtask] = await coordinator.assign(task, run, [subtask])
+    profile = ExecutionProfile.model_validate(assigned_subtask.metadata["execution_profile"])
+
+    assert profile.resolved_runtime_kind == RuntimeKind.SANDBOX
+    assert ToolGroup.CODE_EXEC in profile.required_tool_groups
+    assert ToolGroup.ARTIFACT in profile.required_tool_groups
+    assert profile.sandbox_profile == "aio"
 
 
 @pytest.mark.asyncio

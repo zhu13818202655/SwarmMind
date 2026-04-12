@@ -44,6 +44,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
         default_tool_groups=[ToolGroup.WORKSPACE, ToolGroup.CODE_EXEC],
         recommended_runtime_kinds=[RuntimeKind.SANDBOX, RuntimeKind.HOST_TOOLS],
         allowed_tool_groups=[
+            ToolGroup.FILE_SYSTEM,
             ToolGroup.WORKSPACE,
             ToolGroup.CODE_EXEC,
             ToolGroup.ARTIFACT,
@@ -76,7 +77,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
     ),
     "reviewer-default": AgentProfile(
         id="reviewer-default",
-        name="Reviewer Default",
+        name="ReviewerDefault",
         role=AgentRole.REVIEWER,
         description="Review-focused profile for structured accept/rework decisions.",
         skill_mode=SkillsMode.INCLUSIVE,
@@ -87,7 +88,7 @@ DEFAULT_AGENT_PROFILES: dict[str, AgentProfile] = {
     ),
     "writer-default": AgentProfile(
         id="writer-default",
-        name="Writer Default",
+        name="WriterDefault",
         role=AgentRole.WRITER,
         description="Writing profile for structured reports and summaries.",
         skill_mode=SkillsMode.INCLUSIVE,

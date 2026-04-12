@@ -141,4 +141,5 @@ class SkillScriptExecutionResult(BaseModel):
     stdout: str = ""
     stderr: str = ""
     artifacts: dict[str, str] = Field(default_factory=dict)
+    artifact_payloads: dict[str, bytes] = Field(default_factory=dict, exclude=True)
     executed_at: datetime = Field(default_factory=utc_now)

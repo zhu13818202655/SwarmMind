@@ -82,12 +82,15 @@ async def test_skill_execution_service_publishes_events_and_persists_artifacts(t
     artifacts = await artifact_repository.list_for_run(run_id)
     replay = await replay_repository.get_by_run(run_id)
     events = [event.topic for event in event_bus.list_events()]
+    payload = await artifact_repository.read_content(artifacts[0])
 
     assert result.exit_code == 0
     assert result.artifacts == {"outputs/result.txt": "hello artifact"}
     assert len(artifacts) == 1
     assert artifacts[0].name == "demo_skill:outputs/result.txt"
     assert artifacts[0].metadata["content"] == "hello artifact"
+    assert artifacts[0].storage_ref == f"/v1/runs/{run_id}/artifacts/{artifacts[0].id}/content"
+    assert payload == b"hello artifact"
     assert replay is not None
     assert [entry.event_type for entry in replay.entries] == [
         "skill.script.started",
@@ -152,3 +155,73 @@ async def test_skill_tool_wraps_service_calls(tmp_path: Path) -> None:
     assert details["name"] == "tool_skill"
     assert result["exit_code"] == 0
     assert result["artifacts"] == {"outputs/out.txt": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_skill_tool_accepts_legacy_skill_script_aliases(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "alias_skill")
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text(
+        "from pathlib import Path\nPath('outputs').mkdir(exist_ok=True)\nPath('outputs/out.txt').write_text('ok', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    service = SkillExecutionService(
+        executor=SkillScriptExecutor(SandboxManager(LocalSandboxAdapter())),
+        skill_root=tmp_path,
+    )
+    tool = SkillTool(service)
+
+    result = await tool.run_skill_script(
+        skill="alias_skill",
+        script="scripts/run.py",
+        allow_sandbox_exec=True,
+        args={"artifact_paths": ["outputs/out.txt"]},
+    )
+
+    assert result["exit_code"] == 0
+    assert result["artifacts"] == {"outputs/out.txt": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_skill_execution_service_persists_binary_artifacts(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "binary_skill")
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text(
+        "from pathlib import Path\n"
+        "Path('outputs').mkdir(exist_ok=True)\n"
+        "Path('outputs/demo.pptx').write_bytes(b'PK\\x03\\x04demo-pptx')\n",
+        encoding="utf-8",
+    )
+
+    artifact_repository = InMemoryArtifactRepository()
+    service = SkillExecutionService(
+        executor=SkillScriptExecutor(SandboxManager(LocalSandboxAdapter())),
+        artifact_repository=artifact_repository,
+        skill_root=tmp_path,
+    )
+
+    run_id = str(uuid.uuid4())
+    result = await service.run_skill_script(
+        skill_name="binary_skill",
+        script_path="scripts/run.py",
+        policy=SkillScriptExecutionPolicy(
+            allow_sandbox_exec=True,
+            artifact_paths=["outputs/demo.pptx"],
+        ),
+        context=SkillExecutionContext(
+            task_id="task-1",
+            run_id=run_id,
+            subtask_id="subtask-1",
+        ),
+    )
+
+    artifacts = await artifact_repository.list_for_run(run_id)
+    payload = await artifact_repository.read_content(artifacts[0])
+
+    assert result.exit_code == 0
+    assert result.artifacts == {"outputs/demo.pptx": "[binary file: outputs/demo.pptx]"}
+    assert len(artifacts) == 1
+    assert artifacts[0].content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    assert artifacts[0].metadata["file_name"] == "demo.pptx"
+    assert payload == b"PK\x03\x04demo-pptx"

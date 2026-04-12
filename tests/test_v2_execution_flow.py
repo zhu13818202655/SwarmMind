@@ -10,12 +10,14 @@ from swarmmind.app.container import build_container
 from swarmmind.config import SwarmMindConfig
 from swarmmind.gateway import TaskSubmitRequest
 from swarmmind.models.agent_profile import AgentProfile, SkillsMode
+from swarmmind.models.artifact import ArtifactType
 from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.models.event import DomainEvent
 from swarmmind.models.execution import ExecutionConfiguration, ExecutionProfile, ReviewDecisionType
 from swarmmind.models.replay import ReplayRoot
 from swarmmind.models.run import Run, RunStatus
 from swarmmind.models.task import SubTask, SubTaskStatus, Task, TaskStatus
+from swarmmind.sandbox import CommandRequest
 
 
 async def _wait_for_terminal_run(container, run_id: str, identity, timeout: float = 10.0):
@@ -190,7 +192,7 @@ async def test_host_tools_runtime_uses_omni_agent_wrapper(monkeypatch: pytest.Mo
 
     task = Task(
         id="task-host-tools-1",
-        goal="整理月度金价研究并输出 PPT",
+        goal="整理月度金价研究并输出摘要",
         metadata={
             "tenant_id": identity.tenant_id,
             "principal_id": identity.principal_id,
@@ -215,11 +217,11 @@ async def test_host_tools_runtime_uses_omni_agent_wrapper(monkeypatch: pytest.Mo
     subtask = SubTask(
         id="subtask-host-tools-1",
         task_id=task.id,
-        name="generate-pptx",
-        description="Generate the final presentation deck.",
+        name="draft-investment-summary",
+        description="Draft the final investment summary for the user.",
         role=AgentRole.WRITER,
         execution_configuration=execution_configuration,
-        acceptance_criteria=["A PPT delivery artifact is produced."],
+        acceptance_criteria=["A concise Markdown summary is produced."],
         metadata={"run_id": run.id, "plan_source": "test"},
     )
     subtask.assign(execution_profile.model_dump(mode="json"), run.id)
@@ -293,7 +295,7 @@ async def test_host_tools_runtime_propagates_execution_profile_to_omni_runner(mo
 
     task = Task(
         id="task-host-tools-profile-1",
-        goal="整理月度金价研究并输出 PPT",
+        goal="整理月度金价研究并输出摘要",
         metadata={
             "tenant_id": identity.tenant_id,
             "principal_id": identity.principal_id,
@@ -319,11 +321,11 @@ async def test_host_tools_runtime_propagates_execution_profile_to_omni_runner(mo
     subtask = SubTask(
         id="subtask-host-tools-profile-1",
         task_id=task.id,
-        name="generate-pptx-propagation",
-        description="Generate the final presentation deck.",
+        name="generate-summary-propagation",
+        description="Generate the final investment summary.",
         role=AgentRole.WRITER,
         execution_configuration=execution_configuration,
-        acceptance_criteria=["A PPT delivery artifact is produced."],
+        acceptance_criteria=["A concise Markdown summary is produced."],
         metadata={"run_id": run.id, "plan_source": "test"},
     )
     subtask.assign(execution_profile.model_dump(mode="json"), run.id)
@@ -390,3 +392,94 @@ async def test_execution_policy_denies_tools_outside_profile_allowlist() -> None
     implementation_subtask = next(subtask for subtask in run_detail.subtasks if subtask.name == "prepare-implementation")
     assert implementation_subtask.status == SubTaskStatus.FAILED
     assert "sandbox_exec" not in implementation_subtask.metadata.get("selected_tools", [])
+
+
+@pytest.mark.asyncio
+async def test_sandbox_runtime_persists_binary_file_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+    identity = await container.identity_resolver.resolve()
+
+    async def fake_build_command_request(task, subtask):
+        del task, subtask
+        command = (
+            "python3 -c \"from pathlib import Path; "
+            "Path('outputs').mkdir(parents=True, exist_ok=True); "
+            "Path('outputs/demo.pptx').write_bytes(b'PK\\x03\\x04sandbox-pptx'); "
+            "print('WROTE_ARTIFACT_FILE=outputs/demo.pptx')\""
+        )
+        return CommandRequest(command=command, cwd=".")
+
+    monkeypatch.setattr(container.execution_runner, "_build_command_request", fake_build_command_request)
+
+    task = Task(
+        id="task-sandbox-file-1",
+        goal="生成一个可下载的黄金投资建议 PPT",
+        metadata={
+            "tenant_id": identity.tenant_id,
+            "principal_id": identity.principal_id,
+            "profile": "aio",
+        },
+    )
+    run = Run(id="run-sandbox-file-1", task_id=task.id, session_id="session-sandbox-file-1")
+    execution_configuration = ExecutionConfiguration(
+        runtime_kind=RuntimeKind.SANDBOX,
+        tool_requirements=[ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+    )
+    execution_profile = ExecutionProfile(
+        role=AgentRole.WRITER,
+        execution_configuration=execution_configuration,
+        required_tool_groups=[ToolGroup.FILE_SYSTEM, ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        resolved_runtime_kind=RuntimeKind.SANDBOX,
+        runtime_resolution_reason="Test forces sandbox runtime for file export coverage.",
+        runtime_fallback_chain=[RuntimeKind.HOST_TOOLS],
+        sandbox_profile="aio",
+    )
+    subtask = SubTask(
+        id="subtask-sandbox-file-1",
+        task_id=task.id,
+        name="draft-gold-investment-ppt",
+        description="生成一个可直接打开的 .pptx 文件。",
+        role=AgentRole.WRITER,
+        acceptance_criteria=["输出真实的 .pptx 文件。"],
+        expected_artifacts=["outputs/demo.pptx"],
+        execution_configuration=execution_configuration,
+        metadata={"run_id": run.id, "plan_source": "test"},
+    )
+    subtask.assign(execution_profile.model_dump(mode="json"), run.id)
+    run.attach_subtasks([subtask.id])
+
+    await container.task_repository.create(task)
+    await container.run_repository.create(run)
+    await container.subtask_repository.save(subtask)
+    await container.replay_repository.create(ReplayRoot(id="replay-sandbox-file-1", task_id=task.id, run_id=run.id))
+
+    await container.event_bus.publish(
+        DomainEvent(
+            event_id="event-sandbox-file-1",
+            topic="subtask.assigned",
+            tenant_id=identity.tenant_id,
+            session_id=run.session_id,
+            task_id=task.id,
+            run_id=run.id,
+            subtask_id=subtask.id,
+            payload={"name": subtask.name, "role": subtask.role.value},
+        )
+    )
+
+    stored_run = await container.run_repository.get(run.id)
+    stored_subtask = await container.subtask_repository.get(subtask.id)
+    artifacts = await container.artifact_repository.list_for_run(run.id)
+    file_artifact = next(artifact for artifact in artifacts if artifact.type == ArtifactType.FILE)
+    payload = await container.artifact_repository.read_content(file_artifact)
+
+    assert stored_run is not None
+    assert stored_subtask is not None
+    assert stored_run.status == RunStatus.SUCCEEDED
+    assert stored_subtask.status == SubTaskStatus.SUCCEEDED
+    assert stored_subtask.result is not None
+    assert stored_subtask.result.get("materialized_artifact_count") == 1
+    assert file_artifact.name == "demo.pptx"
+    assert file_artifact.content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    assert file_artifact.storage_ref == f"/v1/runs/{run.id}/artifacts/{file_artifact.id}/content"
+    assert payload == b"PK\x03\x04sandbox-pptx"

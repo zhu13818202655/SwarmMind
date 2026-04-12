@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import httpx
+import pytest
+
 from swarmmind.tools.builtin.browser import BrowserTool
 from swarmmind.tools.builtin.search import SearchTool
 
@@ -51,7 +54,20 @@ def test_browser_extract_document_prefers_main_content() -> None:
     assert "Second paragraph." in content
 
 
-def test_browser_reader_url_strips_protocol_prefix() -> None:
+@pytest.mark.asyncio
+async def test_browser_reader_falls_back_to_direct_on_reader_failure(monkeypatch) -> None:
     tool = BrowserTool(detail_provider="reader", reader_base_url="https://r.jina.ai/http://")
 
-    assert tool._build_reader_url("https://example.com/path") == "https://r.jina.ai/http://example.com/path"
+    async def fake_reader(url: str) -> str:
+        raise httpx.HTTPError("reader unavailable")
+
+    async def fake_direct(url: str) -> str:
+        return f"direct:{url}"
+
+    monkeypatch.setattr(tool, "_get_via_reader", fake_reader)
+    monkeypatch.setattr(tool, "_get_direct", fake_direct)
+
+    try:
+        assert await tool.get("https://example.com") == "direct:https://example.com"
+    finally:
+        await tool.close()

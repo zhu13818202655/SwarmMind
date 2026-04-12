@@ -237,7 +237,7 @@ class SearchConfig(ValidatedDefaultsModel):
 class BrowserConfig(ValidatedDefaultsModel):
     """Browser/detail retrieval configuration."""
 
-    detail_provider: str = Field(default="direct", description="Detail provider: direct or reader")
+    detail_provider: str = Field(default="direct", description="Detail provider: direct, reader, or jina_reader")
     reader_base_url: str = Field(default="https://r.jina.ai/http://", description="Reader API prefix for article extraction")
     timeout_seconds: float = Field(default=30.0, description="Timeout in seconds for detail fetches")
     user_agent: str = Field(default="SwarmMindBrowser/1.0", description="Default user agent for outbound browser requests")
@@ -246,7 +246,12 @@ class BrowserConfig(ValidatedDefaultsModel):
     @classmethod
     def resolve_detail_provider(cls, value: Any) -> Any:
         resolved = resolve_env_value(None if value == "direct" else value, "SWARMMIND_BROWSER__DETAIL_PROVIDER")
-        return "direct" if resolved is None else resolved
+        if resolved is None:
+            return "direct"
+        normalized = str(resolved).strip().lower()
+        if normalized == "jina":
+            return "jina_reader"
+        return normalized
 
     @field_validator("reader_base_url", mode="before")
     @classmethod

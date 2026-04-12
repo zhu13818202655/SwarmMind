@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, List
 
 from agentscope.formatter import OpenAIChatFormatter
@@ -180,7 +181,7 @@ class AgentFactory:
     ) -> OmniAgent:
         """Create an agent constrained by an AgentProfile."""
         config = self.config.model_copy()
-        config.name = profile.name
+        config.name = self._sanitize_agent_name(profile.name)
         prompt_parts: list[str] = []
         for part in [system_prompt, profile.system_prompt, config.system_prompt, profile.custom_prompt]:
             if part and part not in prompt_parts:
@@ -241,7 +242,7 @@ class AgentFactory:
     ) -> OmniAgent:
         """Create a sub-agent."""
         config = self.config.model_copy()
-        config.name = name
+        config.name = self._sanitize_agent_name(name)
         effective_prompt = system_prompt or config.system_prompt or ""
         equipped_tool_groups = self._resolve_equipped_tool_groups(execution_profile=execution_profile) if allow_tools else []
         active_tool_names = self._resolve_active_tool_names(execution_profile=execution_profile) if allow_tools else []
@@ -276,7 +277,7 @@ class AgentFactory:
         return OmniAgent(
             capability_bundle=capability_bundle,
             event_publisher=event_publisher,
-            name=name,
+            name=config.name,
             sys_prompt=effective_prompt,
             model=self.create_model_client(event_publisher=event_publisher),
             formatter=self.create_formatter(),
@@ -284,6 +285,12 @@ class AgentFactory:
             memory=InMemoryMemory(),
             max_iters=config.max_steps,
         )
+
+    @staticmethod
+    def _sanitize_agent_name(name: str) -> str:
+        normalized = re.sub(r"\s+", "_", (name or "agent").strip())
+        normalized = re.sub(r"[^A-Za-z0-9_.-]", "_", normalized)
+        return normalized or "agent"
 
     @staticmethod
     def _resolve_profile_skill_profiles(profile: AgentProfile) -> list[str]:

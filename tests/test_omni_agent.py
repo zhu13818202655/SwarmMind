@@ -256,6 +256,19 @@ async def test_factory_model_client_emits_llm_audit_events(monkeypatch: pytest.M
     assert events[1][1]["response"]["content"][0]["text"] == "ok"
 
 
+def test_factory_sanitizes_profile_agent_name() -> None:
+    factory = _build_factory()
+    profile = AgentProfile(
+        id="writer-default",
+        name="Writer Default",
+        role=AgentRole.WRITER,
+    )
+
+    agent = factory.create_profile_agent(profile, tools=[])
+
+    assert agent.name == "Writer_Default"
+
+
 async def _capture(
     events: list[tuple[str, dict[str, object]]],
     topic: str,

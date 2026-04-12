@@ -25,7 +25,7 @@ Sandbox 约束：
 
 EXECUTION_SUBTASK_MARKDOWN_PROMPT = PromptTemplate(
     name="execution_subtask_markdown_v1",
-    template="""请执行下面的子任务，并以 Markdown 形式产出交付结果。
+    template="""请执行下面的子任务，并产出最终交付摘要。
 
 任务目标：{{ task_goal }}
 子任务名称：{{ subtask_name }}
@@ -33,6 +33,9 @@ EXECUTION_SUBTASK_MARKDOWN_PROMPT = PromptTemplate(
 验收标准：{{ acceptance_criteria_json }}
 约束条件：{{ constraints_json }}
 工具组：{{ tool_groups_json }}
+依赖子任务摘要：{{ dependency_summary_json }}
+依赖产物摘要：{{ artifact_summary_json }}
+输出契约：{{ output_contract_json }}
 
 工具组能力边界：
 - workspace：仅用于检查和修改仓库或工作区文件。
@@ -48,9 +51,12 @@ Sandbox 说明：
 - 不要输出、比较或讨论 sandbox profile 名称，把注意力放在当前任务可用的能力和工具上。
 
 输出要求：
-1) 使用简洁的 Markdown。
+1) 始终返回简洁的 Markdown 摘要，说明你实际完成了什么。
 2) 包含清晰的完成情况检查清单。
-3) 包含针对验收标准的验证说明。""",
+3) 包含针对验收标准的验证说明。
+4) 如果任务或验收标准要求真实文件产物（如 `.pptx`、`.pdf`、`.docx`、`.xlsx`），Markdown 只是一份摘要，不能替代文件本身。
+5) 当要求真实文件产物时，必须使用当前可用工具实际生成该文件；如果没有生成真实文件，就不能声称已经完成交付。
+6) 当依赖子任务或依赖产物摘要中已经提供事实、数据或结论时，优先复用这些内容；不要忽略依赖结果后自行臆造。""",
 )
 
 EXECUTION_FALLBACK_CONTENT_PROMPT = PromptTemplate(

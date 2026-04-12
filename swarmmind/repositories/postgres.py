@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from typing import Any, TypeVar
 
 from psycopg import AsyncConnection
@@ -277,7 +278,14 @@ class PostgresArtifactRepository:
     def __init__(self, store: PostgresStore):
         self._store = store
 
-    async def create(self, artifact: Artifact) -> Artifact:
+    async def create(self, artifact: Artifact, payload: bytes | None = None) -> Artifact:
+        artifact_to_store = artifact
+        if payload is not None:
+            metadata = dict(artifact.metadata)
+            metadata["payload_base64"] = base64.b64encode(payload).decode("ascii")
+            metadata["byte_size"] = len(payload)
+            artifact_to_store = artifact.model_copy(update={"metadata": metadata})
+
         await self._store.execute(
             """
             INSERT INTO artifacts (id, task_id, run_id, subtask_id, type, payload)
@@ -290,15 +298,19 @@ class PostgresArtifactRepository:
                 payload = EXCLUDED.payload
             """,
             (
-                artifact.id,
-                artifact.task_id,
-                artifact.run_id,
-                artifact.subtask_id,
-                artifact.type.value,
-                Jsonb(_dump(artifact)),
+                artifact_to_store.id,
+                artifact_to_store.task_id,
+                artifact_to_store.run_id,
+                artifact_to_store.subtask_id,
+                artifact_to_store.type.value,
+                Jsonb(_dump(artifact_to_store)),
             ),
         )
-        return artifact
+        return artifact_to_store
+
+    async def get(self, artifact_id: str) -> Artifact | None:
+        row = await self._store.fetch_one("SELECT payload FROM artifacts WHERE id = %s", (artifact_id,))
+        return _load(Artifact, row)
 
     async def list_for_run(self, run_id: str) -> list[Artifact]:
         rows = await self._store.fetch_all(
@@ -313,6 +325,16 @@ class PostgresArtifactRepository:
             (run_id, subtask_id),
         )
         return [Artifact.model_validate(row["payload"]) for row in rows]
+
+    async def read_content(self, artifact: Artifact) -> bytes | None:
+        payload_base64 = artifact.metadata.get("payload_base64")
+        if isinstance(payload_base64, str) and payload_base64:
+            return base64.b64decode(payload_base64)
+
+        content = artifact.metadata.get("content")
+        if isinstance(content, str):
+            return content.encode("utf-8")
+        return None
 
 
 class PostgresReplayRepository:

@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
-from starlette.responses import StreamingResponse
+from starlette.responses import Response, StreamingResponse
 
 from swarmmind.app import get_container
 from swarmmind.config import SwarmMindConfig, get_settings
@@ -160,7 +161,7 @@ def to_run_detail_response(run_detail: RunDetail) -> RunDetailResponse:
     return RunDetailResponse(
         run=run_detail.run.model_dump(mode="json"),
         subtasks=[subtask.model_dump(mode="json") for subtask in run_detail.subtasks],
-        artifacts=[artifact.model_dump(mode="json") for artifact in run_detail.artifacts],
+        artifacts=[to_artifact_response_payload(artifact) for artifact in run_detail.artifacts],
     )
 
 
@@ -171,6 +172,14 @@ def to_task_detail_response(task_detail: TaskDetail) -> TaskDetailResponse:
         session=task_detail.session.model_dump(mode="json") if task_detail.session else None,
         runs=[to_run_detail_response(run_detail) for run_detail in task_detail.runs],
     )
+
+
+def to_artifact_response_payload(artifact) -> dict[str, Any]:
+    """Serialize a single artifact with download metadata when available."""
+    payload = artifact.model_dump(mode="json")
+    if artifact.type.value == "file":
+        payload["download_url"] = f"/v1/runs/{artifact.run_id}/artifacts/{artifact.id}/content"
+    return payload
 
 
 def build_run_events_response(
@@ -481,7 +490,38 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
         return SubTaskArtifactsResponse(
             run_id=run_id,
             subtask_id=subtask_id,
-            artifacts=[artifact.model_dump(mode="json") for artifact in artifacts],
+            artifacts=[to_artifact_response_payload(artifact) for artifact in artifacts],
+        )
+
+    @app.get("/v1/runs/{run_id}/artifacts/{artifact_id}/content")
+    async def download_artifact_content(run_id: str, artifact_id: str, raw_request: Request):
+        """Download the raw content for a persisted artifact."""
+        container = raw_request.app.state.container
+        identity = await resolve_identity(raw_request)
+        container.authorization_policy.ensure_can_read_run(identity)
+
+        artifact = await container.artifact_repository.get(artifact_id)
+        if artifact is None or artifact.run_id != run_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Artifact not found for run: {artifact_id}",
+            )
+
+        content = await container.artifact_repository.read_content(artifact)
+        if content is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Artifact content is not available: {artifact_id}",
+            )
+
+        file_name = artifact.metadata.get("file_name")
+        if not isinstance(file_name, str) or not file_name:
+            file_name = Path(artifact.name).name or f"artifact-{artifact.id}"
+
+        return Response(
+            content=content,
+            media_type=artifact.content_type or "application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
         )
 
     @app.get("/v1/runs/{run_id}/stream")

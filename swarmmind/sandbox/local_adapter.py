@@ -52,7 +52,7 @@ class LocalSandboxAdapter(SandboxProvider):
             target.write_text(entry.data, encoding="utf-8")
             target.chmod(entry.mode)
 
-    async def read_file(self, sandbox_id: str, path: str, *, encoding: str = "utf-8") -> str | bytes:
+    async def read_file(self, sandbox_id: str, path: str, *, encoding: str | None = "utf-8") -> str | bytes:
         """Read a file inside the local sandbox root."""
         root = self._require_root(sandbox_id)
         target = self._resolve_path(root, path)

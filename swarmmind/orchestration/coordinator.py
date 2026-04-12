@@ -9,7 +9,7 @@ from swarmmind.agents.agent_skill import normalize_skill_profile_names
 from swarmmind.agents.profile import AgentProfileStore
 from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.models.agent_profile import AgentProfile
-from swarmmind.models.capability import DEFAULT_ROLE_TOOL_GROUPS, RuntimeKind, ToolGroup
+from swarmmind.models.capability import AgentRole, DEFAULT_ROLE_TOOL_GROUPS, RuntimeKind, ToolGroup
 from swarmmind.models.execution import ExecutionProfile
 from swarmmind.models.run import Run
 from swarmmind.models.task import SubTask, Task
@@ -38,6 +38,27 @@ _BROWSER_PLAYWRIGHT_HINTS: tuple[str, ...] = (
     "滚动",
 )
 
+_MATERIALIZED_OUTPUT_HINTS: tuple[str, ...] = (
+    ".pptx",
+    ".pdf",
+    ".docx",
+    ".xlsx",
+    "pptx",
+    "ppt ",
+    "slides",
+    "slide deck",
+    "presentation deck",
+    "presentation file",
+    "pdf file",
+    "docx file",
+    "xlsx file",
+    "可直接打开",
+    "导出",
+    "输出文件",
+    "生成文件",
+    "演示文稿",
+    "幻灯片",
+)
 
 class Coordinator:
     """Attach execution metadata to ready subtasks."""
@@ -51,9 +72,15 @@ class Coordinator:
         for subtask in subtasks:
             agent_profile = self._resolve_agent_profile(task, subtask)
             subtask.agent_profile_id = agent_profile.id
-            required_tool_groups = self._resolve_required_tool_groups(subtask, agent_profile)
-            candidate_runtime_kinds = self._resolve_candidate_runtime_kinds(task, subtask, agent_profile, required_tool_groups)
             skill_profiles = self._resolve_skill_profiles(subtask, agent_profile)
+            required_tool_groups = self._resolve_required_tool_groups(task, subtask, agent_profile, skill_profiles)
+            candidate_runtime_kinds = self._resolve_candidate_runtime_kinds(
+                task,
+                subtask,
+                agent_profile,
+                required_tool_groups,
+                skill_profiles,
+            )
             resolved_runtime_kind, runtime_reason, fallback_chain = self._resolve_runtime_kind(
                 task=task,
                 subtask=subtask,
@@ -96,12 +123,29 @@ class Coordinator:
         )
 
     @staticmethod
-    def _resolve_required_tool_groups(subtask: SubTask, agent_profile: AgentProfile) -> list[ToolGroup]:
+    def _resolve_required_tool_groups(
+        task: Task,
+        subtask: SubTask,
+        agent_profile: AgentProfile,
+        skill_profiles: list[str],
+    ) -> list[ToolGroup]:
         if subtask.execution_configuration and subtask.execution_configuration.tool_requirements:
-            return list(dict.fromkeys(subtask.execution_configuration.tool_requirements))
-        if agent_profile.default_tool_groups:
-            return list(dict.fromkeys(agent_profile.default_tool_groups))
-        return list(dict.fromkeys(DEFAULT_ROLE_TOOL_GROUPS.get(subtask.role, [])))
+            tool_groups = list(dict.fromkeys(subtask.execution_configuration.tool_requirements))
+        elif agent_profile.default_tool_groups:
+            tool_groups = list(dict.fromkeys(agent_profile.default_tool_groups))
+        else:
+            tool_groups = list(dict.fromkeys(DEFAULT_ROLE_TOOL_GROUPS.get(subtask.role, [])))
+
+        if subtask.dependencies and ToolGroup.ARTIFACT not in tool_groups:
+            tool_groups.append(ToolGroup.ARTIFACT)
+
+        if Coordinator._requires_materialized_output(task, subtask, skill_profiles):
+            if ToolGroup.FILE_SYSTEM not in tool_groups:
+                tool_groups.append(ToolGroup.FILE_SYSTEM)
+            if ToolGroup.CODE_EXEC not in tool_groups:
+                tool_groups.append(ToolGroup.CODE_EXEC)
+
+        return tool_groups
 
     @staticmethod
     def _resolve_candidate_runtime_kinds(
@@ -109,8 +153,11 @@ class Coordinator:
         subtask: SubTask,
         agent_profile: AgentProfile,
         required_tool_groups: list[ToolGroup],
+        skill_profiles: list[str],
     ) -> list[RuntimeKind]:
         candidates: list[RuntimeKind] = []
+        if Coordinator._requires_materialized_output(task, subtask, skill_profiles):
+            candidates.append(RuntimeKind.SANDBOX)
         if Coordinator._prefers_browser_playwright(task, subtask, required_tool_groups):
             candidates.append(RuntimeKind.SANDBOX)
         planner_candidate = subtask.metadata.get("planner_execution_candidate") if isinstance(subtask.metadata, dict) else None
@@ -246,3 +293,22 @@ class Coordinator:
         ).lower()
         text = re.sub(r"\s+", " ", text)
         return any(keyword in text for keyword in _BROWSER_PLAYWRIGHT_HINTS)
+
+    @staticmethod
+    def _requires_materialized_output(task: Task, subtask: SubTask, skill_profiles: list[str]) -> bool:
+        del skill_profiles
+        if subtask.role not in {AgentRole.CODER, AgentRole.WRITER, AgentRole.RESEARCHER}:
+            return False
+        text = "\n".join(
+            part
+            for part in [
+                task.goal,
+                subtask.name,
+                subtask.description,
+                *subtask.acceptance_criteria,
+                *subtask.expected_artifacts,
+            ]
+            if isinstance(part, str) and part.strip()
+        ).lower()
+        text = re.sub(r"\s+", " ", text)
+        return any(keyword in text for keyword in _MATERIALIZED_OUTPUT_HINTS)
