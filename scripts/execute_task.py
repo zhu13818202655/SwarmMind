@@ -1,14 +1,3 @@
-"""Submit a task to a running SwarmMind service.
-
-Usage examples:
-
-    python scripts/submit_task.py
-    python scripts/submit_task.py --goal "实现一个导出 Excel 功能并补测试"
-    python scripts/submit_task.py --base-url http://127.0.0.1:8000 --poll
-"""
-
-from __future__ import annotations
-
 import argparse
 import json
 import sys
@@ -23,112 +12,8 @@ if str(ROOT) not in sys.path:
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
 RUN_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+PPT_OUTPUT_PATH = "/home/admin2/proj/SwarmMind/output/黄金投资建议.pptx"
 
-
-def compact_json(value: object, *, limit: int = 5000) -> str:
-    """Render a compact JSON string with truncation for console output."""
-    try:
-        rendered = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    except TypeError:
-        rendered = str(value)
-    if len(rendered) <= limit:
-        return rendered
-    return f"{rendered[: limit - 3]}..."
-
-
-def build_subtask_input_summary(subtask: dict[str, object]) -> dict[str, object]:
-    """Build a compact summary of the effective subtask input."""
-    summary: dict[str, object] = {}
-
-    for field_name in (
-        "description",
-        "acceptance_criteria",
-        "dependencies",
-        "expected_artifacts",
-        "execution_configuration",
-        "role",
-        "agent_profile_id",
-    ):
-        value = subtask.get(field_name)
-        if value not in (None, "", [], {}):
-            summary[field_name] = value
-
-    metadata = subtask.get("metadata")
-    if isinstance(metadata, dict):
-        metadata_input: dict[str, object] = {}
-        for field_name in (
-            "input",
-            "input_text",
-            "input_data",
-            "task_goal",
-            "planner_execution_candidate",
-            "resolved_execution_profile",
-        ):
-            value = metadata.get(field_name)
-            if value not in (None, "", [], {}):
-                metadata_input[field_name] = value
-        if metadata_input:
-            summary["metadata"] = metadata_input
-
-    return summary
-
-
-def emit_subtask_progress(
-    subtasks: list[dict[str, object]],
-    *,
-    seen_subtasks: dict[str, str],
-    printed_results: set[str],
-) -> None:
-    """Print subtask discovery, status changes, and result summaries incrementally."""
-    for subtask in subtasks:
-        if not isinstance(subtask, dict):
-            continue
-
-        subtask_id = str(subtask.get("id") or "")
-        name = str(subtask.get("name") or subtask_id or "unknown-subtask")
-        description = str(subtask.get("description") or "").strip()
-        status = str(subtask.get("status") or "unknown")
-        error = subtask.get("error")
-        result = subtask.get("result")
-
-        previous_status = seen_subtasks.get(subtask_id)
-        if previous_status is None:
-            detail = f"[subtask] {name} -> {status}"
-            if description:
-                detail = f"{detail} | {description}"
-            print(detail)
-            subtask_input = build_subtask_input_summary(subtask)
-            if subtask_input:
-                print(f"[subtask-input] {name}: {compact_json(subtask_input)}")
-        elif previous_status != status:
-            print(f"[subtask] {name} {previous_status} -> {status}")
-
-        seen_subtasks[subtask_id] = status
-
-        if result is not None and subtask_id not in printed_results:
-            print(f"[subtask-result] {name}: {compact_json(result)}")
-            printed_results.add(subtask_id)
-
-        if error and status in RUN_TERMINAL_STATUSES and f"error:{subtask_id}" not in printed_results:
-            print(f"[subtask-error] {name}: {error}")
-            printed_results.add(f"error:{subtask_id}")
-
-
-def emit_artifact_progress(
-    artifacts: list[dict[str, object]],
-    *,
-    seen_artifacts: set[str],
-) -> None:
-    """Print newly created artifacts as they appear in the run detail."""
-    for artifact in artifacts:
-        if not isinstance(artifact, dict):
-            continue
-
-        artifact_id = str(artifact.get("id") or "")
-        if not artifact_id or artifact_id in seen_artifacts:
-            continue
-
-        seen_artifacts.add(artifact_id)
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
@@ -155,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional default handoff target profile id used when no subtask-specific mapping is provided.",
     )
     parser.add_argument("--poll", action="store_true", help="Poll task status until it reaches a terminal state")
-    parser.add_argument("--interval", type=float, default=5.0, help="Polling interval in seconds")
+    parser.add_argument("--interval", type=float, default=2.0, help="Polling interval in seconds")
     parser.add_argument("--timeout", type=float, default=3000.0, help="Polling timeout in seconds")
     parser.add_argument(
         "--wait-for-service",
@@ -308,10 +193,6 @@ def poll_run(
     """Poll the run detail until it reaches a terminal state or timeout."""
     deadline = time.monotonic() + timeout
     last_payload: dict[str, object] | None = None
-    seen_subtasks: dict[str, str] = {}
-    printed_results: set[str] = set()
-    seen_artifacts: set[str] = set()
-    last_progress_marker: tuple[str, str, int] | None = None
 
     while time.monotonic() < deadline:
         last_payload = fetch_run(client, base_url, run_id, request_timeout)
@@ -319,22 +200,9 @@ def poll_run(
         status = str(run.get("status", "")).lower() if isinstance(run, dict) else ""
         phase = str(run.get("phase", "")) if isinstance(run, dict) else ""
         subtasks = last_payload.get("subtasks", []) if isinstance(last_payload, dict) else []
-        artifacts = last_payload.get("artifacts", []) if isinstance(last_payload, dict) else []
         subtask_count = len(subtasks) if isinstance(subtasks, list) else 0
-        progress_marker = (status, phase, subtask_count)
-        if progress_marker != last_progress_marker:
+        if not (phase == "planning" and subtask_count == 0):
             print(f"[poll] run_id={run_id} status={status} phase={phase} subtasks={subtask_count}")
-            last_progress_marker = progress_marker
-
-        if isinstance(subtasks, list):
-            emit_subtask_progress(
-                subtasks,
-                seen_subtasks=seen_subtasks,
-                printed_results=printed_results,
-            )
-        if isinstance(artifacts, list):
-            emit_artifact_progress(artifacts, seen_artifacts=seen_artifacts)
-
         if status in RUN_TERMINAL_STATUSES:
             return last_payload
         time.sleep(interval)
@@ -473,6 +341,9 @@ def main() -> int:
 
     print("最终查询结果：")
     print(json.dumps(final_state, ensure_ascii=False, indent=2))
+    if run_id:
+        print_run_summary(final_state)
+    print(f"PPT已经生成完毕，你给出下载地址：{PPT_OUTPUT_PATH}")
     return 0
 
 

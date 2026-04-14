@@ -6,6 +6,7 @@ from jinja2 import UndefinedError
 from swarmmind.agents.agent_skill import list_installed_skill_profile_names
 from swarmmind.prompt_template import (
     EXECUTION_SUBTASK_MARKDOWN_PROMPT,
+    EXECUTION_SANDBOX_COMMAND_PROMPT,
     EXECUTION_SYSTEM_PROMPT,
     PLANNER_EXECUTION_CONFIGURATION_PROMPT,
     PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT,
@@ -57,15 +58,14 @@ def test_planner_prompts_include_aio_only_sandbox_policy() -> None:
 
 def test_execution_prompts_include_capability_boundaries() -> None:
     assert "你不需要选择、输出或请求 sandbox profile 名称" in EXECUTION_SYSTEM_PROMPT.template
-    assert "工具组能力边界：" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
-    assert "workspace：仅用于检查和修改仓库或工作区文件。" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
-    assert "系统会自动绑定 `aio`" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "Markdown 只是一份摘要，不能替代文件本身" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "依赖子任务摘要：{{ dependency_summary_json }}" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "当前可用技能脚本：{{ skill_script_inventory_json }}" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "技能执行提示：{{ selected_skill_context_json }}" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "先调用 `list_skill_scripts` 或 `get_skill_details` 查询后再执行" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "必须通过 `script_args` 传入有序参数" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "必须设置 `allow_sandbox_exec=true`" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "不要把 Markdown 内容写入 `outputs/*.md` 来冒充文件交付" in EXECUTION_SANDBOX_COMMAND_PROMPT.template
 
 
 def test_planner_execution_configuration_prompt_requires_code_exec_for_real_files() -> None:

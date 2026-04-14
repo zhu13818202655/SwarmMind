@@ -2,6 +2,120 @@
 name: pptx
 description: "Use this skill any time a .pptx file is involved in any way — as input, output, or both. This includes: creating slide decks, pitch decks, or presentations; reading, parsing, or extracting text from any .pptx file (even if the extracted content will be used elsewhere, like in an email or summary); editing, modifying, or updating existing presentations; combining or splitting slide files; working with templates, layouts, speaker notes, or comments. Trigger whenever the user mentions \"deck,\" \"slides,\" \"presentation,\" or references a .pptx filename, regardless of what they plan to do with the content afterward. If a .pptx file needs to be opened, created, or touched, use this skill."
 license: Proprietary. LICENSE.txt has complete terms
+runtime_requirements:
+  python_packages:
+    - defusedxml
+    - markitdown[pptx]
+    - Pillow
+    - python-pptx
+script_specs:
+  - path: scripts/create_presentation.py
+    runtime: python
+    description: Create a new .pptx presentation from scratch from a structured deck_spec JSON object. Use this when no template or existing PPTX file is available.
+    argument_names:
+      - deck_spec
+      - output_file
+    artifacts:
+      - "{output_file}"
+    args_schema:
+      type: object
+      properties:
+        deck_spec:
+          type: object
+          description: Structured presentation definition with title, optional subtitle, and slides. Each slide supports title plus optional summary, bullets, highlight, and source fields.
+        output_file:
+          type: string
+          description: Output .pptx file path.
+      required:
+        - deck_spec
+        - output_file
+    examples:
+      - script_input:
+          deck_spec:
+            title: Gold investment outlook
+            subtitle: Trend review, forecast, and recommendations
+            slides:
+              - title: Recent price trends
+                summary: Gold prices stayed elevated due to rate-cut expectations and safe-haven demand.
+                bullets:
+                  - COMEX gold remained near record highs in the last quarter.
+                  - Central-bank buying and geopolitical risk supported the upside.
+                highlight: Momentum is strong, but volatility has increased.
+                source: Yahoo Finance, CNBC, World Gold Council
+              - title: Investment suggestions
+                bullets:
+                  - Use staggered entries instead of one-shot buying.
+                  - Limit high-volatility exposure with a position cap.
+                source: Internal strategy synthesis
+          output_file: /workspace/gold-investment-presentation.pptx
+  - path: scripts/add_slide.py
+    runtime: python
+    description: Add a slide to an unpacked PPTX directory by duplicating an existing slide or creating one from a slide layout.
+    argument_names:
+      - unpacked_dir
+      - source
+    args_schema:
+      type: object
+      properties:
+        unpacked_dir:
+          type: string
+          description: Path to the unpacked PPTX directory.
+        source:
+          type: string
+          description: Slide XML file or slideLayout XML file to use as the source.
+      required:
+        - unpacked_dir
+        - source
+    examples:
+      - script_input:
+          unpacked_dir: /workspace/gold_unpacked
+          source: slideLayout2.xml
+  - path: scripts/office/unpack.py
+    runtime: python
+    description: Unpack a PPTX archive into an editable XML directory tree.
+    argument_names:
+      - input_file
+      - output_directory
+    args_schema:
+      type: object
+      properties:
+        input_file:
+          type: string
+          description: Input .pptx file path.
+        output_directory:
+          type: string
+          description: Output directory for the unpacked PPTX contents.
+      required:
+        - input_file
+        - output_directory
+    examples:
+      - script_input:
+          input_file: /workspace/gold.pptx
+          output_directory: /workspace/gold_unpacked
+  - path: scripts/office/pack.py
+    runtime: python
+    description: Pack an unpacked PPTX directory back into a .pptx file.
+    argument_names:
+      - input_directory
+      - output_file
+    artifacts:
+      - "{output_file}"
+    args_schema:
+      type: object
+      properties:
+        input_directory:
+          type: string
+          description: Input directory containing the unpacked PPTX contents.
+        output_file:
+          type: string
+          description: Output .pptx file path.
+      required:
+        - input_directory
+        - output_file
+    examples:
+      - script_input:
+          input_directory: /workspace/gold_unpacked
+          output_file: /workspace/gold_investment.pptx
 ---
 
 # PPTX Skill
@@ -164,7 +278,7 @@ If grep returns results, fix them before declaring success.
 
 **⚠️ USE SUBAGENTS** — even for 2-3 slides. You've been staring at the code and will see what you expect, not what's there. Subagents have fresh eyes.
 
-Convert slides to images (see [Converting to Images](#converting-to-images)), then use this prompt:
+Convert slides to images (see the "Converting to Images" section below), then use this prompt:
 
 ```
 Visually inspect these slides. Assume there are issues — find them.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import cast
 
 import pytest
@@ -10,6 +11,7 @@ from swarmmind.app.container import build_container
 from swarmmind.config import SwarmMindConfig
 from swarmmind.gateway import TaskSubmitRequest
 from swarmmind.models.agent_profile import AgentProfile, SkillsMode
+from swarmmind.models.artifact import Artifact
 from swarmmind.models.artifact import ArtifactType
 from swarmmind.models.capability import AgentRole, RuntimeKind, ToolGroup
 from swarmmind.models.event import DomainEvent
@@ -34,10 +36,31 @@ async def _wait_for_terminal_run(container, run_id: str, identity, timeout: floa
     raise TimeoutError(f"Run {run_id} did not reach terminal state within {timeout}s")
 
 
+def _install_real_command_plan_stub(monkeypatch: pytest.MonkeyPatch, container) -> None:
+    original = container.execution_runner._run_omni_agent_prompt
+
+    async def fake_run_omni_agent_prompt(**kwargs):
+        if kwargs.get("step_kind") == "command.plan":
+            subtask = kwargs["subtask"]
+            command = (
+                "python3 -c \"print('running subtask: "
+                + subtask.name.replace("'", "")
+                + "')\""
+            )
+            return OmniAgentResult(
+                status="completed",
+                content=json.dumps({"command": command, "cwd": "."}, ensure_ascii=False),
+            )
+        return await original(**kwargs)
+
+    monkeypatch.setattr(container.execution_runner, "_run_omni_agent_prompt", fake_run_omni_agent_prompt)
+
+
 @pytest.mark.asyncio
-async def test_submit_task_executes_subtasks_and_collects_artifacts() -> None:
+async def test_submit_task_executes_subtasks_and_collects_artifacts(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = SwarmMindConfig(sandbox={"provider": "local"})
     container = await build_container(settings)
+    _install_real_command_plan_stub(monkeypatch, container)
     identity = await container.identity_resolver.resolve()
 
     submission = await container.gateway.submit_task(
@@ -84,9 +107,10 @@ async def test_submit_task_executes_subtasks_and_collects_artifacts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_subtask_marks_run_and_task_failed() -> None:
+async def test_failed_subtask_marks_run_and_task_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = SwarmMindConfig(sandbox={"provider": "local"})
     container = await build_container(settings)
+    _install_real_command_plan_stub(monkeypatch, container)
     identity = await container.identity_resolver.resolve()
 
     submission = await container.gateway.submit_task(
@@ -112,9 +136,10 @@ async def test_failed_subtask_marks_run_and_task_failed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_review_rework_generates_repair_chain_and_run_recovers() -> None:
+async def test_review_rework_generates_repair_chain_and_run_recovers(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = SwarmMindConfig(sandbox={"provider": "local"})
     container = await build_container(settings)
+    _install_real_command_plan_stub(monkeypatch, container)
     identity = await container.identity_resolver.resolve()
 
     submission = await container.gateway.submit_task(
@@ -142,9 +167,10 @@ async def test_review_rework_generates_repair_chain_and_run_recovers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_subtask_can_trigger_failure_repair_chain() -> None:
+async def test_failed_subtask_can_trigger_failure_repair_chain(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = SwarmMindConfig(sandbox={"provider": "local"})
     container = await build_container(settings)
+    _install_real_command_plan_stub(monkeypatch, container)
     identity = await container.identity_resolver.resolve()
 
     submission = await container.gateway.submit_task(
@@ -292,7 +318,312 @@ async def test_execution_prompt_includes_declared_skill_scripts() -> None:
     assert '当前选中的 skill profiles：["pptx"]' in prompt
     assert 'scripts/add_slide.py' in prompt
     assert 'scripts/office/pack.py' in prompt
+    assert '技能执行提示：' in prompt
+    assert 'script_specs' in prompt
+    assert '真实文件产物要求：' in prompt
     assert '必须设置 `allow_sandbox_exec=true`' in prompt
+
+
+@pytest.mark.asyncio
+async def test_materialized_skill_sandbox_subtask_uses_omni_agent_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+
+    calls: dict[str, object] = {}
+
+    async def fake_execute_omni_agent_subtask(*, task, run, subtask, event, runtime_kind):
+        del task, run, subtask, event
+        calls["runtime_kind"] = runtime_kind
+
+    async def fake_execute_sandbox_subtask(task, run, subtask, event):
+        del task, run, subtask, event
+        calls["sandbox_called"] = True
+
+    monkeypatch.setattr(container.execution_runner, "_execute_omni_agent_subtask", fake_execute_omni_agent_subtask)
+    monkeypatch.setattr(container.execution_runner, "_execute_sandbox_subtask", fake_execute_sandbox_subtask)
+
+    task = Task(
+        id="task-materialized-route-1",
+        goal="生成黄金投资建议 PPT",
+        metadata={"tenant_id": "local", "principal_id": "tester"},
+    )
+    run = Run(id="run-materialized-route-1", task_id=task.id, session_id="session-materialized-route-1")
+    execution_configuration = ExecutionConfiguration(
+        runtime_kind=RuntimeKind.SANDBOX,
+        tool_requirements=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        skill_profiles=["pptx"],
+    )
+    execution_profile = ExecutionProfile(
+        role=AgentRole.WRITER,
+        execution_configuration=execution_configuration,
+        required_tool_groups=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        resolved_runtime_kind=RuntimeKind.SANDBOX,
+        runtime_resolution_reason="Test skill route.",
+        skill_profiles=["pptx"],
+        allowed_tool_groups=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+    )
+    subtask = SubTask(
+        id="subtask-materialized-route-1",
+        task_id=task.id,
+        name="draft-gold-investment-ppt",
+        description="基于研究结果生成可直接打开的 PPT。",
+        role=AgentRole.WRITER,
+        acceptance_criteria=["输出为可直接打开的 .pptx 文件。"],
+        expected_artifacts=["outputs/demo.pptx"],
+        execution_configuration=execution_configuration,
+        metadata={"run_id": run.id, "plan_source": "test"},
+    )
+    subtask.assign(execution_profile.model_dump(mode="json"), run.id)
+
+    await container.execution_runner._execute_subtask(
+        task,
+        run,
+        subtask,
+        DomainEvent(
+            event_id="event-materialized-route-1",
+            topic="subtask.assigned",
+            tenant_id="local",
+            session_id=run.session_id,
+            task_id=task.id,
+            run_id=run.id,
+            subtask_id=subtask.id,
+            payload={},
+        ),
+    )
+
+    assert calls.get("runtime_kind") == RuntimeKind.SANDBOX
+    assert "sandbox_called" not in calls
+
+
+@pytest.mark.asyncio
+async def test_build_command_request_prefers_structured_command_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+
+    async def fake_run_omni_agent_prompt(**kwargs):
+        del kwargs
+        return OmniAgentResult(status="completed", content='{"command":"python3 scripts/build.py","cwd":"workspace"}')
+
+    monkeypatch.setattr(container.execution_runner, "_run_omni_agent_prompt", fake_run_omni_agent_prompt)
+
+    task = Task(
+        id="task-command-plan-1",
+        goal="执行普通 sandbox 构建命令",
+        metadata={"tenant_id": "local", "principal_id": "tester"},
+    )
+    execution_profile = ExecutionProfile(
+        role=AgentRole.CODER,
+        required_tool_groups=[ToolGroup.CODE_EXEC],
+        resolved_runtime_kind=RuntimeKind.SANDBOX,
+        allowed_tool_groups=[ToolGroup.CODE_EXEC],
+    )
+    subtask = SubTask(
+        id="subtask-command-plan-1",
+        task_id=task.id,
+        name="run-build-command",
+        description="运行构建命令。",
+        role=AgentRole.CODER,
+        acceptance_criteria=["命令执行完成。"],
+        metadata={"execution_profile": execution_profile.model_dump(mode="json")},
+    )
+
+    request = await container.execution_runner._build_command_request(task, subtask)
+
+    assert request.command == "python3 scripts/build.py"
+    assert request.cwd == "workspace"
+
+
+@pytest.mark.asyncio
+async def test_build_command_request_requires_real_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+
+    async def fake_run_omni_agent_prompt(**kwargs):
+        del kwargs
+        return OmniAgentResult(status="completed", content='{"cwd":"workspace"}')
+
+    monkeypatch.setattr(container.execution_runner, "_run_omni_agent_prompt", fake_run_omni_agent_prompt)
+
+    task = Task(
+        id="task-command-plan-missing-1",
+        goal="执行普通 sandbox 构建命令",
+        metadata={"tenant_id": "local", "principal_id": "tester"},
+    )
+    execution_profile = ExecutionProfile(
+        role=AgentRole.CODER,
+        required_tool_groups=[ToolGroup.CODE_EXEC],
+        resolved_runtime_kind=RuntimeKind.SANDBOX,
+        allowed_tool_groups=[ToolGroup.CODE_EXEC],
+    )
+    subtask = SubTask(
+        id="subtask-command-plan-missing-1",
+        task_id=task.id,
+        name="run-build-command-without-command",
+        description="运行构建命令。",
+        role=AgentRole.CODER,
+        acceptance_criteria=["命令执行完成。"],
+        metadata={"execution_profile": execution_profile.model_dump(mode="json")},
+    )
+
+    with pytest.raises(RuntimeError, match="requires a real sandbox command"):
+        await container.execution_runner._build_command_request(task, subtask)
+
+
+@pytest.mark.asyncio
+async def test_omni_agent_sandbox_subtask_accepts_materialized_file_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+
+    task = Task(
+        id="task-omni-materialized-1",
+        goal="生成黄金投资建议 PPT",
+        metadata={"tenant_id": "local", "principal_id": "tester"},
+    )
+    run = Run(id="run-omni-materialized-1", task_id=task.id, session_id="session-omni-materialized-1")
+    execution_configuration = ExecutionConfiguration(
+        runtime_kind=RuntimeKind.SANDBOX,
+        tool_requirements=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        skill_profiles=["pptx"],
+    )
+    execution_profile = ExecutionProfile(
+        role=AgentRole.WRITER,
+        execution_configuration=execution_configuration,
+        required_tool_groups=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        resolved_runtime_kind=RuntimeKind.SANDBOX,
+        runtime_resolution_reason="Test materialized omni-agent path.",
+        skill_profiles=["pptx"],
+        allowed_tool_groups=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+    )
+    subtask = SubTask(
+        id="subtask-omni-materialized-1",
+        task_id=task.id,
+        name="draft-gold-investment-ppt",
+        description="生成一个可直接打开的 .pptx 文件。",
+        role=AgentRole.WRITER,
+        acceptance_criteria=["输出真实的 .pptx 文件。"],
+        expected_artifacts=["outputs/demo.pptx"],
+        execution_configuration=execution_configuration,
+        metadata={"run_id": run.id, "plan_source": "test"},
+    )
+    subtask.assign(execution_profile.model_dump(mode="json"), run.id)
+
+    await container.task_repository.create(task)
+    await container.run_repository.create(run)
+    await container.subtask_repository.save(subtask)
+
+    async def fake_render_materialized_subtask_content_with_retry(task_arg, run_arg, subtask_arg, max_attempts=2):
+        del task_arg, max_attempts
+        await container.artifact_repository.create(
+            Artifact(
+                id="artifact-omni-materialized-1",
+                task_id=task.id,
+                run_id=run_arg.id,
+                subtask_id=subtask_arg.id,
+                name="demo.pptx",
+                type=ArtifactType.FILE,
+                storage_ref="/v1/runs/run-omni-materialized-1/artifacts/artifact-omni-materialized-1/content",
+                content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ),
+            payload=b"PK\x03\x04omni-pptx",
+        )
+        return OmniAgentResult(
+            status="completed",
+            content="已生成 PPT 文件。",
+            used_tool_names=["run_skill_script"],
+            tool_call_count=1,
+            skill_execution_count=1,
+        )
+
+    monkeypatch.setattr(
+        container.execution_runner,
+        "_render_materialized_subtask_content_with_retry",
+        fake_render_materialized_subtask_content_with_retry,
+    )
+
+    await container.execution_runner._execute_omni_agent_subtask(
+        task=task,
+        run=run,
+        subtask=subtask,
+        event=DomainEvent(
+            event_id="event-omni-materialized-1",
+            topic="subtask.assigned",
+            tenant_id="local",
+            session_id=run.session_id,
+            task_id=task.id,
+            run_id=run.id,
+            subtask_id=subtask.id,
+            payload={},
+        ),
+        runtime_kind=RuntimeKind.SANDBOX,
+    )
+
+    stored_subtask = await container.subtask_repository.get(subtask.id)
+
+    assert stored_subtask is not None
+    assert stored_subtask.status == SubTaskStatus.SUCCEEDED
+    assert stored_subtask.result is not None
+    assert stored_subtask.result.get("materialized_artifact_count") == 1
+
+
+@pytest.mark.asyncio
+async def test_materialized_skill_subtask_retries_until_run_skill_script_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+
+    task = Task(
+        id="task-materialized-retry-1",
+        goal="生成黄金投资建议 PPT",
+        metadata={"tenant_id": "local", "principal_id": "tester"},
+    )
+    run = Run(id="run-materialized-retry-1", task_id=task.id, session_id="session-materialized-retry-1")
+    execution_configuration = ExecutionConfiguration(
+        runtime_kind=RuntimeKind.SANDBOX,
+        tool_requirements=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        skill_profiles=["pptx"],
+    )
+    execution_profile = ExecutionProfile(
+        role=AgentRole.WRITER,
+        execution_configuration=execution_configuration,
+        required_tool_groups=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        resolved_runtime_kind=RuntimeKind.SANDBOX,
+        runtime_resolution_reason="Test materialized retry path.",
+        skill_profiles=["pptx"],
+        allowed_tool_groups=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+    )
+    subtask = SubTask(
+        id="subtask-materialized-retry-1",
+        task_id=task.id,
+        name="draft-gold-investment-ppt",
+        description="生成一个可直接打开的 .pptx 文件。",
+        role=AgentRole.WRITER,
+        acceptance_criteria=["输出真实的 .pptx 文件。"],
+        expected_artifacts=["outputs/demo.pptx"],
+        execution_configuration=execution_configuration,
+        metadata={"run_id": run.id, "plan_source": "test"},
+    )
+    subtask.assign(execution_profile.model_dump(mode="json"), run.id)
+
+    attempts: list[str] = []
+
+    async def fake_run_omni_agent_prompt(**kwargs):
+        attempts.append(str(kwargs.get("step_kind")))
+        if len(attempts) == 1:
+            return OmniAgentResult(status="completed", content="第一次只是口头总结", used_tool_names=[])
+        return OmniAgentResult(
+            status="completed",
+            content="第二次执行了 skill",
+            used_tool_names=["run_skill_script"],
+            tool_call_count=1,
+            skill_execution_count=1,
+        )
+
+    monkeypatch.setattr(container.execution_runner, "_run_omni_agent_prompt", fake_run_omni_agent_prompt)
+
+    result = await container.execution_runner._render_materialized_subtask_content_with_retry(task, run, subtask)
+
+    assert result.content == "第二次执行了 skill"
+    assert result.used_tool_names == ["run_skill_script"]
+    assert attempts == ["content.render.materialized.1", "content.render.materialized.2"]
 
 
 @pytest.mark.asyncio
@@ -349,6 +680,62 @@ async def test_run_skill_script_defaults_to_sandbox_exec_for_materialized_output
     assert captured["kwargs"]["script_path"] == "scripts/add_slide.py"
     assert captured["kwargs"]["script_args"] == ["workspace/unpacked", "slideLayout2.xml"]
     assert captured["kwargs"]["allow_sandbox_exec"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_skill_script_accepts_structured_script_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = SwarmMindConfig(sandbox={"provider": "local"})
+    container = await build_container(settings)
+
+    captured: dict[str, object] = {}
+
+    async def fake_run_tool(tool_name, **kwargs):
+        captured["tool_name"] = tool_name
+        captured["kwargs"] = kwargs
+        return {"ok": True}
+
+    monkeypatch.setattr(container.execution_runner, "_run_tool", fake_run_tool)
+
+    task = Task(
+        id="task-skill-structured-1",
+        goal="生成黄金投资建议PPT",
+        metadata={"tenant_id": "local", "principal_id": "tester"},
+    )
+    run = Run(id="run-skill-structured-1", task_id=task.id, session_id="session-skill-structured-1")
+    execution_profile = ExecutionProfile(
+        role=AgentRole.WRITER,
+        required_tool_groups=[ToolGroup.CODE_EXEC, ToolGroup.ARTIFACT],
+        resolved_runtime_kind=RuntimeKind.SANDBOX,
+        skill_profiles=["pptx"],
+    )
+    subtask = SubTask(
+        id="subtask-skill-structured-1",
+        task_id=task.id,
+        name="draft-gold-investment-ppt",
+        description="基于研究结果生成可直接打开的 PPT。",
+        role=AgentRole.WRITER,
+        acceptance_criteria=["输出为可直接打开的 .pptx 文件。"],
+        expected_artifacts=["presentation"],
+        metadata={
+            "selected_tools": ["run_skill_script"],
+            "execution_profile": execution_profile.model_dump(mode="json"),
+        },
+    )
+
+    tool_functions = container.execution_runner._build_agent_tool_functions(task, run, subtask)
+    run_skill_script = next(tool for tool in tool_functions if tool.__name__ == "run_skill_script")
+
+    await run_skill_script(
+        skill="pptx",
+        script="scripts/add_slide.py",
+        script_input={"unpacked_dir": "/workspace/gold_unpacked", "source": "slideLayout2.xml"},
+    )
+
+    assert captured["tool_name"] == "run_skill_script"
+    assert captured["kwargs"]["script_input"] == {
+        "unpacked_dir": "/workspace/gold_unpacked",
+        "source": "slideLayout2.xml",
+    }
 
 
 @pytest.mark.asyncio

@@ -42,6 +42,9 @@ class OmniAgentResult:
     error: str | None = None
     tool_names: list[str] = field(default_factory=list)
     skill_profiles: list[str] = field(default_factory=list)
+    used_tool_names: list[str] = field(default_factory=list)
+    tool_call_count: int = 0
+    skill_execution_count: int = 0
     agent_name: str | None = None
     agent_profile_id: str | None = None
     model_name: str | None = None

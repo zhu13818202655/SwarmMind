@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import AsyncMock
 
 from swarmmind.app.container import (
     _build_cache_store,
@@ -154,3 +155,33 @@ async def test_opensandbox_adapter_create_error_includes_root_cause(monkeypatch:
     assert "Failed to create sandbox after retries" in message
     assert "profile=aio" in message
     assert "cause=ValueError: missing auth header" in message
+
+
+@pytest.mark.asyncio
+async def test_opensandbox_adapter_reads_binary_files_with_read_bytes() -> None:
+    adapter = OpenSandboxAdapter(api_key="test-key", base_url="http://localhost:45698")
+
+    files_api = type("FilesApi", (), {})()
+    files_api.read_bytes = AsyncMock(return_value=b"pptx-bytes")
+    sandbox = type("SandboxStub", (), {"files": files_api})()
+    adapter._sandboxes["sandbox-1"] = sandbox
+
+    content = await adapter.read_file("sandbox-1", "/workspace/output.pptx", encoding=None)
+
+    assert content == b"pptx-bytes"
+    files_api.read_bytes.assert_awaited_once_with("/workspace/output.pptx")
+
+
+@pytest.mark.asyncio
+async def test_opensandbox_adapter_falls_back_to_legacy_binary_flag_when_read_bytes_is_missing() -> None:
+    adapter = OpenSandboxAdapter(api_key="test-key", base_url="http://localhost:45698")
+
+    files_api = type("FilesApi", (), {})()
+    files_api.read_file = AsyncMock(return_value=b"pptx-bytes")
+    sandbox = type("SandboxStub", (), {"files": files_api})()
+    adapter._sandboxes["sandbox-1"] = sandbox
+
+    content = await adapter.read_file("sandbox-1", "/workspace/output.pptx", encoding=None)
+
+    assert content == b"pptx-bytes"
+    files_api.read_file.assert_awaited_once_with("/workspace/output.pptx", binary=True)

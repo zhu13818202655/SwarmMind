@@ -17,12 +17,14 @@ async def run_skill_script(
     script_path: str,
     allow_sandbox_exec: bool = False,
     script_args: list[str] | None = None,
+    script_input: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "skill_name": skill_name,
         "script_path": script_path,
         "allow_sandbox_exec": allow_sandbox_exec,
         "script_args": list(script_args or []),
+        "script_input": dict(script_input or {}),
     }
 
 
@@ -155,5 +157,5 @@ def test_registry_preserves_async_tool_parameter_schema() -> None:
     parameters = schema["function"]["parameters"]
 
     assert parameters["type"] == "object"
-    assert set(parameters["properties"]) >= {"skill_name", "script_path", "allow_sandbox_exec", "script_args"}
+    assert set(parameters["properties"]) >= {"skill_name", "script_path", "allow_sandbox_exec", "script_args", "script_input"}
     assert set(parameters["required"]) >= {"skill_name", "script_path"}

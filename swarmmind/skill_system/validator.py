@@ -40,6 +40,44 @@ def validate_parsed_skill(parsed_skill: ParsedSkill) -> list[str]:
         if any(not isinstance(item, str) or not item.strip() for item in field_value):
             errors.append(f"Frontmatter field '{field_name}' must contain only non-empty strings")
 
+    runtime_requirements = metadata.runtime_requirements
+    for field_name in ("python_packages", "node_packages", "system_packages", "bootstrap_commands"):
+        field_value = getattr(runtime_requirements, field_name)
+        if any(not isinstance(item, str) or not item.strip() for item in field_value):
+            errors.append(f"Runtime requirement field '{field_name}' must contain only non-empty strings")
+
+    for field_name in ("python_index_url", "node_registry_url"):
+        field_value = getattr(runtime_requirements, field_name)
+        if field_value is not None and not str(field_value).strip():
+            errors.append(f"Runtime requirement field '{field_name}' must not be blank when provided")
+
+    indexed_scripts = set(parsed_skill.resources.scripts)
+    seen_script_specs: set[str] = set()
+    for script_spec in metadata.script_specs:
+        script_path = script_spec.path.strip().lstrip("/")
+        if not script_path:
+            errors.append("Each script_spec must define a non-empty path")
+            continue
+        if script_path in seen_script_specs:
+            errors.append(f"Duplicate script_spec path: {script_path}")
+        seen_script_specs.add(script_path)
+        if script_path not in indexed_scripts:
+            errors.append(f"script_spec path must reference a declared script: {script_path}")
+        if script_spec.runtime is not None and not script_spec.runtime.strip():
+            errors.append(f"script_spec runtime must not be blank: {script_path}")
+        if script_spec.description is not None and not script_spec.description.strip():
+            errors.append(f"script_spec description must not be blank: {script_path}")
+        if any(not isinstance(item, str) or not item.strip() for item in script_spec.argument_names):
+            errors.append(f"script_spec argument_names must contain only non-empty strings: {script_path}")
+        if not isinstance(script_spec.args_schema, dict):
+            errors.append(f"script_spec args_schema must be an object: {script_path}")
+        if any(not isinstance(item, str) or not item.strip() for item in script_spec.artifacts):
+            errors.append(f"script_spec artifacts must contain only non-empty strings: {script_path}")
+        if any(not isinstance(key, str) or not key.strip() or not isinstance(value, str) for key, value in script_spec.environment.items()):
+            errors.append(f"script_spec environment must be a string-to-string mapping: {script_path}")
+        if any(not isinstance(example, dict) for example in script_spec.examples):
+            errors.append(f"script_spec examples must be objects: {script_path}")
+
     expected_dir_name = parsed_skill.root_dir.name
     if metadata.name != expected_dir_name:
         errors.append(
