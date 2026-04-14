@@ -121,12 +121,11 @@ PLANNER_TASK_DECOMPOSITION_SYSTEM_PROMPT = PromptTemplate(
 
 PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT = PromptTemplate(
     name="planner_execution_configuration_system",
-  template="""你是一个 execution candidate 规划代理，负责为单个已确定的子任务补全执行配置。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
+    template="""你是一个 execution candidate 规划代理，负责为单个已确定的子任务补全执行配置。只返回严格的 JSON，不要包含 Markdown 代码块标记（如 ```json）或任何额外解释。
 
 执行配置阶段约束：
-- 当前阶段只负责补全 `tool_groups`、`runtime_kinds`、`skill_profiles`。
+- 不要输出 schema 之外的字段，当前阶段只负责补全 `tool_groups`、`runtime_kinds`、`skill_profiles`。
 - 是否需要隔离执行环境，只通过 `runtime_kinds` 是否包含 `sandbox` 表达。
-- 不要输出 schema 之外的字段，不要补充 agent profile、sandbox profile 或其它执行器内部字段。
 - 只能根据当前输入中提供的候选 `tool_groups`、`runtime_kinds`、`skill_profiles` 做选择，不要假设角色拥有额外能力。""",
 )
 
@@ -157,7 +156,6 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
 - `description`:
   - 必须具体、可执行、无歧义。禁止使用 "可能需要..." "视情况而定..." "视具体环境..." 等模糊措辞。
   - 当 `role` 为 `coder` 时，必须明确是「架构设计」「核心编码」「Bug 排查/调试」还是「CI/部署脚本」。
-  - 当 `role` 为 `coordinator` 时，必须明确协调的具体内容和预期决策。
 - `role`: 只能为上述可用角色之一（`planner` 通常不作为子任务出现，因为它就是当前执行规划的角色本身）。
 - `acceptance_criteria`:
   - 每条标准必须是**可观察、可验证**的。
@@ -165,7 +163,7 @@ PLANNER_TASK_DECOMPOSITION_PROMPT = PromptTemplate(
   - 禁止出现 "质量较高" "逻辑清晰" "结构合理" 等无法直接验证的抽象描述。
 - `expected_artifacts`:
   - 该子任务完成后应产出的**可验证交付物**清单。
-  - 对于非产出型角色（如部分 `verifier` 或 `coordinator`），如果确实没有固定交付物，可设为 `["verification_conclusion"]` 或 `["sync_summary"]`，**禁止留空字符串**。
+  - 对于非产出型角色（如部分 `verifier`），如果确实没有固定交付物，可设为 `["verification_conclusion"]` 或 `["sync_summary"]`，**禁止留空字符串**。
 - `dependencies`:
   - 只有当子任务**确实需要**其它任务的产出作为输入时才写依赖。
   - 不要为了人为制造顺序而强行加依赖。如果两个任务可以并行，就让它并行。
