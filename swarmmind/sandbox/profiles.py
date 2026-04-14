@@ -20,7 +20,7 @@ class SandboxProfile:
     name: str
     image: str
     entrypoint: list[str] | None = None
-    timeout_seconds: int = 300
+    timeout_seconds: int = 60 * 30
     env: dict[str, str] | None = None
     resource_limits: dict[str, str] | None = None
 
@@ -39,7 +39,7 @@ DEFAULT_PROFILES: dict[str, SandboxProfile] = {
         name=DEFAULT_SANDBOX_PROFILE,
         image=DEFAULT_AIO_IMAGE,
         entrypoint=["/opt/gem/run.sh"],
-        timeout_seconds=600,
+        timeout_seconds=60 * 30,
         env={"PYTHONPATH": "/tmp", "PYTHON_VERSION": "3.12"},
         resource_limits={"cpu": "2000m", "memory": "4096Mi"},
     ),

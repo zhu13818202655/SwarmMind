@@ -85,12 +85,19 @@ class OpenSandboxAdapter(SandboxProvider):
     async def read_file(self, sandbox_id: str, path: str, *, encoding: str | None = "utf-8") -> str | bytes:
         """Read a file from the sandbox."""
         sandbox = self._get_sandbox(sandbox_id)
+        files_api = sandbox.files
         try:
             if encoding is None:
-                return await sandbox.files.read_file(path)
-            return await sandbox.files.read_file(path, encoding=encoding)
+                read_bytes = getattr(files_api, "read_bytes", None)
+                if callable(read_bytes):
+                    return await read_bytes(path)
+                return await files_api.read_file(path, binary=True)
+            return await files_api.read_file(path, encoding=encoding)
         except TypeError:
-            return await sandbox.files.read_file(path)
+            content = await files_api.read_file(path)
+            if encoding is None and isinstance(content, str):
+                return content.encode("utf-8")
+            return content
 
     async def kill(self, sandbox_id: str) -> None:
         """Kill a sandbox."""

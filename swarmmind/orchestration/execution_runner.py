@@ -29,6 +29,7 @@ from swarmmind.models.task import SubTaskStatus
 from swarmmind.orchestration.run_state_service import RunStateService
 from swarmmind.prompt_template import (
     EXECUTION_FALLBACK_CONTENT_PROMPT,
+    EXECUTION_SANDBOX_COMMAND_PROMPT,
     EXECUTION_SUBTASK_MARKDOWN_PROMPT,
     EXECUTION_SYSTEM_PROMPT,
     PromptTemplate,
@@ -41,6 +42,7 @@ from swarmmind.repositories import ArtifactRepository, RunRepository, SubTaskRep
 from swarmmind.sandbox import CommandRequest, SandboxLeaseRequest, SandboxManager
 from swarmmind.sandbox.artifact_collector import ArtifactCollector
 from swarmmind.skill_system import SkillExecutionService
+from swarmmind.tools.builtin.skill import SkillTool
 from swarmmind.tools import ToolRegistry
 
 
@@ -227,7 +229,16 @@ class ExecutionRunner:
         if subtask.role in {AgentRole.VERIFIER, AgentRole.TESTER, AgentRole.REVIEWER}:
             await self._execute_validation_subtask(task, run, subtask, event)
         elif resolved_runtime_kind == RuntimeKind.SANDBOX and ToolGroup.CODE_EXEC in execution_profile.required_tool_groups:
-            await self._execute_sandbox_subtask(task, run, subtask, event)
+            if self._should_use_omni_agent_for_materialized_skill_output(task, subtask):
+                await self._execute_omni_agent_subtask(
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    event=event,
+                    runtime_kind=RuntimeKind.SANDBOX,
+                )
+            else:
+                await self._execute_sandbox_subtask(task, run, subtask, event)
         else:
             await self._execute_inline_runtime_subtask(task, run, subtask, event, resolved_runtime_kind)
 
@@ -316,7 +327,29 @@ class ExecutionRunner:
             required.update({"memory_lookup", "memory_write"})
         if self._effective_skill_profiles(execution_profile, subtask):
             required.update({"list_skill_scripts", "get_skill_details"})
+        if self._subtask_requires_skill_script_execution(subtask):
+            required.add("run_skill_script")
         return required
+
+    def _subtask_requires_skill_script_execution(self, subtask) -> bool:
+        execution_profile = self._load_execution_profile(subtask)
+        return bool(
+            self._effective_skill_profiles(execution_profile, subtask)
+            and ToolGroup.CODE_EXEC in execution_profile.required_tool_groups
+            and (
+                self._requires_materialized_output(None, subtask)
+                or execution_profile.resolved_runtime_kind == RuntimeKind.SANDBOX
+            )
+        )
+
+    def _should_use_omni_agent_for_materialized_skill_output(self, task, subtask) -> bool:
+        if not self._requires_materialized_output(task, subtask):
+            return False
+        execution_profile = self._load_execution_profile(subtask)
+        if not self._effective_skill_profiles(execution_profile, subtask):
+            return False
+        selected_tools = set(subtask.metadata.get("selected_tools") or self._select_tool_names(subtask))
+        return "run_skill_script" in selected_tools
 
     def _tool_allowed_by_execution_profile(self, tool_name: str, execution_profile: ExecutionProfile) -> bool:
         if tool_name in execution_profile.allowed_tool_names:
@@ -734,12 +767,31 @@ class ExecutionRunner:
             )
         )
 
-        if self._requires_materialized_output(task, subtask):
+        materialized_output_required = self._requires_materialized_output(task, subtask)
+        if materialized_output_required and runtime_kind != RuntimeKind.SANDBOX:
             raise RuntimeError(
                 f"Subtask {subtask.name} requires a real file artifact and cannot complete via inline {runtime_kind.value} execution."
             )
 
-        content = await self._render_subtask_content(task, subtask, run=run)
+        requires_skill_execution = self._should_use_omni_agent_for_materialized_skill_output(task, subtask)
+        existing_artifact_ids = {
+            artifact.id
+            for artifact in await self._artifact_repository.list_for_run(run.id)
+            if artifact.subtask_id == subtask.id
+        }
+
+        if requires_skill_execution:
+            agent_result = await self._render_materialized_subtask_content_with_retry(task, run, subtask)
+            used_tool_names = list(agent_result.used_tool_names)
+            if "run_skill_script" not in used_tool_names:
+                raise RuntimeError(
+                    f"Subtask {subtask.name} returned a summary without executing run_skill_script."
+                )
+            content = agent_result.content or await self._render_subtask_content_template(task, subtask)
+        else:
+            agent_result = None
+            used_tool_names = []
+            content = await self._render_subtask_content(task, subtask, run=run)
         artifact_name = f"{subtask.name}-{runtime_kind.value}.md"
 
         execution_profile = self._load_execution_profile(subtask)
@@ -758,16 +810,33 @@ class ExecutionRunner:
                 "execution_backend": "omni_agent",
                 "omni_agent": {
                     "tool_names": [getattr(tool, "__name__", repr(tool)) for tool in self._build_agent_tool_functions(task, run, subtask)],
+                    "used_tool_names": used_tool_names,
                     "skill_profiles": skill_profiles,
                 },
                 **({"agent_profile_id": subtask.agent_profile_id, "handoff": subtask.metadata.get("handoff")} if subtask.agent_profile_id else {}),
             },
         )
+
+        new_subtask_artifacts = [
+            item
+            for item in await self._artifact_repository.list_for_run(run.id)
+            if item.subtask_id == subtask.id and item.id not in existing_artifact_ids
+        ]
+        materialized_file_artifacts = [item for item in new_subtask_artifacts if item.type == ArtifactType.FILE]
+
+        if materialized_output_required and not materialized_file_artifacts:
+            raise RuntimeError(
+                f"Subtask {subtask.name} requires a real file artifact, but omni-agent execution did not produce any file artifacts."
+            )
+
         result_payload = {
             "content_preview": content[:300],
             "runtime_kind": runtime_kind.value,
-            "artifact_count": 1,
+            "artifact_count": len(new_subtask_artifacts) + 1,
+            "materialized_artifact_count": len(materialized_file_artifacts),
+            "materialized_artifacts": [item.name for item in materialized_file_artifacts],
             "execution_backend": "omni_agent",
+            "used_tool_names": used_tool_names,
         }
         if subtask.agent_profile_id:
             result_payload.update({"agent_profile_id": subtask.agent_profile_id, "handoff": subtask.metadata.get("handoff")})
@@ -1224,8 +1293,23 @@ class ExecutionRunner:
         if not allowlist:
             return
 
-        skill_name = str(kwargs.get("skill_name") or "").strip()
-        script_path = str(kwargs.get("script_path") or "").strip().lstrip("/")
+        args = kwargs.get("args") if isinstance(kwargs.get("args"), dict) else {}
+        skill_name = str(
+            kwargs.get("skill_name")
+            or kwargs.get("skill")
+            or args.get("skill_name")
+            or args.get("skill")
+            or ""
+        ).strip()
+        if not skill_name and len(execution_profile.skill_profiles) == 1:
+            skill_name = execution_profile.skill_profiles[0].strip()
+        script_path = str(
+            kwargs.get("script_path")
+            or kwargs.get("script")
+            or args.get("script_path")
+            or args.get("script")
+            or ""
+        ).strip().lstrip("/")
         candidates = {f"{skill_name}:{script_path}", script_path}
         if skill_name:
             candidates.add(f"{skill_name}:*")
@@ -1506,40 +1590,26 @@ class ExecutionRunner:
 
     async def _build_command_request(self, task, subtask) -> CommandRequest:
         should_fail = task.constraints.get("force_fail_subtask") == subtask.name
-        content = await self._render_subtask_content(task, subtask)
-        payload = {
-            "task_id": task.id,
-            "run_id": subtask.metadata.get("run_id"),
-            "goal": task.goal,
-            "subtask": subtask.name,
-            "description": subtask.description,
-            "acceptance_criteria": subtask.acceptance_criteria,
-            "tool_groups": [group.value for group in self._load_execution_profile(subtask).required_tool_groups],
-            "content": content,
-        }
-        payload_json = json.dumps(payload, ensure_ascii=False)
-        python_code = [
-            "import json, sys",
-            "from pathlib import Path",
-            f"payload = json.loads({payload_json!r})",
-            "output_dir = Path('outputs')",
-            "output_dir.mkdir(parents=True, exist_ok=True)",
-            "filename = payload['subtask'].replace('/', '_') + '.md'",
-            "output_path = output_dir / filename",
-            "output_path.write_text(payload['content'], encoding='utf-8')",
-            "print(payload['content'])",
-            "print(f'WROTE_ARTIFACT_FILE={output_path}')",
-            "print(json.dumps({'subtask': payload['subtask'], 'artifact_file': str(output_path)}, ensure_ascii=False))",
-        ]
-        if should_fail:
-            python_code.extend(
-                [
-                    f"sys.stderr.write('forced failure for {subtask.name}\\n')",
-                    "raise SystemExit(1)",
-                ]
-            )
-        command = f"python3 -c {shlex.quote('; '.join(python_code))}"
-        return CommandRequest(command=command, cwd=".")
+        prompt = await self._compose_sandbox_command_prompt(task, subtask)
+        result = await self._run_omni_agent_prompt(
+            task=task,
+            subtask=subtask,
+            prompt=prompt,
+            system_prompt=render_prompt(self._system_prompt_template),
+            step_kind="command.plan",
+        )
+        payload = self._extract_json_payload(result.content or "")
+        command = str(payload.get("command") or "").strip() if payload else ""
+        cwd = str(payload.get("cwd") or ".").strip() if payload else "."
+        if should_fail and command:
+            failure_code = f"import sys; sys.stderr.write('forced failure for {subtask.name}\\n'); raise SystemExit(1)"
+            command = f"{command} && python3 -c {shlex.quote(failure_code)}"
+        if command:
+            return CommandRequest(command=command, cwd=cwd or ".")
+
+        raise RuntimeError(
+            f"Subtask {subtask.name} requires a real sandbox command, but command planning did not return a valid command."
+        )
 
     async def _render_subtask_content(self, task, subtask, run=None) -> str:
         content = await self._render_subtask_content_with_model(task, subtask, run=run)
@@ -1570,6 +1640,39 @@ class ExecutionRunner:
                 await self._complete_handoff_if_needed(task, run, subtask, current_profile)
         return result.content
 
+    async def _render_materialized_subtask_content_with_retry(self, task, run, subtask, max_attempts: int = 2):
+        base_prompt = await self._compose_subtask_prompt(task, subtask)
+        retry_reason: str | None = None
+        last_result = None
+
+        for attempt in range(1, max_attempts + 1):
+            prompt = base_prompt
+            if retry_reason:
+                prompt = (
+                    f"{base_prompt}\n\n"
+                    f"上一轮失败原因：{retry_reason}\n"
+                    "本轮必须先调用 run_skill_script 生成真实文件，再返回最终 Markdown 摘要。"
+                    "如果没有执行 run_skill_script，就不要声称已经完成交付。"
+                )
+            result = await self._run_omni_agent_prompt(
+                task=task,
+                subtask=subtask,
+                prompt=prompt,
+                system_prompt=render_prompt(self._system_prompt_template),
+                run=run,
+                step_kind=f"content.render.materialized.{attempt}",
+            )
+            last_result = result
+            used_tool_names = set(result.used_tool_names)
+            if "run_skill_script" in used_tool_names:
+                current_profile = self._resolve_agent_profile_for_omni_agent(subtask)
+                if current_profile is not None:
+                    await self._complete_handoff_if_needed(task, run, subtask, current_profile)
+                return result
+            retry_reason = "你直接返回了 Markdown 摘要，但没有调用 run_skill_script，也没有生成真实文件。"
+
+        return last_result
+
     def _resolve_agent_profile_for_omni_agent(self, subtask) -> AgentProfile | None:
         execution_profile = self._load_execution_profile(subtask)
         if not execution_profile.agent_profile_id:
@@ -1592,7 +1695,27 @@ class ExecutionRunner:
         active_profile = agent_profile_override or self._agent_profile_store.get(execution_profile.agent_profile_id)
         tool_functions = self._build_agent_tool_functions(task, current_run, subtask) if current_run is not None else []
         skill_profiles = self._effective_skill_profiles(execution_profile, subtask)
-        return await self._omni_agent.run(
+        used_tool_names: list[str] = []
+        skill_execution_count = 0
+
+        async def publish(topic: str, payload: dict[str, object]) -> None:
+            nonlocal skill_execution_count
+            if topic == "tool.completed":
+                tool_name = str(payload.get("tool_name") or "")
+                if tool_name and tool_name not in used_tool_names:
+                    used_tool_names.append(tool_name)
+            if topic == "skill.executed":
+                skill_execution_count += 1
+            if current_run is not None:
+                await self._publish_agent_step_event(
+                    topic=topic,
+                    task=task,
+                    run=current_run,
+                    subtask=subtask,
+                    payload=payload,
+                )
+
+        result = await self._omni_agent.run(
             OmniAgentRequest(
                 agent_name=f"subtask-{subtask.name}-{step_kind}",
                 prompt=prompt,
@@ -1603,18 +1726,12 @@ class ExecutionRunner:
                 agent_profile=active_profile,
                 execution_profile=execution_profile,
             ),
-            publisher=(
-                None
-                if current_run is None
-                else lambda topic, payload: self._publish_agent_step_event(
-                    topic=topic,
-                    task=task,
-                    run=current_run,
-                    subtask=subtask,
-                    payload=payload,
-                )
-            ),
+            publisher=publish,
         )
+        result.used_tool_names = used_tool_names
+        result.tool_call_count = len(used_tool_names)
+        result.skill_execution_count = skill_execution_count
+        return result
 
     async def _publish_agent_step_event(self, topic: str, task, run, subtask, payload: dict[str, object]) -> None:
         await self._event_bus.publish(
@@ -1936,33 +2053,42 @@ class ExecutionRunner:
                 environment: dict[str, str] | None = None,
                 artifact_paths: list[str] | None = None,
                 script_args: list[str] | None = None,
+                script_input: dict[str, Any] | None = None,
                 skill: str | None = None,
                 script: str | None = None,
                 args: dict[str, Any] | None = None,
             ) -> dict[str, object]:
-                resolved_skill_name = skill_name or skill
-                resolved_script_path = script_path or script
-                resolved_environment = dict(environment or {})
-                resolved_artifact_paths = list(artifact_paths or [])
-                resolved_script_args = [str(item) for item in (script_args or [])]
-                effective_allow_sandbox_exec = allow_sandbox_exec or default_allow_sandbox_exec
-                if args:
-                    if resolved_skill_name is None and isinstance(args.get("skill_name"), str):
-                        resolved_skill_name = str(args["skill_name"])
-                    if resolved_script_path is None and isinstance(args.get("script_path"), str):
-                        resolved_script_path = str(args["script_path"])
-                    if isinstance(args.get("sandbox_profile"), str):
-                        sandbox_profile = str(args["sandbox_profile"])
-                    if isinstance(args.get("sandbox_root"), str):
-                        sandbox_root = str(args["sandbox_root"])
-                    if isinstance(args.get("allow_sandbox_exec"), bool):
-                        effective_allow_sandbox_exec = bool(args["allow_sandbox_exec"]) or default_allow_sandbox_exec
-                    if isinstance(args.get("environment"), dict):
-                        resolved_environment.update({str(key): str(value) for key, value in args["environment"].items()})
-                    if isinstance(args.get("artifact_paths"), list):
-                        resolved_artifact_paths = [str(item) for item in args["artifact_paths"]]
-                    if isinstance(args.get("script_args"), list):
-                        resolved_script_args = [str(item) for item in args["script_args"]]
+                (
+                    resolved_skill_name,
+                    resolved_script_path,
+                    sandbox_profile,
+                    sandbox_root,
+                    effective_allow_sandbox_exec,
+                    resolved_environment,
+                    resolved_artifact_paths,
+                    resolved_script_args,
+                    resolved_script_input,
+                ) = SkillTool._resolve_run_skill_script_payload(
+                    skill_name=skill_name,
+                    script_path=script_path,
+                    sandbox_profile=sandbox_profile,
+                    sandbox_root=sandbox_root,
+                    allow_sandbox_exec=allow_sandbox_exec or default_allow_sandbox_exec,
+                    environment=environment,
+                    artifact_paths=artifact_paths,
+                    script_args=script_args,
+                    script_input=script_input,
+                    skill=skill,
+                    script=script,
+                    args=args,
+                )
+                effective_allow_sandbox_exec = effective_allow_sandbox_exec or default_allow_sandbox_exec
+                if not resolved_skill_name and len(execution_profile.skill_profiles) == 1:
+                    resolved_skill_name = execution_profile.skill_profiles[0]
+                if resolved_script_path and self._looks_like_inline_source(resolved_script_path):
+                    raise ValueError(
+                        "run_skill_script only accepts declared skill script paths like scripts/run.py; received inline source text. Use a general code execution tool for ad-hoc code."
+                    )
                 if not resolved_skill_name or not resolved_script_path:
                     raise ValueError("run_skill_script requires skill_name/script_path or skill/script aliases")
                 resolved_script_path = await self._resolve_declared_skill_script_path(
@@ -1982,6 +2108,7 @@ class ExecutionRunner:
                     environment=resolved_environment,
                     artifact_paths=resolved_artifact_paths,
                     script_args=resolved_script_args,
+                    script_input=resolved_script_input,
                     tenant_id=task.metadata.get("tenant_id", "local"),
                     session_id=run.session_id,
                     task_id=task.id,
@@ -1992,9 +2119,33 @@ class ExecutionRunner:
 
         return tools
 
-    async def _compose_subtask_prompt(self, task, subtask) -> str:
+    @staticmethod
+    def _looks_like_inline_source(value: str) -> bool:
+        stripped = value.strip()
+        if "\n" in stripped or "\r" in stripped:
+            return True
+        return stripped.startswith(("from ", "import ", "def ", "class ", "#!/", "<"))
+
+    async def _compose_subtask_prompt(self, task, subtask) -> str:  # TODO 组装了很多不必要的元数据
+        context = await self._build_subtask_prompt_context(task, subtask)
+
+        prompt = render_prompt(
+            self._user_prompt_template,
+            context,
+        )
+        memory_context = await self._lookup_memory_context(task, subtask)
+        if not memory_context:
+            return prompt
+        return f"{prompt}\n\nRelevant long-term memory:\n{memory_context}"
+
+    async def _compose_sandbox_command_prompt(self, task, subtask) -> str:
+        return render_prompt(
+            EXECUTION_SANDBOX_COMMAND_PROMPT,
+            await self._build_subtask_prompt_context(task, subtask),
+        )
+
+    async def _build_subtask_prompt_context(self, task, subtask) -> dict[str, str]:
         dependency_summaries: list[dict[str, object]] = []
-        artifact_summaries: list[dict[str, object]] = []
         current_run = await self._run_repository.get(
             subtask.metadata.get("run_id")
             or subtask.metadata.get("assigned_run_id")
@@ -2003,44 +2154,54 @@ class ExecutionRunner:
         if current_run is not None and subtask.dependencies:
             dependencies = await self._load_dependency_subtasks(current_run.id, subtask)
             dependency_summaries = self._summarize_dependency_subtasks(dependencies)
-            dependency_ids = {dependency.id for dependency in dependencies}
-            artifacts = await self._artifact_repository.list_for_run(current_run.id)
-            artifact_summaries = self._summarize_artifacts(
-                [artifact for artifact in artifacts if artifact.subtask_id in dependency_ids]
-            )
         execution_profile = self._load_execution_profile(subtask)
         skill_profiles = self._effective_skill_profiles(execution_profile, subtask)
         skill_script_inventory = await self._build_skill_script_inventory(skill_profiles)
+        selected_skill_context = await self._build_compact_skill_context(skill_profiles)
+        return {
+            "task_goal": task.goal,
+            "subtask_name": subtask.name,
+            "subtask_description": subtask.description,
+            "acceptance_criteria_json": json.dumps(subtask.acceptance_criteria, ensure_ascii=False),
+            "tool_groups_json": json.dumps(
+                [group.value for group in self._load_execution_profile(subtask).required_tool_groups],
+                ensure_ascii=False,
+            ),
+            "dependency_summary_json": json.dumps(dependency_summaries, ensure_ascii=False),
+            "skill_profiles_json": json.dumps(skill_profiles, ensure_ascii=False),
+            "skill_script_inventory_json": json.dumps(skill_script_inventory, ensure_ascii=False),
+            "selected_skill_context_json": json.dumps(selected_skill_context, ensure_ascii=False),
+            "output_contract_json": json.dumps(
+                {
+                    "requires_materialized_output": self._requires_materialized_output(task, subtask),
+                    "expected_artifacts": list(subtask.expected_artifacts),
+                },
+                ensure_ascii=False,
+            ),
+        }
 
-        prompt = render_prompt(
-            self._user_prompt_template,
-            {
-                "task_goal": task.goal,
-                "subtask_name": subtask.name,
-                "subtask_description": subtask.description,
-                "acceptance_criteria_json": json.dumps(subtask.acceptance_criteria, ensure_ascii=False),
-                "constraints_json": json.dumps(task.constraints, ensure_ascii=False),
-                "tool_groups_json": json.dumps(
-                    [group.value for group in self._load_execution_profile(subtask).required_tool_groups],
-                    ensure_ascii=False,
-                ),
-                "dependency_summary_json": json.dumps(dependency_summaries, ensure_ascii=False),
-                "artifact_summary_json": json.dumps(artifact_summaries, ensure_ascii=False),
-                "skill_profiles_json": json.dumps(skill_profiles, ensure_ascii=False),
-                "skill_script_inventory_json": json.dumps(skill_script_inventory, ensure_ascii=False),
-                "output_contract_json": json.dumps(
-                    {
-                        "requires_materialized_output": self._requires_materialized_output(task, subtask),
-                        "expected_artifacts": list(subtask.expected_artifacts),
-                    },
-                    ensure_ascii=False,
-                ),
-            },
-        )
-        memory_context = await self._lookup_memory_context(task, subtask)
-        if not memory_context:
-            return prompt
-        return f"{prompt}\n\nRelevant long-term memory:\n{memory_context}"
+    async def _build_compact_skill_context(self, skill_profiles: list[str]) -> list[dict[str, object]]:
+        raw_contexts = await self._build_selected_skill_context(skill_profiles)
+        compact_contexts: list[dict[str, object]] = []
+        for item in raw_contexts:
+            compact_contexts.append(
+                {
+                    "name": item.get("name"),
+                    "description": item.get("description"),
+                    "script_specs": [
+                        {
+                            "path": spec.get("path"),
+                            "description": spec.get("description"),
+                            "argument_names": spec.get("argument_names", []),
+                            "examples": spec.get("examples", [])[:1],
+                            "artifacts": spec.get("artifacts", []),
+                        }
+                        for spec in list(item.get("script_specs") or [])[:6]
+                        if isinstance(spec, dict)
+                    ],
+                }
+            )
+        return compact_contexts
 
     async def _render_subtask_content_template(self, task, subtask) -> str:
         criteria = "\\n".join(f"- {item}" for item in subtask.acceptance_criteria) or "- None"
@@ -2177,7 +2338,7 @@ class ExecutionRunner:
         text = "\n".join(
             part
             for part in [
-                task.goal,
+                getattr(task, "goal", ""),
                 subtask.name,
                 subtask.description,
                 *subtask.acceptance_criteria,
@@ -2218,6 +2379,18 @@ class ExecutionRunner:
             except Exception:
                 inventory[skill_name] = []
         return inventory
+
+    async def _build_selected_skill_context(self, skill_profiles: list[str]) -> list[dict[str, object]]:
+        if self._skill_execution_service is None:
+            return []
+
+        contexts: list[dict[str, object]] = []
+        for skill_name in skill_profiles[:3]:
+            try:
+                contexts.append(self._skill_execution_service.get_skill_prompt_context(skill_name))
+            except Exception:
+                continue
+        return contexts
 
     async def _resolve_declared_skill_script_path(self, skill_name: str, script_path: str) -> str:
         normalized_script = script_path.strip().lstrip("/")

@@ -2,6 +2,7 @@ from swarmmind.prompt_template.renderer import render_prompt
 from swarmmind.prompt_template.base import PromptTemplate
 from swarmmind.prompt_template.execution import (
 	EXECUTION_FALLBACK_CONTENT_PROMPT,
+	EXECUTION_SANDBOX_COMMAND_PROMPT,
 	EXECUTION_SUBTASK_MARKDOWN_PROMPT,
 	EXECUTION_SYSTEM_PROMPT,
 )
@@ -21,6 +22,7 @@ from swarmmind.prompt_template.review import (
 
 __all__ = [
 	"EXECUTION_FALLBACK_CONTENT_PROMPT",
+	"EXECUTION_SANDBOX_COMMAND_PROMPT",
 	"EXECUTION_SUBTASK_MARKDOWN_PROMPT",
 	"EXECUTION_SYSTEM_PROMPT",
 	"PLANNER_EXECUTION_CONFIGURATION_SYSTEM_PROMPT",

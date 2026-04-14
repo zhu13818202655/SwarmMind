@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from swarmmind.defaults import DEFAULT_SKILL_PIP_INDEX_URL
 from swarmmind.events import InMemoryEventBus
 from swarmmind.models.replay import ReplayRoot
 from swarmmind.repositories import InMemoryArtifactRepository, InMemoryReplayRepository
@@ -184,6 +185,36 @@ async def test_skill_tool_accepts_legacy_skill_script_aliases(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_skill_tool_accepts_nested_aliases_inside_args(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "nested_alias_skill")
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text(
+        "from pathlib import Path\nPath('outputs').mkdir(exist_ok=True)\nPath('outputs/out.txt').write_text('ok', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    service = SkillExecutionService(
+        executor=SkillScriptExecutor(SandboxManager(LocalSandboxAdapter())),
+        skill_root=tmp_path,
+    )
+    tool = SkillTool(service)
+
+    result = await tool.run_skill_script(
+        allow_sandbox_exec=True,
+        args={
+            "input": {
+                "skill": "nested_alias_skill",
+                "script": "scripts/run.py",
+                "artifact_paths": ["outputs/out.txt"],
+            }
+        },
+    )
+
+    assert result["exit_code"] == 0
+    assert result["artifacts"] == {"outputs/out.txt": "ok"}
+
+
+@pytest.mark.asyncio
 async def test_skill_tool_forwards_script_args(tmp_path: Path) -> None:
     skill_dir = _write_skill(tmp_path, "argv_tool_skill")
     (skill_dir / "scripts").mkdir()
@@ -287,3 +318,202 @@ async def test_skill_execution_service_persists_binary_artifacts(tmp_path: Path)
     assert artifacts[0].content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     assert artifacts[0].metadata["file_name"] == "demo.pptx"
     assert payload == b"PK\x03\x04demo-pptx"
+
+
+@pytest.mark.asyncio
+async def test_skill_execution_service_installs_required_python_packages(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "package_skill")
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: package_skill\n"
+        "description: demo skill\n"
+        "runtime_requirements:\n"
+        "  python_packages:\n"
+        "    - defusedxml\n"
+        "---\n\n"
+        "# Demo Skill\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text("print('ok')\n", encoding="utf-8")
+
+    executor = SkillScriptExecutor(SandboxManager(LocalSandboxAdapter()))
+    service = SkillExecutionService(executor=executor, skill_root=tmp_path)
+
+    entry = service.get_skill_entry("package_skill")
+    command = executor._build_command(
+        entry.metadata.runtime_requirements,
+        None,
+        "scripts/run.py",
+        {},
+        [],
+        [],
+    )
+
+    assert entry.metadata.runtime_requirements.python_packages == ["defusedxml"]
+    assert command == (
+        "python3 -m pip install --disable-pip-version-check "
+        f"-i {DEFAULT_SKILL_PIP_INDEX_URL} defusedxml && python3 scripts/run.py"
+    )
+
+
+def test_skill_executor_uses_env_override_for_python_package_index(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "package_skill")
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: package_skill\n"
+        "description: demo skill\n"
+        "runtime_requirements:\n"
+        "  python_packages:\n"
+        "    - defusedxml\n"
+        "---\n\n"
+        "# Demo Skill\n",
+        encoding="utf-8",
+    )
+    executor = SkillScriptExecutor(SandboxManager(LocalSandboxAdapter()))
+    service = SkillExecutionService(executor=executor, skill_root=tmp_path)
+    monkeypatch.setenv("SWARMMIND_SKILL_PIP_INDEX_URL", "https://mirror.example/simple")
+
+    command = executor._build_command(
+        service.get_skill_entry("package_skill").metadata.runtime_requirements,
+        None,
+        "scripts/run.py",
+        {},
+        [],
+        [],
+    )
+
+    assert command == (
+        "python3 -m pip install --disable-pip-version-check "
+        "-i https://mirror.example/simple defusedxml && python3 scripts/run.py"
+    )
+
+
+@pytest.mark.asyncio
+async def test_skill_execution_service_uses_script_input_from_script_specs(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "structured_skill")
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "Path('outputs').mkdir(exist_ok=True)\n"
+        "Path('outputs/out.txt').write_text('|'.join(sys.argv[1:]), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: structured_skill\n"
+        "description: structured input demo\n"
+        "script_specs:\n"
+        "  - path: scripts/run.py\n"
+        "    runtime: python\n"
+        "    argument_names:\n"
+        "      - first\n"
+        "      - second\n"
+        "    artifacts:\n"
+        "      - outputs/out.txt\n"
+        "---\n\n"
+        "# Structured\n",
+        encoding="utf-8",
+    )
+
+    service = SkillExecutionService(
+        executor=SkillScriptExecutor(SandboxManager(LocalSandboxAdapter())),
+        skill_root=tmp_path,
+    )
+
+    result = await service.run_skill_script(
+        skill_name="structured_skill",
+        script_path="scripts/run.py",
+        policy=SkillScriptExecutionPolicy(
+            allow_sandbox_exec=True,
+            script_input={"first": "hello", "second": "world"},
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert result.applied_defaults["script_args"] == ["hello", "world"]
+    assert result.resolved_artifact_paths == ["outputs/out.txt"]
+    assert result.artifacts == {"outputs/out.txt": "hello|world"}
+
+
+@pytest.mark.asyncio
+async def test_skill_execution_service_expands_artifact_templates_from_script_input(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "templated_artifact_skill")
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "output_path = Path(sys.argv[1])\n"
+        "output_path.parent.mkdir(parents=True, exist_ok=True)\n"
+        "output_path.write_text('artifact ready', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: templated_artifact_skill\n"
+        "description: templated artifact demo\n"
+        "script_specs:\n"
+        "  - path: scripts/run.py\n"
+        "    runtime: python\n"
+        "    argument_names:\n"
+        "      - output_file\n"
+        "    artifacts:\n"
+        "      - '{output_file}'\n"
+        "---\n\n"
+        "# Templated\n",
+        encoding="utf-8",
+    )
+
+    service = SkillExecutionService(
+        executor=SkillScriptExecutor(SandboxManager(LocalSandboxAdapter())),
+        skill_root=tmp_path,
+    )
+
+    result = await service.run_skill_script(
+        skill_name="templated_artifact_skill",
+        script_path="scripts/run.py",
+        policy=SkillScriptExecutionPolicy(
+            allow_sandbox_exec=True,
+            script_input={"output_file": "outputs/result.txt"},
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert result.resolved_artifact_paths == ["outputs/result.txt"]
+    assert result.artifacts == {"outputs/result.txt": "artifact ready"}
+
+
+@pytest.mark.asyncio
+async def test_skill_execution_service_reports_missing_script_input_keys(tmp_path: Path) -> None:
+    skill_dir = _write_skill(tmp_path, "missing_input_skill")
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text("print('ok')\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: missing_input_skill\n"
+        "description: structured input demo\n"
+        "script_specs:\n"
+        "  - path: scripts/run.py\n"
+        "    argument_names:\n"
+        "      - first\n"
+        "      - second\n"
+        "---\n\n"
+        "# Structured\n",
+        encoding="utf-8",
+    )
+
+    service = SkillExecutionService(
+        executor=SkillScriptExecutor(SandboxManager(LocalSandboxAdapter())),
+        skill_root=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="input_mismatch"):
+        await service.run_skill_script(
+            skill_name="missing_input_skill",
+            script_path="scripts/run.py",
+            policy=SkillScriptExecutionPolicy(
+                allow_sandbox_exec=True,
+                script_input={"first": "hello"},
+            ),
+        )

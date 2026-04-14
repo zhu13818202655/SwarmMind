@@ -7,7 +7,6 @@ import os
 import sys
 import traceback
 from datetime import timedelta
-from typing import Any
 
 import httpx
 from opensandbox import Sandbox

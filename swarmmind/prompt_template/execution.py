@@ -22,7 +22,7 @@ Sandbox 约束：
 - 如果某项能力没有出现在提供的 tool groups 或 tool schemas 中，就视为不可用。
 - 除非对应工具真实可用且在必要时已被使用，否则不要声称已经完成浏览器交互、代码执行、文件修改、通信发送或产物读取。""",
 )
-
+# TODO 需要斟酌，目前非常冗余
 EXECUTION_SUBTASK_MARKDOWN_PROMPT = PromptTemplate(
     name="execution_subtask_markdown_v1",
     template="""请执行下面的子任务，并产出最终交付摘要。
@@ -31,33 +31,22 @@ EXECUTION_SUBTASK_MARKDOWN_PROMPT = PromptTemplate(
 子任务名称：{{ subtask_name }}
 子任务描述：{{ subtask_description }}
 验收标准：{{ acceptance_criteria_json }}
-约束条件：{{ constraints_json }}
 工具组：{{ tool_groups_json }}
 依赖子任务摘要：{{ dependency_summary_json }}
-依赖产物摘要：{{ artifact_summary_json }}
 当前选中的 skill profiles：{{ skill_profiles_json }}
 当前可用技能脚本：{{ skill_script_inventory_json }}
-输出契约：{{ output_contract_json }}
-
-工具组能力边界：
-- workspace：仅用于检查和修改仓库或工作区文件。
-- web_search：仅用于查找公开网页来源和结果摘要，不等于页面交互。
-- browser：仅在暴露浏览器工具时用于打开网页、读取渲染内容和执行动态交互。
-- code_exec：用于在允许的运行时执行代码或 shell 命令，但不会自动赋予项目文件编辑能力。
-- artifact：用于读取依赖产物和附件输出，不等于任意工作区写入。
-- memory：仅在暴露记忆工具时用于读写任务记忆。
-- communication：仅在暴露通信工具时用于发送对外消息。
-
-Sandbox 说明：
-- 如果需要 sandbox 执行，只需要基于能力判断是否应使用 sandbox；系统会自动绑定 `aio`。
-- 不要输出、比较或讨论 sandbox profile 名称，把注意力放在当前任务可用的能力和工具上。
+技能执行提示：{{ selected_skill_context_json }}
+真实文件产物要求：{{ output_contract_json }}
 
 技能脚本调用规则：
 - 如果需要调用 `run_skill_script`，优先使用上面的“当前可用技能脚本”；如果仍不确定，先调用 `list_skill_scripts` 或 `get_skill_details` 查询后再执行。
-- `script_path` 必须使用技能包中已声明的完整相对路径，例如 `scripts/run.py`；不要臆造 `build`、`create_presentation`、`generate_pptx` 这类未声明名称。
-- 如果脚本需要命令行参数，必须通过 `script_args` 传入有序参数；不要假设系统会自动补齐脚本所需的位置参数。
+- `script_path` 必须使用技能包中已声明的完整相对路径，例如 `scripts/run.py`；不要臆造未声明名称。
+- `skill`/`script` 只是 `skill_name`/`script_path` 的别名；`script` 绝不能传入内联 Python、Shell 或其他源码字符串。
+- 如果脚本需要命令行参数，必须通过 `script_args` 传入有序参数。
+- 如果 `script_specs` 声明了 `args_schema`/`argument_names`，优先通过 `script_input` 传结构化输入。
 - 只要实际执行技能脚本，就必须设置 `allow_sandbox_exec=true`。
 - 当输出契约要求真实文件产物，且存在对应 skill profile 时，优先使用已声明技能脚本完成文件物化；如果没有合适脚本，不要伪称已经生成文件。
+- 需要执行任意临时代码时，使用通用代码执行工具；不要把源码塞进 `run_skill_script`。
 
 输出要求：
 1) 始终返回简洁的 Markdown 摘要，说明你实际完成了什么。
@@ -66,6 +55,35 @@ Sandbox 说明：
 4) 如果任务或验收标准要求真实文件产物（如 `.pptx`、`.pdf`、`.docx`、`.xlsx`），Markdown 只是一份摘要，不能替代文件本身。
 5) 当要求真实文件产物时，必须使用当前可用工具实际生成该文件；如果没有生成真实文件，就不能声称已经完成交付。
 6) 当依赖子任务或依赖产物摘要中已经提供事实、数据或结论时，优先复用这些内容；不要忽略依赖结果后自行臆造。""",
+)
+
+EXECUTION_SANDBOX_COMMAND_PROMPT = PromptTemplate(
+    name="execution_sandbox_command_v1",
+    template="""你要为一个 sandbox 子任务返回严格 JSON 命令，不要输出 Markdown，不要解释。
+
+任务目标：{{ task_goal }}
+子任务名称：{{ subtask_name }}
+子任务描述：{{ subtask_description }}
+验收标准：{{ acceptance_criteria_json }}
+工具组：{{ tool_groups_json }}
+依赖子任务摘要：{{ dependency_summary_json }}
+当前选中的 skill profiles：{{ skill_profiles_json }}
+当前可用技能脚本：{{ skill_script_inventory_json }}
+技能执行提示：{{ selected_skill_context_json }}
+真实文件产物要求：{{ output_contract_json }}
+
+返回 JSON schema：
+{
+  "command": "要在 sandbox 中执行的单条 shell 命令",
+  "cwd": "."
+}
+
+规则：
+- `command` 必须是真实可执行的 shell 命令，不能返回自然语言。
+- 如果需要真实文件产物，命令必须实际生成该文件，并在成功后输出 `WROTE_ARTIFACT_FILE=<path>`。
+- 如果使用技能脚本，必须使用上面给出的已声明路径，不要编造脚本名。
+- 不要把 Markdown 内容写入 `outputs/*.md` 来冒充文件交付。
+- `cwd` 缺省用 `.`。""",
 )
 
 EXECUTION_FALLBACK_CONTENT_PROMPT = PromptTemplate(

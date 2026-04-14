@@ -112,6 +112,19 @@ def test_get_skill_package_root_prefers_current_local_skill_root() -> None:
     assert root.is_dir()
 
 
+def test_pptx_skill_exposes_from_scratch_creation_script() -> None:
+    skill_root = get_skill_package_root()
+    entry = load_skill_dir(skill_root / "pptx")
+
+    assert entry.valid is True
+    spec_by_path = {spec.path: spec for spec in entry.metadata.script_specs}
+    create_spec = spec_by_path["scripts/create_presentation.py"]
+
+    assert create_spec.argument_names == ["deck_spec", "output_file"]
+    assert create_spec.artifacts == ["{output_file}"]
+    assert "from scratch" in create_spec.description.lower()
+
+
 def test_load_skill_registry_and_catalog_skip_disabled_and_invalid_entries(tmp_path: Path) -> None:
     _write_skill(tmp_path, "alpha")
     disabled_dir = _write_skill(tmp_path, "disabled_skill")
@@ -165,6 +178,8 @@ def test_resolve_agent_skill_dirs_returns_only_valid_requested_skills(tmp_path: 
 def test_parse_skill_dir_supports_kebab_case_governance_fields(tmp_path: Path) -> None:
     skill_dir = tmp_path / "governed_skill"
     skill_dir.mkdir()
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text("print('ok')\n", encoding="utf-8")
     (skill_dir / "SKILL.md").write_text(
         "---\n"
         "name: governed_skill\n"
@@ -181,6 +196,19 @@ def test_parse_skill_dir_supports_kebab_case_governance_fields(tmp_path: Path) -
         "  - API_KEY\n"
         "required-bins:\n"
         "  - python\n"
+        "runtime-requirements:\n"
+        "  python-packages:\n"
+        "    - defusedxml\n"
+        "script-specs:\n"
+        "  scripts/run.py:\n"
+        "    runtime: python\n"
+        "    argument_names:\n"
+        "      - input_file\n"
+        "    args_schema:\n"
+        "      type: object\n"
+        "      properties:\n"
+        "        input_file:\n"
+        "          type: string\n"
         "---\n\n"
         "# Governed\n",
         encoding="utf-8",
@@ -196,6 +224,28 @@ def test_parse_skill_dir_supports_kebab_case_governance_fields(tmp_path: Path) -
     assert parsed.metadata.allowed_tools == ["read_file"]
     assert parsed.metadata.required_env == ["API_KEY"]
     assert parsed.metadata.required_bins == ["python"]
+    assert parsed.metadata.runtime_requirements.python_packages == ["defusedxml"]
+    assert parsed.metadata.script_specs[0].path == "scripts/run.py"
+    assert parsed.metadata.script_specs[0].argument_names == ["input_file"]
+
+
+def test_parse_skill_dir_promotes_legacy_required_python_packages_into_runtime_requirements(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "legacy_runtime"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: legacy_runtime\n"
+        "description: legacy runtime\n"
+        "required-python-packages:\n"
+        "  - defusedxml\n"
+        "---\n\n"
+        "# Legacy\n",
+        encoding="utf-8",
+    )
+
+    parsed = parse_skill_dir(skill_dir)
+
+    assert parsed.metadata.runtime_requirements.python_packages == ["defusedxml"]
 
 
 def test_validate_parsed_skill_rejects_invalid_governance_fields(tmp_path: Path) -> None:
@@ -222,6 +272,31 @@ def test_validate_parsed_skill_rejects_invalid_governance_fields(tmp_path: Path)
     assert "Frontmatter field 'license' must not be blank" in errors
     assert "Frontmatter field 'source_url' must be a valid http(s) URL" in errors
     assert "Frontmatter field 'compatibility' must contain only non-empty strings" in errors
+
+
+def test_validate_parsed_skill_rejects_invalid_script_specs(tmp_path: Path) -> None:
+    skill_dir = tmp_path / "invalid_specs"
+    skill_dir.mkdir()
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "scripts" / "run.py").write_text("print('ok')\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: invalid_specs\n"
+        "description: invalid specs\n"
+        "script_specs:\n"
+        "  - path: scripts/missing.py\n"
+        "    argument_names:\n"
+        "      - ''\n"
+        "---\n\n"
+        "# Invalid\n",
+        encoding="utf-8",
+    )
+
+    parsed = parse_skill_dir(skill_dir)
+    errors = validate_parsed_skill(parsed)
+
+    assert "script_spec path must reference a declared script: scripts/missing.py" in errors
+    assert "script_spec argument_names must contain only non-empty strings: scripts/missing.py" in errors
 
 
 def test_resolve_agent_skill_entries_filters_by_env_bin_and_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

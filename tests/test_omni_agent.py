@@ -228,6 +228,28 @@ async def test_omni_agent_acting_emits_tool_and_skill_events(monkeypatch: pytest
     assert tool_started["tool_sandbox_only"] is True
 
 
+def test_extract_tool_arguments_accepts_json_string_and_input_alias() -> None:
+    assert OmniAgent._extract_tool_arguments(
+        {
+            "name": "run_skill_script",
+            "arguments": '{"skill_name": "pptx", "script_path": "scripts/office/unpack.py"}',
+        }
+    ) == {
+        "skill_name": "pptx",
+        "script_path": "scripts/office/unpack.py",
+    }
+
+    assert OmniAgent._extract_tool_arguments(
+        {
+            "name": "run_skill_script",
+            "input": {"skill": "pptx", "script": "scripts/office/unpack.py"},
+        }
+    ) == {
+        "skill": "pptx",
+        "script": "scripts/office/unpack.py",
+    }
+
+
 @pytest.mark.asyncio
 async def test_factory_model_client_emits_llm_audit_events(monkeypatch: pytest.MonkeyPatch) -> None:
     factory = _build_factory()

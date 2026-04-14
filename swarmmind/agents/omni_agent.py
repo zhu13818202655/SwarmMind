@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import json
 from typing import Any, TypeAlias
 
 from agentscope.agent import ReActAgent
@@ -547,8 +548,18 @@ class OmniAgent(ReActAgent):
     @staticmethod
     def _extract_tool_arguments(tool_call: ToolUseBlock) -> dict[str, Any]:
         arguments = tool_call.get("arguments", {})
-        if isinstance(arguments, dict):
+        if isinstance(arguments, dict) and arguments:
             return dict(arguments)
+        if isinstance(arguments, str):
+            try:
+                decoded = json.loads(arguments)
+            except Exception:
+                decoded = None
+            if isinstance(decoded, dict):
+                return dict(decoded)
+        input_payload = tool_call.get("input", {})
+        if isinstance(input_payload, dict):
+            return dict(input_payload)
         return {}
 
     @staticmethod

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from enum import Enum
 from pathlib import Path
 from datetime import datetime
@@ -30,6 +31,30 @@ class SkillInstallState(str, Enum):
     INVALID = "invalid"
 
 
+class SkillRuntimeRequirements(BaseModel):
+    """Runtime bootstrap requirements for executing a skill inside a sandbox."""
+
+    python_packages: list[str] = Field(default_factory=list)
+    node_packages: list[str] = Field(default_factory=list)
+    system_packages: list[str] = Field(default_factory=list)
+    bootstrap_commands: list[str] = Field(default_factory=list)
+    python_index_url: str | None = Field(default=None)
+    node_registry_url: str | None = Field(default=None)
+
+
+class SkillScriptSpec(BaseModel):
+    """Declarative execution metadata for an individual skill script."""
+
+    path: str
+    runtime: str | None = Field(default=None)
+    description: str | None = Field(default=None)
+    args_schema: dict[str, Any] = Field(default_factory=dict)
+    argument_names: list[str] = Field(default_factory=list)
+    examples: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts: list[str] = Field(default_factory=list)
+    environment: dict[str, str] = Field(default_factory=dict)
+
+
 class SkillMetadata(BaseModel):
     """Metadata parsed from a skill package frontmatter block."""
 
@@ -44,7 +69,13 @@ class SkillMetadata(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list, description="Optional tool allowlist")
     required_env: list[str] = Field(default_factory=list, description="Required environment variables")
     required_bins: list[str] = Field(default_factory=list, description="Required binaries")
+    runtime_requirements: SkillRuntimeRequirements = Field(default_factory=SkillRuntimeRequirements)
+    script_specs: list[SkillScriptSpec] = Field(default_factory=list)
     extra: dict[str, object] = Field(default_factory=dict, description="Unmodeled frontmatter fields")
+
+    @property
+    def required_python_packages(self) -> list[str]:
+        return list(self.runtime_requirements.python_packages)
 
 
 class SkillResourceIndex(BaseModel):
@@ -118,6 +149,8 @@ class SkillScriptExecutionPolicy(BaseModel):
     environment: dict[str, str] = Field(default_factory=dict)
     artifact_paths: list[str] = Field(default_factory=list)
     script_args: list[str] = Field(default_factory=list)
+    script_input: dict[str, Any] = Field(default_factory=dict)
+    retry_on_failure: bool = Field(default=True)
 
 
 class SkillExecutionContext(BaseModel):
@@ -141,6 +174,10 @@ class SkillScriptExecutionResult(BaseModel):
     exit_code: int
     stdout: str = ""
     stderr: str = ""
+    resolved_artifact_paths: list[str] = Field(default_factory=list)
+    applied_defaults: dict[str, object] = Field(default_factory=dict)
+    failure_category: str | None = Field(default=None)
+    retry_suggestions: list[str] = Field(default_factory=list)
     artifacts: dict[str, str] = Field(default_factory=dict)
     artifact_payloads: dict[str, bytes] = Field(default_factory=dict, exclude=True)
     executed_at: datetime = Field(default_factory=utc_now)
