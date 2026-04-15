@@ -1,121 +1,12 @@
 ---
 name: pptx
 description: "Use this skill any time a .pptx file is involved in any way — as input, output, or both. This includes: creating slide decks, pitch decks, or presentations; reading, parsing, or extracting text from any .pptx file (even if the extracted content will be used elsewhere, like in an email or summary); editing, modifying, or updating existing presentations; combining or splitting slide files; working with templates, layouts, speaker notes, or comments. Trigger whenever the user mentions \"deck,\" \"slides,\" \"presentation,\" or references a .pptx filename, regardless of what they plan to do with the content afterward. If a .pptx file needs to be opened, created, or touched, use this skill."
-license: Proprietary. LICENSE.txt has complete terms
 runtime_requirements:
   python_packages:
     - defusedxml
     - markitdown[pptx]
     - Pillow
     - python-pptx
-script_specs:
-  - path: scripts/create_presentation.py
-    runtime: python
-    description: Create a new .pptx presentation from scratch from a structured deck_spec JSON object. Use this when no template or existing PPTX file is available.
-    argument_names:
-      - deck_spec
-      - output_file
-    artifacts:
-      - "{output_file}"
-    args_schema:
-      type: object
-      properties:
-        deck_spec:
-          type: object
-          description: Structured presentation definition with title, optional subtitle, and slides. Each slide supports title plus optional summary, bullets, highlight, and source fields.
-        output_file:
-          type: string
-          description: Output .pptx file path.
-      required:
-        - deck_spec
-        - output_file
-    examples:
-      - script_input:
-          deck_spec:
-            title: Gold investment outlook
-            subtitle: Trend review, forecast, and recommendations
-            slides:
-              - title: Recent price trends
-                summary: Gold prices stayed elevated due to rate-cut expectations and safe-haven demand.
-                bullets:
-                  - COMEX gold remained near record highs in the last quarter.
-                  - Central-bank buying and geopolitical risk supported the upside.
-                highlight: Momentum is strong, but volatility has increased.
-                source: Yahoo Finance, CNBC, World Gold Council
-              - title: Investment suggestions
-                bullets:
-                  - Use staggered entries instead of one-shot buying.
-                  - Limit high-volatility exposure with a position cap.
-                source: Internal strategy synthesis
-          output_file: /workspace/gold-investment-presentation.pptx
-  - path: scripts/add_slide.py
-    runtime: python
-    description: Add a slide to an unpacked PPTX directory by duplicating an existing slide or creating one from a slide layout.
-    argument_names:
-      - unpacked_dir
-      - source
-    args_schema:
-      type: object
-      properties:
-        unpacked_dir:
-          type: string
-          description: Path to the unpacked PPTX directory.
-        source:
-          type: string
-          description: Slide XML file or slideLayout XML file to use as the source.
-      required:
-        - unpacked_dir
-        - source
-    examples:
-      - script_input:
-          unpacked_dir: /workspace/gold_unpacked
-          source: slideLayout2.xml
-  - path: scripts/office/unpack.py
-    runtime: python
-    description: Unpack a PPTX archive into an editable XML directory tree.
-    argument_names:
-      - input_file
-      - output_directory
-    args_schema:
-      type: object
-      properties:
-        input_file:
-          type: string
-          description: Input .pptx file path.
-        output_directory:
-          type: string
-          description: Output directory for the unpacked PPTX contents.
-      required:
-        - input_file
-        - output_directory
-    examples:
-      - script_input:
-          input_file: /workspace/gold.pptx
-          output_directory: /workspace/gold_unpacked
-  - path: scripts/office/pack.py
-    runtime: python
-    description: Pack an unpacked PPTX directory back into a .pptx file.
-    argument_names:
-      - input_directory
-      - output_file
-    artifacts:
-      - "{output_file}"
-    args_schema:
-      type: object
-      properties:
-        input_directory:
-          type: string
-          description: Input directory containing the unpacked PPTX contents.
-        output_file:
-          type: string
-          description: Output .pptx file path.
-      required:
-        - input_directory
-        - output_file
-    examples:
-      - script_input:
-          input_directory: /workspace/gold_unpacked
-          output_file: /workspace/gold_investment.pptx
 ---
 
 # PPTX Skill
@@ -127,6 +18,81 @@ script_specs:
 | Read/analyze content | `python -m markitdown presentation.pptx` |
 | Edit or create from template | Read [editing.md](editing.md) |
 | Create from scratch | Read [pptxgenjs.md](pptxgenjs.md) |
+
+---
+
+## Available Scripts
+
+### scripts/create_presentation.py
+
+从结构化 JSON 创建新的 .pptx 演示文稿。当没有模板或现有 PPTX 文件可用时使用。
+
+用法：`python scripts/create_presentation.py '<deck_spec_json>' <output_file>`
+
+参数（位置参数，按顺序传入 `script_args`）：
+1. `deck_spec_json` — JSON 字符串，包含演示文稿结构定义
+2. `output_file` — 输出 .pptx 文件路径
+
+deck_spec 结构：
+- `title`: 演示文稿标题
+- `subtitle`: 副标题（可选）
+- `slides`: 幻灯片数组，每个 slide 支持以下字段：
+  - `title`: 幻灯片标题
+  - `summary`: 摘要文本（可选）
+  - `bullets`: 要点列表（可选）
+  - `highlight`: 高亮文本（可选）
+  - `source`: 来源说明（可选）
+
+产物：输出的 .pptx 文件（通过 `artifact_paths` 声明）
+
+示例：
+```json
+{
+  "title": "Gold Investment Outlook",
+  "subtitle": "Trend review, forecast, and recommendations",
+  "slides": [
+    {
+      "title": "Recent price trends",
+      "summary": "Gold prices stayed elevated due to rate-cut expectations.",
+      "bullets": ["COMEX gold near record highs.", "Central-bank buying supported upside."],
+      "highlight": "Momentum is strong, but volatility has increased.",
+      "source": "Yahoo Finance, CNBC"
+    }
+  ]
+}
+```
+
+### scripts/add_slide.py
+
+向已解包的 PPTX 目录添加新幻灯片（通过复制现有幻灯片或从布局创建）。
+
+用法：`python scripts/add_slide.py <unpacked_dir> <source>`
+
+参数：
+1. `unpacked_dir` — 已解包的 PPTX 目录路径
+2. `source` — 用作来源的幻灯片 XML 文件或 slideLayout XML 文件
+
+### scripts/office/unpack.py
+
+将 PPTX 归档解包为可编辑的 XML 目录树。
+
+用法：`python scripts/office/unpack.py <input_file> <output_directory>`
+
+参数：
+1. `input_file` — 输入 .pptx 文件路径
+2. `output_directory` — 输出目录路径
+
+### scripts/office/pack.py
+
+将已解包的 PPTX 目录重新打包为 .pptx 文件。
+
+用法：`python scripts/office/pack.py <input_directory> <output_file>`
+
+参数：
+1. `input_directory` — 已解包的 PPTX 内容目录
+2. `output_file` — 输出 .pptx 文件路径
+
+产物：输出的 .pptx 文件（通过 `artifact_paths` 声明）
 
 ---
 

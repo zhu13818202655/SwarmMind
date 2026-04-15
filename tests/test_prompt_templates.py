@@ -60,10 +60,9 @@ def test_execution_prompts_include_capability_boundaries() -> None:
     assert "你不需要选择、输出或请求 sandbox profile 名称" in EXECUTION_SYSTEM_PROMPT.template
     assert "Markdown 只是一份摘要，不能替代文件本身" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "依赖子任务摘要：{{ dependency_summary_json }}" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
-    assert "当前可用技能脚本：{{ skill_script_inventory_json }}" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
-    assert "技能执行提示：{{ selected_skill_context_json }}" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
-    assert "先调用 `list_skill_scripts` 或 `get_skill_details` 查询后再执行" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
-    assert "必须通过 `script_args` 传入有序参数" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "技能入口信息：{{ skill_manifest_json }}" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "read_skill_reference(skill_name)" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
+    assert "必须通过 `script_args` 传位置参数" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "必须设置 `allow_sandbox_exec=true`" in EXECUTION_SUBTASK_MARKDOWN_PROMPT.template
     assert "不要把 Markdown 内容写入 `outputs/*.md` 来冒充文件交付" in EXECUTION_SANDBOX_COMMAND_PROMPT.template
 

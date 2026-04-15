@@ -93,6 +93,28 @@ class SkillTool:
             resolved_script_input,
         )
 
+    async def read_skill_reference(
+        self,
+        skill_name: str,
+        reference_path: str | None = None,
+        tenant_id: str = "system",
+        session_id: str | None = None,
+        task_id: str | None = None,
+        run_id: str | None = None,
+        subtask_id: str | None = None,
+    ) -> str:
+        """Progressively read a skill resource (SKILL.md body, reference doc, or script source)."""
+        from swarmmind.skill_system import SkillExecutionContext
+
+        context = SkillExecutionContext(
+            tenant_id=tenant_id,
+            session_id=session_id,
+            task_id=task_id,
+            run_id=run_id,
+            subtask_id=subtask_id,
+        )
+        return self._service.read_skill_reference(skill_name, reference_path, context)
+
     async def list_skill_scripts(self, skill_name: str) -> list[str]:
         """List declared scripts for a skill package."""
         return self._service.list_skill_scripts(skill_name)
@@ -169,6 +191,11 @@ class SkillTool:
             ),
         )
         return result.model_dump(mode="json")
+
+
+async def read_skill_reference(skill_name: str, reference_path: str | None = None) -> str:
+    """Progressively read a skill resource (SKILL.md body, reference doc, or script source)."""
+    raise RuntimeError("Skill tool not initialized")
 
 
 async def list_skill_scripts(skill_name: str) -> list[str]:
