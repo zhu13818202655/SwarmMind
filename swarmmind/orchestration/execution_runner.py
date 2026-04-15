@@ -1692,6 +1692,12 @@ class ExecutionRunner:
     ):
         current_run = run or await self._run_repository.get(subtask.metadata.get("run_id") or "")
         execution_profile = self._load_execution_profile(subtask)
+        # Merge runtime-selected tools into execution_profile.allowed_tool_names
+        # so the factory's strict_tool_names filter doesn't drop them.
+        selected_tools = set(subtask.metadata.get("selected_tools") or [])
+        if selected_tools:
+            merged = sorted(selected_tools.union(execution_profile.allowed_tool_names))
+            execution_profile = execution_profile.model_copy(update={"allowed_tool_names": merged})
         active_profile = agent_profile_override or self._agent_profile_store.get(execution_profile.agent_profile_id)
         tool_functions = self._build_agent_tool_functions(task, current_run, subtask) if current_run is not None else []
         skill_profiles = self._effective_skill_profiles(execution_profile, subtask)

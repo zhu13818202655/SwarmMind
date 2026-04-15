@@ -37,23 +37,28 @@ EXECUTION_SUBTASK_MARKDOWN_PROMPT = PromptTemplate(
 技能入口信息：{{ skill_manifest_json }}
 真实文件产物要求：{{ output_contract_json }}
 
-渐进式 Skill 使用协议：
+渐进式 Skill 使用协议（必须遵守）：
+⚠️ 在调用 run_skill_script 之前，你必须先调用 read_skill_reference 读取技能文档。未读取文档就直接调用脚本会导致参数错误和产出质量低下。
 1. 查看上面的技能入口信息，了解 Skill 可用脚本和参考资源列表。
-2. 调用 read_skill_reference(skill_name) 读取 SKILL.md 中的方法论、设计指南和脚本说明。
+2. **必须**调用 read_skill_reference(skill_name) 读取 SKILL.md 中的方法论、设计指南和脚本参数说明。这一步不可跳过。
 3. 如需了解特定工作流，调用 read_skill_reference(skill_name, "editing.md") 等。
-4. 如需理解脚本参数，调用 read_skill_reference(skill_name, "scripts/xxx.py") 读脚本源码。
-5. 确认参数后，调用 run_skill_script，用 script_args 传位置参数，用 artifact_paths 声明产物路径。
+4. 如需进一步理解脚本参数格式，调用 read_skill_reference(skill_name, "scripts/xxx.py") 读脚本源码。
+5. 确认参数格式后，调用 run_skill_script，用 script_args 传位置参数，用 artifact_paths 声明产物路径。
 6. 对于复杂任务，方法论先行于执行——先读设计指南，再决定怎么做。
 
 技能脚本调用规则：
 - run_skill_script 只能执行 Skill 中已存在的脚本（见入口信息中的 scripts 列表）。
 - `script_path` 必须使用技能包中已声明的完整相对路径，例如 `scripts/run.py`；不要臆造未声明名称。
 - `skill`/`script` 只是 `skill_name`/`script_path` 的别名；`script` 绝不能传入内联 Python、Shell 或其他源码字符串。
-- 必须通过 `script_args` 传位置参数（从脚本源码确认参数顺序）。
+- 必须通过 `script_args` 传位置参数（从脚本源码或 SKILL.md 确认参数顺序和 JSON 格式）。
 - 必须通过 `artifact_paths` 声明要回收的产物文件路径。
 - 只要实际执行技能脚本，就必须设置 `allow_sandbox_exec=true`。
 - 当输出契约要求真实文件产物，且存在对应 skill profile 时，优先使用已声明技能脚本完成文件物化；如果没有合适脚本，不要伪称已经生成文件。
 - 需要执行任意临时代码时，使用通用代码执行工具；不要把源码塞进 `run_skill_script`。
+
+语言与内容要求：
+- 输出语言必须与用户任务目标的语言一致。如果任务目标是中文，所有交付内容（包括 PPT/文档的标题、正文、要点等）都必须使用中文。
+- 当依赖子任务摘要中已提供详细数据、分析和结论时，必须充分利用这些内容来丰富产出，不要丢弃细节只保留一句话概括。
 
 输出要求：
 1) 始终返回简洁的 Markdown 摘要，说明你实际完成了什么。
