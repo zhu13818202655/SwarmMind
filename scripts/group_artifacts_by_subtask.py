@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 
-EMPTY_SUBTASK_PREFIX = "no-subtask"
+PLAN_GROUP_NAME = "plan"
 
 
 @dataclass(slots=True)
@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--flatten-empty-subtask",
         action="store_true",
-        help="Put empty subtask_id files into one folder instead of one folder per file.",
+        help="Deprecated compatibility flag. Empty subtask_id files are always grouped into plan.",
     )
     return parser
 
@@ -136,18 +136,16 @@ def load_artifact(path: Path) -> ArtifactEntry:
 
 
 def build_group_key(entry: ArtifactEntry, *, flatten_empty_subtask: bool) -> str:
-    """Return a stable group key, treating empty subtask ids as unique groups by default."""
+    """Return a stable group key, grouping empty subtask ids into the plan bucket."""
     if entry.subtask_id:
         return entry.subtask_id
-    if flatten_empty_subtask:
-        return EMPTY_SUBTASK_PREFIX
-    return f"{EMPTY_SUBTASK_PREFIX}-{entry.artifact_id}"
+    return PLAN_GROUP_NAME
 
 
 def build_group_folder_name(group_index: int, entries: list[ArtifactEntry]) -> str:
     """Build the folder name for a grouped batch of artifact files."""
     first_entry = entries[0]
-    label = first_entry.subtask_id or f"{EMPTY_SUBTASK_PREFIX}-{first_entry.artifact_id}"
+    label = first_entry.subtask_id or PLAN_GROUP_NAME
     return f"{group_index:03d}_{sanitize_name(label)}"
 
 
