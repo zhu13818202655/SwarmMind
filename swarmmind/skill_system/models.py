@@ -129,7 +129,6 @@ class SkillManifest(BaseModel):
     name: str
     description: str
     entrypoint_resources: list[str] = Field(default_factory=list)
-    scripts: list[str] = Field(default_factory=list)
     artifact_types: list[str] = Field(default_factory=list)
 
 

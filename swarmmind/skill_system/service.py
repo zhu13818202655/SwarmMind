@@ -68,7 +68,6 @@ class SkillExecutionService:
             name=entry.name,
             description=entry.description,
             entrypoint_resources=entrypoint_resources,
-            scripts=list(entry.resources.scripts),
             artifact_types=artifact_types,
         )
 

@@ -33,6 +33,7 @@ class SkillScriptExecutor:
 
     def __init__(self, sandbox_manager: SandboxManager) -> None:
         self._sandbox_manager = sandbox_manager
+        self._setup_done: set[tuple[str, str]] = set()
 
     async def execute(
         self,
@@ -59,7 +60,7 @@ class SkillScriptExecutor:
                 self._build_write_entries(entry, sandbox_skill_root),
             )
 
-            command = self._build_command(
+            setup_command, script_command = self._build_commands(
                 entry.metadata.runtime_requirements,
                 script_spec,
                 normalized_script,
@@ -67,9 +68,35 @@ class SkillScriptExecutor:
                 effective_policy.artifact_paths,
                 effective_policy.script_args,
             )
+
+            setup_result = await self._ensure_setup(
+                handle.sandbox_id,
+                entry.name,
+                setup_command,
+                cwd=sandbox_skill_root,
+            )
+            if setup_result is not None and setup_result.exit_code != 0:
+                command = setup_command or script_command
+                return SkillScriptExecutionResult(
+                    skill_name=entry.name,
+                    script_path=normalized_script,
+                    sandbox_id=handle.sandbox_id,
+                    command=command,
+                    cwd=sandbox_skill_root,
+                    exit_code=setup_result.exit_code,
+                    stdout=setup_result.stdout,
+                    stderr=setup_result.stderr,
+                    resolved_artifact_paths=list(effective_policy.artifact_paths),
+                    applied_defaults=applied_defaults,
+                    artifacts={},
+                    artifact_payloads={},
+                    failure_category="dependency_install_failed",
+                )
+
+            command = script_command
             exec_result = await self._sandbox_manager.run_command(
                 handle.sandbox_id,
-                command,
+                script_command,
                 cwd=sandbox_skill_root,
             )
 
@@ -321,7 +348,7 @@ class SkillScriptExecutor:
             for relative_path, content in collect_skill_files(entry.root_dir)
         ]
 
-    def _build_command(
+    def _build_commands(
         self,
         runtime_requirements: SkillRuntimeRequirements,
         script_spec: SkillScriptSpec | None,
@@ -329,22 +356,52 @@ class SkillScriptExecutor:
         environment: dict[str, str],
         artifact_paths: list[str],
         script_args: list[str],
-    ) -> str:
+    ) -> tuple[str | None, str]:
+        """Return ``(setup_command, script_command)``.
+
+        ``setup_command`` contains dependency installation and artifact
+        directory creation; it may be ``None`` when no preambles are
+        needed.  ``script_command`` is the pure script invocation.
+        """
         normalized_script = script_path.strip().lstrip("/")
         env_prefix = "; ".join(
             f"export {key}={shlex.quote(value)}"
             for key, value in sorted(environment.items())
         )
 
-        command = self._build_script_invocation(script_spec, normalized_script, script_args)
+        script_invocation = self._build_script_invocation(script_spec, normalized_script, script_args)
+        if env_prefix:
+            script_invocation = f"{env_prefix}; {script_invocation}"
+
         install_preambles = self._build_runtime_requirement_preambles(runtime_requirements)
         artifact_dir_preamble = self._build_artifact_dir_preamble(artifact_paths)
         preambles = [*install_preambles, *([artifact_dir_preamble] if artifact_dir_preamble else [])]
-        if preambles:
-            command = f"{' && '.join(preambles)} && {command}"
-        if env_prefix:
-            return f"{env_prefix}; {command}"
-        return command
+        setup_command = f"{' && '.join(preambles)}" if preambles else None
+
+        return setup_command, script_invocation
+
+    async def _ensure_setup(
+        self,
+        sandbox_id: str,
+        skill_name: str,
+        setup_command: str | None,
+        *,
+        cwd: str | None = None,
+    ) -> Any:
+        """Run the setup command once per (sandbox, skill) pair.
+
+        Returns ``None`` when no setup is needed or it was already done.
+        Otherwise returns the ``ExecResult`` from the sandbox.
+        """
+        if setup_command is None:
+            return None
+        cache_key = (sandbox_id, skill_name)
+        if cache_key in self._setup_done:
+            return None
+        result = await self._sandbox_manager.run_command(sandbox_id, setup_command, cwd=cwd)
+        if result.exit_code == 0:
+            self._setup_done.add(cache_key)
+        return result
 
     def _build_runtime_requirement_preambles(
         self,

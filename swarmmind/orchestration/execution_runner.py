@@ -2033,9 +2033,11 @@ class ExecutionRunner:
                 return self._summarize_artifacts(artifacts)
             register("artifact_read", "读取依赖子任务关联的产物。", artifact_read)
 
+        _skill_refs_read: set[str] = set()
+
         if "read_skill_reference" in selected_tools:
             async def read_skill_reference(skill_name: str, reference_path: str | None = None) -> str:
-                return await self._run_tool(
+                result = await self._run_tool(
                     "read_skill_reference",
                     task=task,
                     run=run,
@@ -2048,6 +2050,8 @@ class ExecutionRunner:
                     run_id=run.id,
                     subtask_id=subtask.id,
                 )
+                _skill_refs_read.add(skill_name)
+                return result
             register("read_skill_reference", "渐进式读取技能包资源——SKILL.md 主体（设计指南、脚本说明）、参考文档或脚本源码。", read_skill_reference)
 
         if "list_skill_scripts" in selected_tools:
@@ -2108,6 +2112,11 @@ class ExecutionRunner:
                 effective_allow_sandbox_exec = effective_allow_sandbox_exec or default_allow_sandbox_exec
                 if not resolved_skill_name and len(execution_profile.skill_profiles) == 1:
                     resolved_skill_name = execution_profile.skill_profiles[0]
+                if resolved_skill_name and resolved_skill_name not in _skill_refs_read:
+                    raise ValueError(
+                        f"必须先调用 read_skill_reference('{resolved_skill_name}') 读取技能文档，"
+                        f"了解可用脚本和参数格式后，才能调用 run_skill_script。"
+                    )
                 if resolved_script_path and self._looks_like_inline_source(resolved_script_path):
                     raise ValueError(
                         "run_skill_script only accepts declared skill script paths like scripts/run.py; received inline source text. Use a general code execution tool for ad-hoc code."

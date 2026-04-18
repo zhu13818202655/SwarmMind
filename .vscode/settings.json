@@ -1,3 +1,6 @@
 {
-    "github.copilot.chat.agentDebugLog.enabled": true
+    "github.copilot.chat.agentDebugLog.enabled": true,
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportOptionalMemberAccess": "none"
+    }
 }
