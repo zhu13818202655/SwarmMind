@@ -337,7 +337,9 @@ async def _build_repositories(
     if settings.postgres.enabled:
         store = PostgresStore(settings.postgres.dsn)
         if settings.postgres.auto_init_schema:
-            await store.initialize()
+            from swarmmind.repositories.migrations import upgrade_head
+
+            await upgrade_head(settings.postgres.dsn)
         return (
             PostgresTaskRepository(store),
             PostgresSessionRepository(store),

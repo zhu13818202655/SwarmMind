@@ -1,0 +1,16 @@
+# FlyReport domain configuration.
+#
+# Real values (token, prod base_url, tenant header) should come from the
+# environment via DIKONG_BASE_URL / DIKONG_TOKEN or a local override file
+# at $PROJECT_ROOT/config.yaml.
+fly_report:
+  enabled: true
+  dikong:
+    base_url: "http://127.0.0.1:50284"
+    token: null
+    tenant_header: "X-Tenant-Id"
+    request_timeout_seconds: 15.0
+    max_retries: 2
+    retry_backoff_seconds: 0.5
+    max_concurrency: 8
+    rate_limit_per_second: 10.0

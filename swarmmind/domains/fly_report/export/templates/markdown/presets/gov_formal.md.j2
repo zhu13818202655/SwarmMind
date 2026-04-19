@@ -1,0 +1,42 @@
+{% macro kpi_row(k) -%}
+| {{ k.label }} | {{ k.value if k.value is not none else "—" }}{{ k.unit }} | {{ k.previous_value if k.previous_value is not none else "—" }}{{ k.unit }} | {{ "%+.2f"|format(k.change_pct) ~ "%" if k.change_pct is not none else "—" }} |
+{%- endmacro %}
+
+# {{ report.title }}
+
+**报送周期**：{{ report.period_label }}　　**统计范围**：{{ report.scope_kind }}　　**报告版本**：第 {{ report.revision }} 稿
+
+{% if report.department_ids %}**所涉部门**：{{ report.department_ids | join("、") }}
+{% endif %}{% if report.pilot_ids %}**所涉飞手**：{{ report.pilot_ids | join("、") }}
+{% endif %}**统计指标**：{{ report.indicators | join("、") }}
+
+---
+
+{% for section in sections %}
+## {{ loop.index }}. {{ section.title }}
+
+{% if section.summary_md %}{{ section.summary_md }}
+
+{% endif %}{% if section.kpis %}（一）核心指标
+
+| 指标名称 | 本期数值 | 上期数值 | 环比变化 |
+|:---|---:|---:|---:|
+{% for k in section.kpis %}{{ kpi_row(k) }}
+{% endfor %}
+{% endif %}{% if section.tables %}（二）数据明细
+
+{% for t in section.tables %}**{{ t.title | default("明细表") }}**
+
+{{ t.markdown | default("") }}
+
+{% endfor %}{% endif %}{% if section.charts %}（三）图表展示
+
+{% for c in section.charts %}**图 {{ loop.index }}**　{{ c.title }}
+
+![{{ c.title }}](charts/{{ c.id }}.png)
+
+{% endfor %}{% endif %}{% endfor %}
+
+---
+
+报告编制：SwarmMind FlyReport 系统　　会话编号：{{ report.session_id }}　　成文时间：{{ report.generated_at }}

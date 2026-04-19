@@ -1,0 +1,30 @@
+{% macro kpi_card(k) -%}
+- **{{ k.label }}**　`{{ k.value if k.value is not none else "—" }}{{ k.unit }}`　{% if k.change_pct is not none %}{% if k.change_pct >= 0 %}🔺{% else %}🔻{% endif %} {{ "%+.2f"|format(k.change_pct) }}%{% else %}—{% endif %}
+{%- endmacro %}
+
+# ⚡ {{ report.title }} · Dashboard
+
+`周期: {{ report.period_label }}` · `范围: {{ report.scope_kind }}` · `指标: {{ report.indicators | join(" · ") }}`
+
+---
+
+{% for section in sections %}
+### 🎯 {{ section.title }}
+
+{% if section.kpis %}{% for k in section.kpis %}{{ kpi_card(k) }}
+{% endfor %}
+{% endif %}{% if section.summary_md %}> {{ section.summary_md }}
+
+{% endif %}{% if section.charts %}{% for c in section.charts %}![{{ c.title }}](charts/{{ c.id }}.png)
+
+{% endfor %}{% endif %}{% if section.tables %}{% for t in section.tables %}<details><summary>{{ t.title | default("数据明细") }}</summary>
+
+{{ t.markdown | default("") }}
+
+</details>
+
+{% endfor %}{% endif %}{% endfor %}
+
+---
+
+`session={{ report.session_id }}` · `rev={{ report.revision }}` · `generated_at={{ report.generated_at }}`

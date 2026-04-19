@@ -56,6 +56,22 @@
       ]
     },
     {
+      "name": "FlyReport Chat",
+      "consoleName": "FlyReport Chat",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/fly_report_chat.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      },
+      "args": [
+        "生成农业局上周飞行周报"
+      ]
+    },
+    {
       "name": "Task Show",
       "type": "node-terminal",
       "request": "launch",

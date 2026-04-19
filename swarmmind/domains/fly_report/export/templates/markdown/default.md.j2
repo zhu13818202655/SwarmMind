@@ -1,0 +1,37 @@
+{% macro kpi_row(k) -%}
+| {{ k.label }} | {{ k.value if k.value is not none else "—" }}{{ k.unit }} | {{ k.previous_value if k.previous_value is not none else "—" }}{{ k.unit }} | {{ "%+.2f"|format(k.change_pct) ~ "%" if k.change_pct is not none else "—" }} |
+{%- endmacro %}
+
+# {{ report.title }}
+
+- 周期：**{{ report.period_label }}**
+- 范围：{{ report.scope_kind }}
+{% if report.department_ids %}- 部门：{{ report.department_ids | join(", ") }}
+{% endif %}{% if report.pilot_ids %}- 飞手：{{ report.pilot_ids | join(", ") }}
+{% endif %}- 指标：{{ report.indicators | join(", ") }}
+- 生成时间：{{ report.generated_at }}
+
+---
+
+{% for section in sections %}
+## {{ section.title }}
+
+{% if section.summary_md %}{{ section.summary_md }}
+
+{% endif %}{% if section.kpis %}| 指标 | 本期 | 上期 | 同比 |
+|---|---|---|---|
+{% for k in section.kpis %}{{ kpi_row(k) }}
+{% endfor %}
+{% endif %}{% if section.tables %}{% for t in section.tables %}### {{ t.title | default("数据表") }}
+
+{{ t.markdown | default("") }}
+
+{% endfor %}{% endif %}{% if section.charts %}{% for c in section.charts %}### {{ c.title }}
+
+![{{ c.title }}](charts/{{ c.id }}.png)
+
+{% endfor %}{% endif %}{% endfor %}
+
+---
+
+_本报告由 SwarmMind FlyReport 自动生成 · session: {{ report.session_id }} · rev {{ report.revision }}_

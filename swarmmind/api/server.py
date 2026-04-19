@@ -24,6 +24,21 @@ from swarmmind.models.task import TaskPriority, TaskStatus
 async def lifespan(app: FastAPI):
     """Lifespan context manager."""
     app.state.container = await get_container(app.state.settings)
+    # Apply Alembic migrations once per process when PG is enabled. The
+    # container itself runs the same upgrade for the core tables, so this
+    # call is a no-op on subsequent invocations (Alembic compares revision
+    # state in ``alembic_version``).
+    if getattr(app.state, "fly_report_repo_init_required", False):
+        try:
+            from swarmmind.repositories.migrations import upgrade_head
+
+            await upgrade_head(app.state.settings.postgres.dsn)
+        except Exception:  # pragma: no cover - log + continue
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "fly_report.repo_init_failed"
+            )
     yield
 
 
@@ -269,6 +284,66 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+
+    # FlyReport domain router (DESIGN-2 §13 step 7 + §14.4.1 PG persistence).
+    from swarmmind.domains.fly_report.api import create_fly_report_router
+    from swarmmind.domains.fly_report.repository import (
+        InMemoryFlyReportRepository,
+        PostgresFlyReportRepository,
+    )
+    from swarmmind.domains.fly_report.service import FlyReportService
+    from swarmmind.repositories.postgres import PostgresStore
+
+    if settings.postgres.enabled:
+        fly_report_repo = PostgresFlyReportRepository(
+            PostgresStore(settings.postgres.dsn)
+        )
+        if settings.postgres.auto_init_schema:
+            app.state.fly_report_repo_init_required = True
+        else:
+            app.state.fly_report_repo_init_required = False
+    else:
+        fly_report_repo = InMemoryFlyReportRepository()
+        app.state.fly_report_repo_init_required = False
+
+    app.state.fly_report_repo = fly_report_repo
+    # Best-effort event bus for fly_report.* topics (DESIGN-3 §2.8 R8.1).
+    try:
+        from swarmmind.events.in_memory_bus import InMemoryEventBus
+
+        fly_report_event_bus = InMemoryEventBus()
+    except Exception:  # pragma: no cover - optional dep
+        fly_report_event_bus = None
+    app.state.fly_report_event_bus = fly_report_event_bus
+
+    # Intent parser selection (DESIGN-3 R1.1). ``llm`` falls back to ``rule``
+    # on build failure so offline / first-run deployments stay usable.
+    intent_parser: Any = None
+    try:
+        kind = getattr(
+            getattr(settings.fly_report, "intent", None), "parser_kind", "rule"
+        )
+    except Exception:
+        kind = "rule"
+    if kind == "llm":
+        try:
+            from swarmmind.domains.fly_report.agents.factory import (
+                build_intent_agent,
+            )
+            from swarmmind.domains.fly_report.intent.parser import IntentParser
+
+            intent_parser = IntentParser(build_intent_agent())
+        except Exception:  # pragma: no cover - depends on live LLM
+            intent_parser = None
+
+    app.state.fly_report_service = FlyReportService(
+        repository=fly_report_repo,
+        event_bus=fly_report_event_bus,
+        intent_parser=intent_parser,
+    )
+    app.include_router(
+        create_fly_report_router(app.state.fly_report_service)
+    )
 
     @app.get("/")
     async def root():

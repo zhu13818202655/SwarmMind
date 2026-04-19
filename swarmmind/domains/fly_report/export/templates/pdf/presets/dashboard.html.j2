@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>{{ report.title }}</title>
+  <style>
+    @page { size: A4 landscape; margin: 1.2cm; }
+    body { font-family: "Source Han Sans CN", "Noto Sans CJK SC", sans-serif; font-size: 10pt; color: #2b2d42; background: #f8fafc; line-height: 1.5; }
+    h1 { font-size: 20pt; color: #ef233c; margin: 0 0 .3em; letter-spacing: .02em; }
+    h2 { font-size: 13pt; color: #2b2d42; background: #edf2f7; padding: .25em .6em; margin-top: 1em; border-left: 4px solid #ef233c; }
+    h3 { font-size: 11pt; color: #555; }
+    .meta { color: #555; font-size: 9pt; margin-bottom: 1em; }
+    table { width: 100%; border-collapse: collapse; margin: .4em 0 .8em; box-shadow: 0 1px 2px rgba(0,0,0,.06); background: #fff; }
+    th, td { border: none; border-bottom: 1px solid #e2e8f0; padding: 5pt 8pt; font-size: 10pt; }
+    th { background: #2b2d42; color: #fff; text-align: left; font-weight: 600; }
+    .footer { color: #888; font-size: 8pt; margin-top: 1.5em; }
+    .delta-up { color: #ef233c; font-weight: 700; }
+    .delta-down { color: #16a34a; font-weight: 700; }
+  </style>
+</head>
+<body>
+{% include "_body.html.j2" %}
+</body>
+</html>

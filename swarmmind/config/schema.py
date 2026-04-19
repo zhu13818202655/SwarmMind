@@ -324,3 +324,96 @@ class IdentityConfig(BaseModel):
         description="Default roles for static identity resolution",
     )
     auth_method: str = Field(default="static", description="Default auth method label")
+
+class FlyReportDikongConfig(ValidatedDefaultsModel):
+    """Dikong upstream API configuration for the FlyReport domain."""
+
+    base_url: str = Field(
+        default="http://127.0.0.1:50284",
+        description="Dikong API base URL (no trailing slash)",
+    )
+    token: str | None = Field(
+        default=None,
+        description="Bearer / API token forwarded to dikong",
+    )
+    tenant_header: str = Field(
+        default="X-Tenant-Id",
+        description="Header name used to forward tenant id to dikong",
+    )
+    request_timeout_seconds: float = Field(
+        default=15.0,
+        description="Per-request timeout in seconds",
+    )
+    max_retries: int = Field(
+        default=2,
+        ge=0,
+        description="Number of retries on transient failures (5xx / connect)",
+    )
+    retry_backoff_seconds: float = Field(
+        default=0.5,
+        ge=0.0,
+        description="Base backoff for retries (exponential)",
+    )
+    max_concurrency: int = Field(
+        default=8,
+        ge=1,
+        description="Max concurrent in-flight requests per client",
+    )
+    rate_limit_per_second: float = Field(
+        default=10.0,
+        gt=0.0,
+        description="Token-bucket rate limit (req/s) enforced via aiolimiter",
+    )
+
+    @field_validator("base_url", mode="before")
+    @classmethod
+    def resolve_base_url(cls, value: Any) -> Any:
+        return resolve_env_value(value, "DIKONG_BASE_URL")
+
+    @field_validator("token", mode="before")
+    @classmethod
+    def resolve_token(cls, value: Any) -> Any:
+        return resolve_env_value(value, "DIKONG_TOKEN")
+
+
+class FlyReportConfig(ValidatedDefaultsModel):
+    """Domain-level configuration for FlyReport."""
+
+    enabled: bool = Field(default=True, description="Toggle for the FlyReport domain")
+    dikong: FlyReportDikongConfig = Field(default_factory=FlyReportDikongConfig)
+    intent: "FlyReportIntentConfig" = Field(
+        default_factory=lambda: FlyReportIntentConfig(),
+        description="Intent-parser wiring (rule-based vs LLM)",
+    )
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def resolve_enabled(cls, value: Any) -> Any:
+        return resolve_env_value(value, "SWARMMIND_FLY_REPORT__ENABLED", cast_type=bool)
+
+
+class FlyReportIntentConfig(ValidatedDefaultsModel):
+    """IntentParser configuration for FlyReport (DESIGN-3 R1.1)."""
+
+    parser_kind: str = Field(
+        default="rule",
+        description="Which intent parser to use: 'rule' (no LLM) or 'llm'",
+    )
+
+    @field_validator("parser_kind", mode="before")
+    @classmethod
+    def resolve_parser_kind(cls, value: Any) -> Any:
+        resolved = resolve_env_value(
+            value, "SWARMMIND_FLY_REPORT__INTENT__PARSER_KIND"
+        )
+        if resolved is None:
+            return "rule"
+        normalized = str(resolved).lower().strip()
+        if normalized not in {"rule", "llm"}:
+            raise ValueError(
+                f"fly_report.intent.parser_kind must be 'rule' or 'llm'; got {resolved!r}"
+            )
+        return normalized
+
+
+FlyReportConfig.model_rebuild()

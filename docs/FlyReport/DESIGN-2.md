@@ -240,10 +240,107 @@ DataInsightPusher（周期收口）
 | `export/docx_renderer.py` | docxtpl 渲染 → `report.docx`；图表以 PNG 插入 |
 | `export/pdf_renderer.py` | 复用 `composer/preview_renderer.py` 产出的 HTML，走 WeasyPrint 渲染 → `report.pdf`（中文字体预装） |
 | `export/markdown_renderer.py` | Jinja2 markdown 模板 → `report.md`；图表另存为 PNG 资产目录并以相对路径引用 |
-| `export/templates/docx/report.docx.j2` | docxtpl 模板（含表格、图表占位、备注栏占位）|
+| `export/template_loader.py` | `TemplateLoader`：统一解析 `default` / `preset:<name>` 两类内置模板引用，返回内存中的 `LoadedTemplate{path, source, format}`；详见 §4.1.6.1 |
+| `export/templates/docx/default.docx.j2` | docx 默认母版（含表格、图表占位、备注栏占位） |
+| `export/templates/docx/presets/<name>.docx.j2` | 内置 docx 预设风格（M1 落 `default_zh` + `gov_formal` + `dashboard` + `minimal`） |
 | `export/templates/docx/cover.docx.j2` | docx 封面模板（部门/周期/生成时间）|
-| `export/templates/pdf/report.html.j2` | PDF 专用 HTML 模板（可复用预览宏，但面向打印布局：页眉/页脚/分页）|
-| `export/templates/markdown/report.md.j2` | Markdown 模板（表格、图片链接、门类标题层级）|
+| `export/templates/pdf/default.html.j2` | PDF 默认 HTML 模板（可复用预览宏，但面向打印布局：页眉/页脚/分页）|
+| `export/templates/pdf/presets/<name>.html.j2` | PDF 预设风格目录（与 docx preset 对齐命名） |
+| `export/templates/markdown/default.md.j2` | Markdown 默认模板（表格、图片链接、门类标题层级）|
+| `export/templates/markdown/presets/<name>.md.j2` | Markdown 预设风格目录（与 docx preset 对齐命名） |
+
+#### 4.1.6.1 渲染模板：内置双源（default + presets）
+
+> 当前版本（M1）只做「内置模板」。**用户上传自定义模板（`user:<id>`、skin 模式、style_injector、`/v1/fly-reports/templates` 上传 API 与 `report_template` 表）整体推迟到下一版（M2+）实现。**当前版本通过提供多套预设风格满足绝大多数场景。
+
+**两种来源（`template_ref` 字符串协议）**：
+
+| 标识 | 含义 | 存储位置 | 备注 |
+|---|---|---|---|
+| `default` | 兜底模板（永远存在） | 仓库 `export/templates/<fmt>/default.<ext>.j2` | 缺省值 |
+| `preset:<name>` | 内置预设风格（多套可选） | 仓库 `export/templates/<fmt>/presets/<name>.<ext>.j2` | M1 内置 4 套：`default_zh` / `gov_formal` / `dashboard` / `minimal` |
+
+**解析优先级（每次渲染解析一次）**：
+
+```
+ConfirmPayload.template_ref            （API 调用显式指定，最高优先）
+   ↓ 缺省
+UserPreference.template_default        （用户偏好里设置的默认风格）
+   ↓ 缺省
+"default"                              （永久兜底）
+```
+
+**LoadedTemplate 数据结构**：
+
+```python
+@dataclass(frozen=True)
+class LoadedTemplate:
+    path: Path                # 模板绝对路径
+    source: Literal["default", "preset"]
+    name: str                 # default 时为 "default"；preset 时为 <name>
+    output_format: OutputFormat   # docx / pdf / markdown
+```
+
+**TemplateLoader 接口（精简版）**：
+
+```python
+class TemplateLoader:
+    def __init__(self, *, templates_root: Path): ...
+
+    def list_templates(
+        self, output_format: OutputFormat,
+    ) -> list[LoadedTemplate]:
+        """枚举 default + 该格式下所有 preset，用于 GET /templates 列表接口。"""
+
+    def load(
+        self, *, output_format: OutputFormat, template_ref: str | None,
+    ) -> LoadedTemplate:
+        """解析 template_ref 为 LoadedTemplate；非法/不存在 → 退回 default 并打 warning。"""
+```
+
+**Renderer 改造点（极简：换文件路径而已）**：
+
+```python
+class BaseRenderer:
+    def __init__(self, template_loader: TemplateLoader): ...
+
+    async def render(
+        self,
+        ctx: ReportContext,
+        *,
+        template_ref: str | None = None,
+    ) -> RenderedArtifact:
+        loaded = self._template_loader.load(
+            output_format=self.format,
+            template_ref=template_ref,
+        )
+        # docxtpl / weasyprint / md 渲染逻辑不变，只换 loaded.path
+```
+
+**ConfirmPayload / UserPreference 增量字段**：
+
+```python
+class ConfirmPayload(BaseModel):
+    output_format: OutputFormat = "docx"
+    template_ref: str | None = None     # "default" / "preset:gov_formal"
+
+class UserPreference(BaseModel):
+    ...
+    template_default: dict[OutputFormat, str] = {}  # 例如 {"docx": "preset:gov_formal"}
+```
+
+**API（M1 只读列表）**：
+
+| 端点 | 状态 | 说明 |
+|---|---|---|
+| `GET /v1/fly-reports/templates` | 🆕 M1 | 列出当前格式下所有内置模板（default + presets）；query 可按 `output_format` 过滤；返回 `[{ref, name, source, output_format, preview_thumbnail?}]` |
+
+> `POST/DELETE /v1/fly-reports/templates`、`/manifest` 端点 + `report_template` 表与 OSS 集成 → 推迟到 M2+ 用户上传特性。
+
+**M1 / M2+ 落地范围**：
+
+- **M1（本版）**：`TemplateLoader.load(default | preset:<name>)`；落 4 套 docx preset + 4 套 pdf preset + 4 套 markdown preset；`GET /templates` 只读 API；Renderer 接 `template_ref` 参数
+- **M2+（下一版）**：用户上传链路（template 模式 + skin 模式 + StyleInjector + 上传/删除/manifest API + DDL）；`UserPreference.template_default` 全链路接入
 
 #### 4.1.7 偏好与推送
 
@@ -259,41 +356,38 @@ DataInsightPusher（周期收口）
 
 #### 4.1.8 提示词（独立目录隔离）
 
-> **隔离原则**：本期 FlyReport 为新增需求，所有 prompt 一律落在仓库已有的 `swarmmind/prompt_template/` 下、新建子包 `swarmmind/prompt_template/fly_report/`，**不与通用 Agent prompt（`planner.py` / `execution.py` / `review.py` 等）混放**，避免命名冲突与跨 domain 污染；domain 包内（`swarmmind/domains/fly_report/`）**不再放 prompt 文件**。Prompt 文件统一通过 `swarmmind/prompt_template/fly_report/__init__.py` 暴露的 `load_prompt(name: str) -> str` 加载（包内资源 / `importlib.resources`），调用方禁止用绝对路径。
+> **隔离原则**：本期 FlyReport 为新增需求，所有 prompt 一律落在仓库已有的 `swarmmind/prompt_template/` 下、新建子包 `swarmmind/prompt_template/fly_report/`，**不与通用 Agent prompt（`planner.py` / `execution.py` / `review.py` 等）混放**，避免命名冲突与跨 domain 污染；domain 包内（`swarmmind/domains/fly_report/`）**不再放 prompt 文件**。
+>
+> **存储形式**：每条 prompt 一个 Python 模块，导出一个 `swarmmind.prompt_template.base.PromptTemplate` 常量（`name` + `template`），与仓库 `planner.py` / `review.py` / `execution.py` 体例**完全一致**。`__init__.py` 仅做 re-export，不再使用早期 `load_prompt(name: str)` 读 `.md` 资源的方案（已废弃）。调用方一律 `from swarmmind.prompt_template.fly_report import INTENT_PARSE_SYSTEM_PROMPT` 然后用 `XXX.template`。
 
 目录结构：
 
 ```
 swarmmind/prompt_template/fly_report/
-  __init__.py                  # load_prompt() / 渲染辅助 / few-shot 装载
-  intent_parse.md              # DraftFilterSpec 抽取（带 JSON schema 与 few-shot）
-  clarify.md                   # 缺失字段追问
-  error_hint.md                # 无法识别时的友好引导
-  section_summary.md           # 章节文字总结（趋势/对比）
-  history_query.md             # 历史报告检索意图
-  followup_patch.md            # 增量更新 FilterSpec
-  preference_command.md        # 偏好查/改/删指令解析
-  _shared/
-    json_schemas/              # 与 prompt 配套的 JSON Schema（response_format 用）
-      filter_spec.schema.json
-      history_query.schema.json
-      preference_command.schema.json
-    few_shots/                 # few-shot 示例样本（按场景拆分）
-      intent_parse.examples.jsonl
-      clarify.examples.jsonl
+  __init__.py                  # 仅 re-export 各 PromptTemplate 常量
+  intent_parse.py              # INTENT_PARSE_SYSTEM_PROMPT（DraftFilterSpec 抽取，含规则 + few-shot）
+  clarify.py                   # CLARIFY_SYSTEM_PROMPT（缺失字段追问）
+  error_hint.py                # ERROR_HINT_SYSTEM_PROMPT（无法识别时的引导）
+  section_summary.py           # SECTION_SUMMARY_SYSTEM_PROMPT（章节自然语言总结）
+  history_query.py             # HISTORY_QUERY_SYSTEM_PROMPT（历史报告检索意图）
+  followup_patch.py            # FOLLOWUP_PATCH_SYSTEM_PROMPT（增量更新 FilterSpec）
+  preference_command.py        # PREFERENCE_COMMAND_SYSTEM_PROMPT（偏好查/改/删）
+  _shared/                     # 可选：仅在引入 response_format=json_schema 时再启用
+    json_schemas/              # filter_spec.schema.json 等
+    few_shots/                 # few-shot 样本（按需独立 .jsonl）
 ```
 
-| 文件 | 用途 |
+| 文件 | 导出常量 / 用途 |
 |---|---|
-| `prompt_template/fly_report/intent_parse.md` | DraftFilterSpec 抽取（带 JSON schema 与 few-shot）|
-| `prompt_template/fly_report/clarify.md` | 缺失字段追问 |
-| `prompt_template/fly_report/error_hint.md` | 无法识别时的友好引导 |
-| `prompt_template/fly_report/section_summary.md` | 章节文字总结（趋势/对比）|
-| `prompt_template/fly_report/history_query.md` | 历史报告检索意图 |
-| `prompt_template/fly_report/followup_patch.md` | 增量更新 FilterSpec |
-| `prompt_template/fly_report/preference_command.md` | 偏好查/改/删指令解析 |
-| `prompt_template/fly_report/_shared/json_schemas/*.schema.json` | LLM `response_format=json_schema` 强约束 |
-| `prompt_template/fly_report/_shared/few_shots/*.jsonl` | few-shot 样本，与 prompt 解耦便于单测/回归 |
+| `prompt_template/fly_report/intent_parse.py` | `INTENT_PARSE_SYSTEM_PROMPT` — DraftFilterSpec 抽取（含 7 条规则 + few-shot）|
+| `prompt_template/fly_report/clarify.py` | `CLARIFY_SYSTEM_PROMPT` — 缺失字段追问 |
+| `prompt_template/fly_report/error_hint.py` | `ERROR_HINT_SYSTEM_PROMPT` — 无法识别时的友好引导 |
+| `prompt_template/fly_report/section_summary.py` | `SECTION_SUMMARY_SYSTEM_PROMPT` — 章节文字总结（趋势/对比）|
+| `prompt_template/fly_report/history_query.py` | `HISTORY_QUERY_SYSTEM_PROMPT` — 历史报告检索意图 |
+| `prompt_template/fly_report/followup_patch.py` | `FOLLOWUP_PATCH_SYSTEM_PROMPT` — 增量更新 FilterSpec |
+| `prompt_template/fly_report/preference_command.py` | `PREFERENCE_COMMAND_SYSTEM_PROMPT` — 偏好指令解析 |
+| `prompt_template/fly_report/_shared/json_schemas/*.schema.json` | LLM `response_format=json_schema` 强约束（M2+ 启用，本期 `json_object` 已够用）|
+| `prompt_template/fly_report/_shared/few_shots/*.jsonl` | few-shot 样本，与 prompt 解耦便于单测/回归（按需启用）|
 
 ### 4.2 API 路由（已有 vs 新增）
 
@@ -379,9 +473,12 @@ CREATE INDEX idx_session_user_updated ON fly_report.report_session (tenant_id, u
 | 文件 | 说明 |
 |---|---|
 | `configs/fly_report.yaml` | dikong base_url / token / tenant_header / api_timeout / cache_ttl / archive_ttl / push.weekly_cron / push.monthly_cron / insight.thresholds / export.default_format |
-| `swarmmind/domains/fly_report/export/templates/docx/report.docx.j2` | docx 母版（手工产出，存仓） |
-| `swarmmind/domains/fly_report/export/templates/pdf/report.html.j2` | PDF 打印布局 HTML 模板 |
-| `swarmmind/domains/fly_report/export/templates/markdown/report.md.j2` | Markdown 模板 |
+| `swarmmind/domains/fly_report/export/templates/docx/default.docx.j2` | docx 默认母版（手工产出，存仓） |
+| `swarmmind/domains/fly_report/export/templates/docx/presets/<name>.docx.j2` | docx 预设风格集（M1 仅 `default_zh`）|
+| `swarmmind/domains/fly_report/export/templates/pdf/default.html.j2` | PDF 默认 HTML 模板 |
+| `swarmmind/domains/fly_report/export/templates/pdf/presets/<name>.html.j2` | PDF 预设风格集 |
+| `swarmmind/domains/fly_report/export/templates/markdown/default.md.j2` | Markdown 默认模板 |
+| `swarmmind/domains/fly_report/export/templates/markdown/presets/<name>.md.j2` | Markdown 预设风格集 |
 | `swarmmind/domains/fly_report/composer/templates/preview/*.html.j2` | 预览模板 |
 
 ### 4.4 新增：测试
@@ -1038,7 +1135,7 @@ ReportSession (state machine, master)
 |---|---|
 | `agents/__init__.py` | 暴露 `build_session_hub() / get_intent_agent() / ...` |
 | `agents/factory.py` | 用 `AuditedOpenAIChatModel` + 共享 `OpenAIChatFormatter` 装配各 ReActAgent；**Toolkit 始终为空** |
-| `agents/intent_parser_agent.py` | `IntentParserAgent`：sys prompt 来自 `prompt_template/fly_report/intent_parse.md`，输出 `DraftFilterSpec` JSON |
+| `agents/intent_parser_agent.py` | `IntentParserAgent`：sys prompt 来自 `prompt_template/fly_report/intent_parse.py` 的 `INTENT_PARSE_SYSTEM_PROMPT.template`，输出 `DraftFilterSpec` JSON |
 | `agents/clarifier_agent.py` | `ClarifierAgent`：基于 `missing/conflicts` 生成澄清问题 |
 | `agents/followup_router_agent.py` | `FollowupRouterAgent`：把 "改成农业局" patch 到现有 FilterSpec |
 | `agents/history_query_agent.py` | `HistoryQueryAgent`：自然语言 → `{dept?, period?, type?, keyword?}` |
@@ -1062,7 +1159,10 @@ from agentscope.memory import InMemoryMemory
 from agentscope.tool import Toolkit
 
 from swarmmind.agents.audited_model import AuditedOpenAIChatModel
-from swarmmind.prompt_template.fly_report import load_prompt
+from swarmmind.prompt_template.fly_report import (
+    CLARIFY_SYSTEM_PROMPT,
+    INTENT_PARSE_SYSTEM_PROMPT,
+)
 from swarmmind.domains.fly_report.config import FlyReportSettings
 
 
@@ -1084,7 +1184,7 @@ def _build_model(settings: FlyReportSettings, *, event_publisher=None):
 def build_intent_agent(settings, *, event_publisher=None) -> ReActAgent:
     return ReActAgent(
         name="fly_report.intent_parser",
-        sys_prompt=load_prompt("intent_parse.md"),
+        sys_prompt=INTENT_PARSE_SYSTEM_PROMPT.template,
         model=_build_model(settings, event_publisher=event_publisher),
         formatter=OpenAIChatFormatter(),
         memory=InMemoryMemory(),
@@ -1096,7 +1196,7 @@ def build_intent_agent(settings, *, event_publisher=None) -> ReActAgent:
 def build_clarifier_agent(settings, *, event_publisher=None) -> ReActAgent:
     return ReActAgent(
         name="fly_report.clarifier",
-        sys_prompt=load_prompt("clarify.md"),
+        sys_prompt=CLARIFY_SYSTEM_PROMPT.template,
         model=_build_model(settings, event_publisher=event_publisher),
         formatter=OpenAIChatFormatter(),
         memory=InMemoryMemory(),
@@ -1372,14 +1472,22 @@ ReportSession (state machine, master)            ← 仍是 master
 
 1. 落 `swarmmind/domains/fly_report/` 骨架（空文件 + `schemas.py` 完整版 + `service.py` 桩 + `errors.py` + `agents/`：`factory.py`/`session_hub.py`/`intent_parser_agent.py` 三个最小 Agent，参 §12.5.4 demo）
 2. 写 `dikong/client.py` + `dikong/endpoints.py`（先把 §6 矩阵 5 个核心端点接好，配 respx 测试）
-3. 写 `intent/parser.py` + `swarmmind/prompt_template/fly_report/intent_parse.md`，配 mock LLM 单测 5 个场景（总体周报 / 部门月报 / 飞手个人 / 部门对比 / 自定义周期）
+3. 写 `intent/parser.py` + `swarmmind/prompt_template/fly_report/intent_parse.py`（**Python 模块 + `PromptTemplate` 常量**，与仓库 `planner.py` / `review.py` 体例一致；详见 §4.1.8），配 mock LLM 单测 5 个场景（总体周报 / 部门月报 / 飞手个人 / 部门对比 / 自定义周期）
 4. 写 `data_fetcher.py` + `analyzer/aggregations.py` 跑通"总体飞行周报"的 RawDataset → AnalysisResult
-5. 实现 `export/router.py` + `export/base.py`，并按顺序落三个 Renderer：
-   - `export/docx_renderer.py` + `export/templates/docx/report.docx.j2`（最小母版：封面 + KPI 表 + 一段落 + 一张图）
-   - `export/pdf_renderer.py` + `export/templates/pdf/report.html.j2`（WeasyPrint）
-   - `export/markdown_renderer.py` + `export/templates/markdown/report.md.j2`
+5. 实现**渲染模板内置双源（default + presets）**（见 §4.1.6.1）+ 三种格式 Renderer，落地顺序：
+   1. `export/template_loader.py`：解析 `default` / `preset:<name>`，非法/不存在退回 `default` 并打 warning；提供 `list_templates(output_format)` 与 `load(output_format, template_ref)`
+   2. `export/router.py` + `export/base.py`：`RendererRouter` 路由（按 `output_format` 选 renderer） + `BaseRenderer` 抽象（持有 `TemplateLoader`，`render(ctx, *, template_ref=None)`）
+   3. `export/docx_renderer.py` + `export/templates/docx/default.docx.j2`（最小母版：封面 + KPI 表 + 一段落 + 一张图）+ 4 套 preset：`default_zh` / `gov_formal` / `dashboard` / `minimal`
+   4. `export/pdf_renderer.py` + `export/templates/pdf/default.html.j2`（WeasyPrint）+ 4 套同名 preset HTML 模板
+   5. `export/markdown_renderer.py` + `export/templates/markdown/default.md.j2` + 4 套同名 preset markdown 模板
+   6. **模板列表 API**：`GET /v1/fly-reports/templates`（只读；详见 §4.1.6.1）；`ConfirmPayload.template_ref` 字段透传到 Renderer
+   7. 单测：`test_template_loader.py`（default / preset 解析 + 非法 ref 兜底回退 + `list_templates` 列举）；既有三个 renderer 各加一个「指定 preset 成功渲染」用例
+   8. **下一版（M2+）**再做：用户上传链路（`user:<id>`、template/skin 双模式、`template_inspector` / `style_injector`、上传/删除/manifest API、`report_template` 表）
 6. 写 `chart/matplotlib_renderer.py`（三种格式共用），跑通 e2e：mock dikong + 真 LLM → 分别产出 docx / pdf / md
 7. 把 M1/M1.5 路由挂上 `api/server.py`，`confirm` 接收 `output_format`，开一次端到端冒烟
 8. 进入 M2：加部门/飞手维度与对比
 
 确认方向 OK 我就按 1→8 落地，并把当前真实 dikong base_url / token 传给我接通联调。
+
+---
+

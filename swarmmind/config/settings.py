@@ -18,6 +18,7 @@ from swarmmind.config.schema import (
     AgentConfig,
     ApiConfig,
     BrowserConfig,
+    FlyReportConfig,
     IdentityConfig,
     PostgresConfig,
     RateLimitConfig,
@@ -39,7 +40,11 @@ class SwarmMindConfig(BaseSettings):
         env_ignore_empty=True,
         env_nested_delimiter="__",
         json_file=[PROJECT_ROOT / "config.json"],
-        yaml_file=[PROJECT_ROOT / "configs/default.yaml", PROJECT_ROOT / "config.yaml"],
+        yaml_file=[
+            PROJECT_ROOT / "configs/default.yaml",
+            PROJECT_ROOT / "configs/fly_report.yaml",
+            PROJECT_ROOT / "config.yaml",
+        ],
         yaml_file_encoding="utf-8",
         toml_file=[PROJECT_ROOT / "config.toml"],
         secrets_dir=SECRETS_DIR if SECRETS_DIR.is_dir() else None,
@@ -76,6 +81,7 @@ class SwarmMindConfig(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     identity: IdentityConfig = Field(default_factory=IdentityConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    fly_report: FlyReportConfig = Field(default_factory=FlyReportConfig)
     log_level: str = Field(default="INFO", description="Log level")
     storage_path: str = Field(default="./data", description="Data storage path")
 
@@ -92,6 +98,12 @@ class SwarmMindConfig(BaseSettings):
             model = agent.get("model")
             if isinstance(model, dict) and model.get("api_key"):
                 model["api_key"] = "********"
+
+        fly_report = data.get("fly_report")
+        if isinstance(fly_report, dict):
+            dikong = fly_report.get("dikong")
+            if isinstance(dikong, dict) and dikong.get("token"):
+                dikong["token"] = "********"
 
         return data
 

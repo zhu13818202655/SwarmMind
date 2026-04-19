@@ -1,0 +1,43 @@
+{# Shared report body partial. Each preset extends or includes this with its own <style>. #}
+<h1>{{ report.title }}</h1>
+<div class="meta">
+  周期：<b>{{ report.period_label }}</b>　范围：{{ report.scope_label }}
+  {% if report.department_ids %}　部门：{{ report.department_ids | join(", ") }}{% endif %}
+  {% if report.pilot_ids %}　飞手：{{ report.pilot_ids | join(", ") }}{% endif %}
+  <br>
+  指标：{{ report.indicators | join(", ") }}　·　修订 v{{ report.revision }}
+</div>
+
+{% for section in sections %}
+<h2>{{ section.title }}</h2>
+{% if section.summary_md %}<p>{{ section.summary_md }}</p>{% endif %}
+
+{% if section.kpis %}
+<table>
+  <thead><tr><th>指标</th><th>本期</th><th>上期</th><th>同比</th></tr></thead>
+  <tbody>
+    {% for k in section.kpis %}
+    <tr>
+      <td>{{ k.label }}</td>
+      <td>{{ k.value if k.value is not none else "—" }}{{ k.unit }}</td>
+      <td>{{ k.previous_value if k.previous_value is not none else "—" }}{{ k.unit }}</td>
+      <td class="{% if k.change_pct is not none and k.change_pct >= 0 %}delta-up{% elif k.change_pct is not none %}delta-down{% endif %}">
+        {% if k.change_pct is not none %}{{ "%+.2f"|format(k.change_pct) }}%{% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if section.tables %}
+  {% for t in section.tables %}
+  <h3>{{ t.title | default("数据表") }}</h3>
+  <div>{{ t.html | default("") | safe }}</div>
+  {% endfor %}
+{% endif %}
+{% endfor %}
+
+<div class="footer">
+  SwarmMind FlyReport · session {{ report.session_id }} · 生成于 {{ report.generated_at }}
+</div>

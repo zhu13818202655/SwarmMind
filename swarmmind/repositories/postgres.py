@@ -83,10 +83,17 @@ class PostgresStore:
         self._dsn = dsn
 
     async def initialize(self) -> None:
-        async with await self._connect() as connection:
-            async with connection.cursor() as cursor:
-                await cursor.execute(SCHEMA_SQL)
-            await connection.commit()
+        """Apply / verify the core schema.
+
+        Now delegates to ``swarmmind.repositories.migrations.upgrade_head``
+        (Alembic). The legacy ``SCHEMA_SQL`` constant is kept above for
+        documentation and for emergency manual recovery, but new tables
+        / columns must be added via a fresh Alembic revision under
+        ``alembic/versions/``.
+        """
+        from swarmmind.repositories.migrations import upgrade_head
+
+        await upgrade_head(self._dsn)
 
     async def fetch_one(self, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         async with await self._connect() as connection:

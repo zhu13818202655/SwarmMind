@@ -1,0 +1,38 @@
+{% macro kpi_row(k) -%}
+| {{ k.label }} | {{ k.value if k.value is not none else "—" }}{{ k.unit }} | {{ k.previous_value if k.previous_value is not none else "—" }}{{ k.unit }} | {{ "%+.2f"|format(k.change_pct) ~ "%" if k.change_pct is not none else "—" }} |
+{%- endmacro %}
+
+# 📊 {{ report.title }}
+
+> 周期：**{{ report.period_label }}** · 范围：**{{ report.scope_kind }}** · 修订 v{{ report.revision }}
+
+{% if report.department_ids %}**涉及部门**：{{ report.department_ids | join("、") }}
+{% endif %}{% if report.pilot_ids %}**涉及飞手**：{{ report.pilot_ids | join("、") }}
+{% endif %}**统计指标**：{{ report.indicators | join("、") }}
+
+---
+
+{% for section in sections %}
+## 一、{{ section.title }}
+
+{% if section.summary_md %}{{ section.summary_md }}
+
+{% endif %}{% if section.kpis %}**关键指标**
+
+| 指标 | 本期 | 上期 | 同比 |
+|---|---|---|---|
+{% for k in section.kpis %}{{ kpi_row(k) }}
+{% endfor %}
+{% endif %}{% if section.tables %}{% for t in section.tables %}**{{ t.title | default("明细") }}**
+
+{{ t.markdown | default("") }}
+
+{% endfor %}{% endif %}{% if section.charts %}{% for c in section.charts %}**{{ c.title }}**
+
+![{{ c.title }}](charts/{{ c.id }}.png)
+
+{% endfor %}{% endif %}{% endfor %}
+
+---
+
+📅 生成于 {{ report.generated_at }} · 🔖 会话 `{{ report.session_id }}`
