@@ -21,7 +21,7 @@ def _mask_secret(value: str | None) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(description="Probe the configured chat completion endpoint.")
-	parser.add_argument("--prompt", default="Reply with exactly: model access ok", help="User prompt to send")
+	parser.add_argument("--prompt", default="what's your name", help="User prompt to send")
 	parser.add_argument("--model", help="Override model name")
 	parser.add_argument("--base-url", help="Override base URL")
 	parser.add_argument("--api-key", help="Override API key")

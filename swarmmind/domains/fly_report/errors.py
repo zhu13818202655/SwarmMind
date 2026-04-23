@@ -55,6 +55,12 @@ class DikongApiError(FlyReportError):
     code = "fly_report.dikong_api_error"
 
 
+class DikongAuthError(DikongApiError):
+    """Login / token-refresh failure against dikong."""
+
+    code = "fly_report.dikong_auth_error"
+
+
 class RenderError(FlyReportError):
     code = "fly_report.render_error"
 

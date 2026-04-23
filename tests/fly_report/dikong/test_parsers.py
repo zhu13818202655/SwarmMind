@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from swarmmind.domains.fly_report.dikong.parsers import (
     DikongEnvelope,
     FlyStatisResp,
@@ -12,7 +10,6 @@ from swarmmind.domains.fly_report.dikong.parsers import (
     WarnStaticResp,
     parse_envelope,
 )
-from swarmmind.domains.fly_report.errors import DikongApiError
 
 
 def test_envelope_success_typed() -> None:
@@ -39,15 +36,14 @@ def test_envelope_success_untyped_falls_back_to_dict() -> None:
     assert env.data == {"x": 1}
 
 
-def test_envelope_business_error_raises() -> None:
-    with pytest.raises(DikongApiError) as exc_info:
-        parse_envelope(
-            {"code": 4001, "msg": "permission denied", "data": None},
-            endpoint="/missions/getFlyStatis",
-        )
-    assert exc_info.value.details["code"] == 4001
-    assert exc_info.value.details["endpoint"] == "/missions/getFlyStatis"
-    assert "permission denied" in exc_info.value.details["msg"]
+def test_envelope_business_error_does_not_raise() -> None:
+    env = parse_envelope(
+        {"code": 4001, "msg": "permission denied", "data": None},
+        endpoint="/missions/getFlyStatis",
+    )
+    assert not env.is_success
+    assert env.code == 4001
+    assert env.msg == "permission denied"
 
 
 def test_loose_typed_responses_keep_unknown_keys() -> None:

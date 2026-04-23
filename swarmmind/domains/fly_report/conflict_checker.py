@@ -25,6 +25,7 @@ class ConflictReport:
         return bool(self.missing) or bool(self.conflicts)
 
 
+# TODO 后续需要根据业务要求修改
 def check_conflicts(spec: FilterSpec | DraftFilterSpec) -> ConflictReport:
     """Inspect ``spec`` and return missing/conflicting fields.
 
@@ -43,12 +44,6 @@ def check_conflicts(spec: FilterSpec | DraftFilterSpec) -> ConflictReport:
         if "period" not in missing:
             missing.append("period")
         suggestions.append("请指定时间范围，例如：本周 / 上周 / 本月")
-    if not spec.indicators:
-        if "indicators" not in missing:
-            missing.append("indicators")
-        suggestions.append(
-            "请指定指标，例如：飞行 / 算法 / 媒体 / 设备健康"
-        )
 
     scope = getattr(spec.dimension, "scope", "overall")
     if scope not in {"overall", "department", "pilot"}:

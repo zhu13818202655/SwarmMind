@@ -57,7 +57,7 @@ class IntentParser:
         if preference is not None:
             metadata["preference"] = preference
         if now is not None:
-            metadata["now"] = now.isoformat()
+            metadata["当前时间"] = now.isoformat()
         if extra_metadata:
             metadata.update(extra_metadata)
 

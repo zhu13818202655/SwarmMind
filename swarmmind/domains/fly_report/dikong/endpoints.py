@@ -23,6 +23,7 @@ class HttpMethod(str, Enum):
 class EndpointGroup(str, Enum):
     """Logical groups used by ``DataFetcher`` to route ``Indicator`` values."""
 
+    AUTH = "auth"                  # 登录 / token
     MISSION = "mission"            # 飞行 / 任务统计
     DEVICE_HEALTH = "device_health"  # HMS
     MEDIA = "media"                # 成果中心
@@ -36,6 +37,12 @@ class EndpointGroup(str, Enum):
 
 class EndpointKey(str, Enum):
     """Stable identifier for a single dikong endpoint."""
+
+    # auth
+    LOGIN = "login"
+
+    # department
+    GET_DEPT_LIST = "get_dept_list"
 
     # mission stats
     GET_FLY_STATIS = "get_fly_statis"
@@ -91,6 +98,8 @@ class EndpointSpec:
 
 
 _SPECS: tuple[EndpointSpec, ...] = (
+    EndpointSpec(EndpointKey.LOGIN, HttpMethod.POST, "/system/user/login", EndpointGroup.AUTH, "账号密码登录，返回 accessToken"),
+    EndpointSpec(EndpointKey.GET_DEPT_LIST, HttpMethod.GET, "/system/dept/list", EndpointGroup.DEPARTMENT, "部门列表"),
     EndpointSpec(EndpointKey.GET_FLY_STATIS, HttpMethod.GET, "/missions/getFlyStatis", EndpointGroup.MISSION, "飞行统计数据"),
     EndpointSpec(EndpointKey.GET_MISSION_STATIS, HttpMethod.GET, "/missions/getMissionStatis", EndpointGroup.MISSION, "查询任务统计数据"),
     EndpointSpec(EndpointKey.GET_DEVICE_STATIS, HttpMethod.GET, "/missions/getDeviceStatis", EndpointGroup.MISSION, "设备运行统计数据"),

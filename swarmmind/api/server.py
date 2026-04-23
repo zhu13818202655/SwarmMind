@@ -15,6 +15,8 @@ from starlette.responses import Response, StreamingResponse
 from swarmmind.app import get_container
 from swarmmind.config import SwarmMindConfig, get_settings
 from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
+from swarmmind.domains.fly_report.data_fetcher import DataFetcher
+from swarmmind.domains.fly_report.intent.parser import IntentParser
 from swarmmind.gateway import RunDetail, TaskDetail, TaskSubmitRequest
 from swarmmind.models.run import RunPhase, RunStatus
 from swarmmind.models.task import TaskPriority, TaskStatus
@@ -318,28 +320,20 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
 
     # Intent parser selection (DESIGN-3 R1.1). ``llm`` falls back to ``rule``
     # on build failure so offline / first-run deployments stay usable.
-    intent_parser: Any = None
-    try:
-        kind = getattr(
-            getattr(settings.fly_report, "intent", None), "parser_kind", "rule"
-        )
-    except Exception:
-        kind = "rule"
-    if kind == "llm":
-        try:
-            from swarmmind.domains.fly_report.agents.factory import (
-                build_intent_agent,
-            )
-            from swarmmind.domains.fly_report.intent.parser import IntentParser
 
-            intent_parser = IntentParser(build_intent_agent())
-        except Exception:  # pragma: no cover - depends on live LLM
-            intent_parser = None
+    from swarmmind.domains.fly_report.agents.factory import build_intent_agent
+    from swarmmind.domains.fly_report.dikong.client import DikongClient
 
+    intent_parser = IntentParser(build_intent_agent(settings.agent.model))
+    dikong_client = DikongClient(settings.fly_report.dikong)
+    data_fetcher = DataFetcher(
+        dikong_client,
+    )
     app.state.fly_report_service = FlyReportService(
         repository=fly_report_repo,
         event_bus=fly_report_event_bus,
         intent_parser=intent_parser,
+        data_fetcher=data_fetcher,
     )
     app.include_router(
         create_fly_report_router(app.state.fly_report_service)

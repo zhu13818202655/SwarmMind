@@ -13,7 +13,7 @@ class AgentScopeConfig(BaseModel):
     model_name: str = Field(default="gpt-4o", description="Model name")
     api_key: str | None = Field(default=None, description="API key")
     base_url: str | None = Field(default=None, description="Base URL")
-    temperature: float = Field(default=0.7, description="Temperature")
+    temperature: float = Field(default=1.0, description="Temperature")
     max_tokens: int = Field(default=4096, description="Max tokens")
 
 

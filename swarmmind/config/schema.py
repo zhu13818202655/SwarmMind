@@ -23,7 +23,7 @@ class ModelConfig(ValidatedDefaultsModel):
     name: str = Field(default="gpt-4o", description="Model name")
     api_key: str | None = Field(default=None, description="API key")
     base_url: str | None = Field(default=None, description="Base URL for API")
-    temperature: float = Field(default=0.7, description="Temperature")
+    temperature: float = Field(default=1.0, description="Temperature")
     max_tokens: int = Field(default=4096, description="Max tokens")
 
     @field_validator("api_key", mode="before")
@@ -329,16 +329,29 @@ class FlyReportDikongConfig(ValidatedDefaultsModel):
     """Dikong upstream API configuration for the FlyReport domain."""
 
     base_url: str = Field(
-        default="http://127.0.0.1:50284",
+        default="http://127.0.0.1:50001",
         description="Dikong API base URL (no trailing slash)",
     )
-    token: str | None = Field(
+    account: str | None = Field(
         default=None,
-        description="Bearer / API token forwarded to dikong",
+        description="Dikong login account (env: DIKONG_ACCOUNT)",
     )
-    tenant_header: str = Field(
-        default="X-Tenant-Id",
-        description="Header name used to forward tenant id to dikong",
+    password: str | None = Field(
+        default=None,
+        description="Dikong login password (env: DIKONG_PASSWORD)",
+    )
+    token_ttl_seconds: int = Field(
+        default=720,
+        ge=1,
+        description="Lifetime of an access token (dikong default is 720s)",
+    )
+    token_refresh_skew_seconds: int = Field(
+        default=60,
+        ge=0,
+        description=(
+            "Refresh the token this many seconds before expiry to avoid "
+            "tail-latency 401s under clock skew."
+        ),
     )
     request_timeout_seconds: float = Field(
         default=15.0,
@@ -365,15 +378,25 @@ class FlyReportDikongConfig(ValidatedDefaultsModel):
         description="Token-bucket rate limit (req/s) enforced via aiolimiter",
     )
 
+    department_id_list: list[str] = Field(
+        default_factory=list,
+        description="Optional list of department IDs to filter reports by; if empty, no department filtering is applied",
+    )
+
     @field_validator("base_url", mode="before")
     @classmethod
     def resolve_base_url(cls, value: Any) -> Any:
         return resolve_env_value(value, "DIKONG_BASE_URL")
 
-    @field_validator("token", mode="before")
+    @field_validator("account", mode="before")
     @classmethod
-    def resolve_token(cls, value: Any) -> Any:
-        return resolve_env_value(value, "DIKONG_TOKEN")
+    def resolve_account(cls, value: Any) -> Any:
+        return resolve_env_value(value, "DIKONG_ACCOUNT")
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def resolve_password(cls, value: Any) -> Any:
+        return resolve_env_value(value, "DIKONG_PASSWORD")
 
 
 class FlyReportConfig(ValidatedDefaultsModel):
@@ -381,39 +404,8 @@ class FlyReportConfig(ValidatedDefaultsModel):
 
     enabled: bool = Field(default=True, description="Toggle for the FlyReport domain")
     dikong: FlyReportDikongConfig = Field(default_factory=FlyReportDikongConfig)
-    intent: "FlyReportIntentConfig" = Field(
-        default_factory=lambda: FlyReportIntentConfig(),
-        description="Intent-parser wiring (rule-based vs LLM)",
-    )
 
     @field_validator("enabled", mode="before")
     @classmethod
     def resolve_enabled(cls, value: Any) -> Any:
         return resolve_env_value(value, "SWARMMIND_FLY_REPORT__ENABLED", cast_type=bool)
-
-
-class FlyReportIntentConfig(ValidatedDefaultsModel):
-    """IntentParser configuration for FlyReport (DESIGN-3 R1.1)."""
-
-    parser_kind: str = Field(
-        default="rule",
-        description="Which intent parser to use: 'rule' (no LLM) or 'llm'",
-    )
-
-    @field_validator("parser_kind", mode="before")
-    @classmethod
-    def resolve_parser_kind(cls, value: Any) -> Any:
-        resolved = resolve_env_value(
-            value, "SWARMMIND_FLY_REPORT__INTENT__PARSER_KIND"
-        )
-        if resolved is None:
-            return "rule"
-        normalized = str(resolved).lower().strip()
-        if normalized not in {"rule", "llm"}:
-            raise ValueError(
-                f"fly_report.intent.parser_kind must be 'rule' or 'llm'; got {resolved!r}"
-            )
-        return normalized
-
-
-FlyReportConfig.model_rebuild()

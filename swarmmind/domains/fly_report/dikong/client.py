@@ -7,7 +7,6 @@ Design notes (DESIGN-2 §4.1.4 / §10.6.2):
 - retries are bounded and only fire on transient transport errors / 5xx;
   a non-zero ``code`` in the envelope is a *business* error and is **not**
   retried (it is raised as :class:`DikongApiError`)
-- per-request tenant id can be passed in to override the default header
 """
 
 from __future__ import annotations
@@ -38,7 +37,11 @@ from swarmmind.domains.fly_report.dikong.parsers import (
     WarnStaticResp,
     parse_envelope,
 )
-from swarmmind.domains.fly_report.errors import DikongApiError
+from swarmmind.domains.fly_report.dikong.token_provider import (
+    DikongTokenProvider,
+    build_token_provider,
+)
+from swarmmind.domains.fly_report.errors import DikongApiError, DikongAuthError
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,7 @@ class DikongClient:
         *,
         http_client: httpx.AsyncClient | None = None,
         limiter: AsyncLimiter | None = None,
+        token_provider: DikongTokenProvider | None = None,
     ) -> None:
         self._config = config
         self._owns_client = http_client is None
@@ -69,6 +73,10 @@ class DikongClient:
             time_period=1.0,
         )
         self._semaphore = asyncio.Semaphore(config.max_concurrency)
+        self._owns_token_provider = token_provider is None
+        self._token_provider: DikongTokenProvider = (
+            token_provider or build_token_provider(config)
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -77,6 +85,8 @@ class DikongClient:
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+        if self._owns_token_provider:
+            await self._token_provider.aclose()
 
     async def __aenter__(self) -> "DikongClient":
         return self
@@ -94,23 +104,27 @@ class DikongClient:
         *,
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
-        tenant_id: str | None = None,
         data_model: type[BaseModel] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> DikongEnvelope[Any]:
         spec: EndpointSpec = get_endpoint(endpoint)
-        headers = build_headers(
-            token=self._config.token,
-            tenant_id=tenant_id,
-            tenant_header=self._config.tenant_header,
-            extra=extra_headers,
-        )
 
         cleaned_params = _drop_none(params) if params else None
         attempts = self._config.max_retries + 1
         last_exc: Exception | None = None
+        # Track 401-driven refreshes separately so a misconfigured token
+        # cannot cause an infinite refresh loop.
+        auth_refreshed = False
 
         for attempt in range(attempts):
+            try:
+                token = await self._token_provider.get_token()
+            except DikongAuthError:
+                # Auth errors are fatal for this call; do not retry.
+                raise
+
+            headers = build_headers(token=token, extra=extra_headers)
+
             try:
                 async with self._semaphore, self._limiter:
                     response = await self._client.request(
@@ -130,9 +144,30 @@ class DikongClient:
                 await asyncio.sleep(self._backoff(attempt))
                 continue
 
+            # Reactive token refresh: drop the cached token and retry once
+            # before falling through to the generic 4xx/5xx handling below.
+            if (
+                response.status_code == 401
+                and not auth_refreshed
+                and attempt + 1 < attempts
+                and getattr(self._token_provider, "supports_refresh", False)
+            ):
+                auth_refreshed = True
+                await self._token_provider.invalidate()
+                continue
+
             if response.status_code in _RETRYABLE_STATUS and attempt + 1 < attempts:
                 await asyncio.sleep(self._backoff(attempt))
                 continue
+            if response.status_code == 401:
+                raise DikongAuthError(
+                    f"dikong rejected token for {spec.path}",
+                    details={
+                        "endpoint": spec.path,
+                        "status": 401,
+                        "body_preview": response.text[:512],
+                    },
+                )
             if response.status_code >= 400:
                 raise DikongApiError(
                     f"dikong returned HTTP {response.status_code} for {spec.path}",
@@ -151,6 +186,18 @@ class DikongClient:
                     details={"endpoint": spec.path, "body_preview": response.text[:512]},
                 ) from exc
 
+            # Envelope-level auth failure (e.g. ``code == 401``) → refresh once.
+            envelope_code = int(payload.get("code", 0)) if isinstance(payload, dict) else None
+            if (
+                envelope_code == 401
+                and not auth_refreshed
+                and attempt + 1 < attempts
+                and getattr(self._token_provider, "supports_refresh", False)
+            ):
+                auth_refreshed = True
+                await self._token_provider.invalidate()
+                continue
+
             return parse_envelope(payload, endpoint=spec.path, data_model=data_model)
 
         # Loop exited without returning - exhaustion path.
@@ -165,6 +212,17 @@ class DikongClient:
     # ------------------------------------------------------------------
     # Typed accessors for the 5 core M1 endpoints
     # ------------------------------------------------------------------
+    async def get_department_name_list_by_id_list(
+        self,
+        id_list: list[str],
+    ) -> list[str]:
+        envelope = await self._request(
+            EndpointKey.GET_DEPT_LIST
+        )
+        if not envelope:
+            return []
+        names = [dept["deptName"] for dept in envelope.data if dept.get("deptId") in id_list]
+        return names
 
     async def get_fly_statis(
         self,
@@ -172,12 +230,10 @@ class DikongClient:
         dept_id: int | None = None,
         startdate: str | None = None,
         enddate: str | None = None,
-        tenant_id: str | None = None,
     ) -> FlyStatisResp:
         envelope = await self._request(
             EndpointKey.GET_FLY_STATIS,
             params={"deptId": dept_id, "startdate": startdate, "enddate": enddate},
-            tenant_id=tenant_id,
             data_model=FlyStatisResp,
         )
         return envelope.data or FlyStatisResp()
@@ -188,12 +244,10 @@ class DikongClient:
         dept_id: int | None = None,
         startdate: str | None = None,
         enddate: str | None = None,
-        tenant_id: str | None = None,
     ) -> WarnStaticResp:
         envelope = await self._request(
             EndpointKey.GET_WARN_STATIC,
             params={"deptId": dept_id, "startdate": startdate, "enddate": enddate},
-            tenant_id=tenant_id,
             data_model=WarnStaticResp,
         )
         return envelope.data or WarnStaticResp()
@@ -204,12 +258,10 @@ class DikongClient:
         dept_id: int | None = None,
         startdate: str | None = None,
         enddate: str | None = None,
-        tenant_id: str | None = None,
     ) -> MediaStaticResp:
         envelope = await self._request(
             EndpointKey.GET_MEDIA_STATIC,
             params={"deptId": dept_id, "startdate": startdate, "enddate": enddate},
-            tenant_id=tenant_id,
             data_model=MediaStaticResp,
         )
         return envelope.data or MediaStaticResp()
@@ -218,12 +270,10 @@ class DikongClient:
         self,
         *,
         dept_id: int | None = None,
-        tenant_id: str | None = None,
     ) -> HmsStatsResp:
         envelope = await self._request(
             EndpointKey.HMS_STATS,
             params={"deptId": dept_id},
-            tenant_id=tenant_id,
             data_model=HmsStatsResp,
         )
         return envelope.data or HmsStatsResp()
@@ -236,7 +286,6 @@ class DikongClient:
         dept_id: int | None = None,
         startdate: str | None = None,
         enddate: str | None = None,
-        tenant_id: str | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> MissionQueryByPageResp:
         params: dict[str, Any] = {
@@ -251,7 +300,6 @@ class DikongClient:
         envelope = await self._request(
             EndpointKey.MISSION_QUERY_BY_PAGE,
             params=params,
-            tenant_id=tenant_id,
             data_model=MissionQueryByPageResp,
         )
         return envelope.data or MissionQueryByPageResp()

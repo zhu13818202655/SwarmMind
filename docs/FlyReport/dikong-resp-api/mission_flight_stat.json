@@ -1,0 +1,15 @@
+{
+  "code": 200,
+  "requestTime": "2026-04-22 23:08:39",
+  "data": {
+    "droneCount": 2,
+    "hangarCount": 3,
+    "routePlanCount": 14,
+    "flyMileageTotal": 0.0,
+    "flyTimeTotal": 0.0,
+    "numTotal": 0,
+    "droneJobCount": 0,
+    "hangarJobCount": 1,
+    "algorithmCount": 81
+  }
+}

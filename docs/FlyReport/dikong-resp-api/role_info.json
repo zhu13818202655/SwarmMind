@@ -1,0 +1,20 @@
+{
+  "code": "200",
+  "requestTime": "2026-04-21 20:59:58",
+  "data": {
+    "roleId": "3",
+    "roleName": "普通用户",
+    "roleGroup": "normal_role_group",
+    "roleKey": "user",
+    "roleSort": 2,
+    "dataScope": "3",
+    "status": true,
+    "delFlag": false,
+    "createBy": "管理员",
+    "createTime": "2024-08-22 15:10:32",
+    "updateBy": "admin",
+    "updateTime": "2025-08-27 11:33:27",
+    "isApprover": false,
+    "admin": false
+  }
+}

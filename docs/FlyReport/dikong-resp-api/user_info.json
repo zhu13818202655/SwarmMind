@@ -1,0 +1,104 @@
+{
+  "code": "200",
+  "requestTime": "2026-04-21 19:59:23",
+  "data": {
+    "userId": "1",
+    "deptId": "12",
+    "dept": {
+      "deptId": "12",
+      "deptName": "",
+      "hasChildren": false
+    },
+    "deptList": [
+      {
+        "deptId": "12",
+        "deptName": "",
+        "hasChildren": false
+      }
+    ],
+    "account": "admin",
+    "userName": "管理员",
+    "nickName": "审核账号 001",
+    "email": "test111@123.com",
+    "phoneNum": "18888888888",
+    "sex": "0",
+    "avatar": "https://junda-prod.oss-cn-shanghai.aliyuncs.com/wuyi/userAvatar/db4ced66390242fcb06c296ed7679245.jpg",
+    "passwordTime": "2026-03-30 11:49:21",
+    "loginFailCount": 0,
+    "status": 1,
+    "isSync": true,
+    "sourceType": 0,
+    "loginIp": "61.169.171.82",
+    "loginTime": "2026-04-21 19:59:23",
+    "expireTime": "2026-04-22 07:59:23",
+    "delFlag": false,
+    "createBy": "",
+    "createTime": "2024-08-12 22:06:30",
+    "updateBy": "",
+    "updateTime": "2025-09-05 17:56:37",
+    "token": "446c906e-f253-49d5-ae83-d3226366470d",
+    "deptName": "",
+    "roles": [
+      {
+        "roleId": "1",
+        "roleName": "管理员",
+        "roleKey": "admin",
+        "roleSort": 1,
+        "dataScope": "1",
+        "status": true,
+        "delFlag": false,
+        "createTime": "2024-08-22 14:31:31",
+        "remark": "",
+        "isApprover": true,
+        "admin": true
+      }
+    ],
+    "apps": [
+      {
+        "appId": "1",
+        "appName": "飞控审批平台",
+        "type": 1,
+        "appKey": "uuW78Dfg89Dqo0PhWReTvJbEmc9VSFDX",
+        "appSecret": "pp1n62cmK3E8Mpaz9dON2pXlqmW9heZQ",
+        "pcUrl": "http://120.55.57.23:8323/city/dailyManagement?type=daily&token={accessToken}",
+        "iconUrl": "https://wixh-test.oss-accelerate.aliyuncs.com/wuyi/cyjsc.png",
+        "sort": 0,
+        "status": 1,
+        "createTime": "2024-08-27 09:25:17",
+        "updateBy": "管理员",
+        "updateTime": "2025-08-27 13:40:04"
+      },
+      {
+        "appId": "5",
+        "appName": "飞控平台",
+        "type": 1,
+        "appKey": "KwWHb5IBEEAGbwqA7iMGI2pUQwk0qr4D",
+        "appSecret": "YZDkHa3UuC6ktRgrfWEdUZt6LFNGQbnQ",
+        "pcUrl": "http://120.55.57.23:8323/system/user",
+        "iconUrl": "https://wixh-test.oss-accelerate.aliyuncs.com/wuyi/xtgl.png",
+        "sort": 5,
+        "status": 1,
+        "createTime": "2024-08-27 09:25:17",
+        "updateBy": "王五",
+        "updateTime": "2025-08-27 13:39:55"
+      }
+    ],
+    "roleIds": [
+      "1"
+    ],
+    "postIds": [],
+    "roleNames": "管理员",
+    "permissions": [
+      "*:*:*"
+    ],
+    "postNames": "",
+    "deptNames": "",
+    "streetDeptId": "12",
+    "streetCode": "330723000",
+    "streetName": "武义县",
+    "gpsX": 119.816562,
+    "gpsY": 28.89267,
+    "passwordRemind": false,
+    "admin": true
+  }
+}

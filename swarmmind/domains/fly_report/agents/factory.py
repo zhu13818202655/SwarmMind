@@ -32,7 +32,6 @@ def _build_model(
     model_config: ModelConfig,
     *,
     event_publisher: Any = None,
-    temperature_override: float | None = 0.1,
 ) -> AuditedOpenAIChatModel:
     """Build a JSON-only audited chat model from a ``ModelConfig``."""
 
@@ -41,11 +40,7 @@ def _build_model(
         api_key=model_config.api_key,
         event_publisher=event_publisher,
         generate_kwargs={
-            "temperature": (
-                temperature_override
-                if temperature_override is not None
-                else model_config.temperature
-            ),
+            "temperature": model_config.temperature,
             "max_tokens": model_config.max_tokens,
             "response_format": {"type": "json_object"},
         },

@@ -10,8 +10,9 @@ Every dikong endpoint returns a uniform envelope::
       "data": { ... }   # or a list / scalar / null
     }
 
-``code == 0`` means success.  Anything else is mapped to
-:class:`DikongApiError` by the client.
+``code == 0`` (or ``200``) means success.  ``parse_envelope`` no longer
+raises on non-success codes; callers can inspect
+:pyattr:`DikongEnvelope.is_success` if they care.
 
 Only the five core M1 endpoints get typed payload models in Step 2;
 everything else round-trips as ``dict[str, Any]`` until a downstream caller
@@ -39,7 +40,10 @@ class DikongEnvelope(BaseModel, Generic[T]):
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    code: int = 0
+    # Upstream is inconsistent: some endpoints return ``0`` (int), others
+    # return ``200`` / ``"200"``.  Keep the raw value loose and normalise in
+    # :pyattr:`is_success` so downstream code does not need to care.
+    code: int | str = 0
     msg: str | None = None
     request_id: str | None = Field(default=None, alias="requestId")
     request_time: str | None = Field(default=None, alias="requestTime")
@@ -47,7 +51,7 @@ class DikongEnvelope(BaseModel, Generic[T]):
 
     @property
     def is_success(self) -> bool:
-        return self.code == 0
+        return int(self.code) in (0, 200)
 
 
 def parse_envelope(
@@ -58,14 +62,15 @@ def parse_envelope(
 ) -> DikongEnvelope[Any]:
     """Parse a raw upstream JSON body into a :class:`DikongEnvelope`.
 
-    Raises :class:`DikongApiError` when the envelope has a non-zero ``code``.
-    The exception's ``details`` carries ``endpoint``, ``code``, ``msg`` and
-    the raw payload for debugging.
+    The success/failure decision is left to the caller (via
+    :pyattr:`DikongEnvelope.is_success`); this function only handles
+    deserialisation so that upstream variations in the ``code`` field do
+    not cause well-formed responses to be rejected.
     """
 
     envelope_cls: type[DikongEnvelope[Any]]
     if data_model is None:
-        envelope_cls = DikongEnvelope[dict]  # type: ignore[type-arg]
+        envelope_cls = DikongEnvelope[Any]  # type: ignore[type-arg]
     else:
         envelope_cls = DikongEnvelope[data_model]  # type: ignore[valid-type]
 

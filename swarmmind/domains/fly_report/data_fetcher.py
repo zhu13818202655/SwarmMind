@@ -63,14 +63,12 @@ async def _fetch_flight(
     *,
     period: Period,
     dept_id: int | None,
-    tenant_id: str | None,
 ) -> dict[str, Any]:
     """Fetch flight statistics for a single period."""
     resp = await client.get_fly_statis(
         dept_id=dept_id,
         startdate=_fmt_date(period.start),
         enddate=_fmt_date(period.end),
-        tenant_id=tenant_id,
     )
     return {"fly_statis": resp.model_dump()}
 
@@ -81,13 +79,11 @@ async def _fetch_algorithm(
     *,
     period: Period,
     dept_id: int | None,
-    tenant_id: str | None,
 ) -> dict[str, Any]:
     resp = await client.get_warn_static(
         dept_id=dept_id,
         startdate=_fmt_date(period.start),
         enddate=_fmt_date(period.end),
-        tenant_id=tenant_id,
     )
     return {"warn_static": resp.model_dump()}
 
@@ -98,13 +94,11 @@ async def _fetch_media(
     *,
     period: Period,
     dept_id: int | None,
-    tenant_id: str | None,
 ) -> dict[str, Any]:
     resp = await client.get_media_static(
         dept_id=dept_id,
         startdate=_fmt_date(period.start),
         enddate=_fmt_date(period.end),
-        tenant_id=tenant_id,
     )
     return {"media_static": resp.model_dump()}
 
@@ -115,9 +109,8 @@ async def _fetch_device_health(
     *,
     period: Period,
     dept_id: int | None,
-    tenant_id: str | None,
 ) -> dict[str, Any]:
-    resp = await client.get_hms_stats(dept_id=dept_id, tenant_id=tenant_id)
+    resp = await client.get_hms_stats(dept_id=dept_id)
     return {"hms_stats": resp.model_dump()}
 
 
@@ -142,18 +135,21 @@ class DataFetcher:
     ----------
     client:
         An initialised :class:`DikongClient`.
-    tenant_id:
-        Default tenant id to pass to all dikong calls.
     """
 
     def __init__(
         self,
-        client: DikongClient,
-        *,
-        tenant_id: str | None = None,
+        client: DikongClient
     ) -> None:
         self._client = client
-        self._tenant_id = tenant_id
+
+    async def get_department_name_list_by_id_list(
+        self,
+        dept_id_list: list[str],
+    ) -> list[str]:
+        """Fetch department names for a list of department ids."""
+        department_names = await self._client.get_department_name_list_by_id_list(dept_id_list)
+        return department_names
 
     async def fetch(self, filt: NormalizedFilter) -> RawDataset:
         """Fetch current + previous period data for all requested indicators."""
@@ -235,7 +231,6 @@ class DataFetcher:
                 filt,
                 period=period,
                 dept_id=dept_id,
-                tenant_id=self._tenant_id,
             )
             for fn in fetchers.values()
         ]

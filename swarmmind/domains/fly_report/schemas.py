@@ -57,7 +57,6 @@ class Period(BaseModel):
     kind: PeriodKind
     start: datetime
     end: datetime
-    label: str
 
 
 class Dimension(BaseModel):
@@ -80,6 +79,7 @@ class FilterSpec(BaseModel):
     """User-visible filter (may still contain ambiguity)."""
 
     period: Period | None = None
+    dept_names: list[str] = Field(default_factory=list)
     dimension: Dimension = Field(default_factory=Dimension)
     indicators: list[Indicator] = Field(default_factory=list)
     options: ReportOptions = Field(default_factory=ReportOptions)
@@ -94,16 +94,12 @@ class DraftFilterSpec(FilterSpec):
 class NormalizedFilter(FilterSpec):
     """Resolved, hashable filter that downstream caches key off of."""
 
-    period: Period
-    indicators: list[Indicator]
     hash: str
 
     @classmethod
     def from_filter(cls, spec: FilterSpec) -> "NormalizedFilter":
         if spec.period is None:
             raise ValueError("NormalizedFilter requires a non-null period")
-        if not spec.indicators:
-            raise ValueError("NormalizedFilter requires at least one indicator")
 
         payload = spec.model_dump(mode="json", exclude={"missing", "conflicts"})
         digest = hashlib.sha256(
@@ -185,7 +181,10 @@ class ReportContext(BaseModel):
         return {
             "session_id": self.session_id,
             "filter_hash": self.filter.hash,
-            "period": self.filter.period.label,
+            "period": (
+                f"{self.filter.period.start.isoformat()}"
+                f"~{self.filter.period.end.isoformat()}"
+            ),
             "indicators": list(self.filter.indicators),
             "section_count": len(self.sections),
             "revision": self.revision,

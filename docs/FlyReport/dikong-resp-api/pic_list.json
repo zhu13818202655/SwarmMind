@@ -1,0 +1,266 @@
+{
+  "code": 200,
+  "requestTime": "2026-04-20 23:50:27",
+  "data": {
+    "total": 147,
+    "records": [
+      {
+        "fileId": "stage5_pic_fcfeb27d_0002            ",
+        "fileSize": 1892000,
+        "mediaName": "测试飞行图片_02.jpg",
+        "deviceSn": "WEP982376DR",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/fly_record/stage5_pic_fcfeb27d_0002.jpg"
+        ],
+        "tagArray": [
+          ""
+        ],
+        "sceneTag": "6",
+        "deptidsTag": "21"
+      },
+      {
+        "fileId": "stage5_pic_330886af_0001            ",
+        "fileSize": 2048000,
+        "mediaName": "测试飞行图片_01.jpg",
+        "deviceSn": "WEP982376DR",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/fly_record/stage5_pic_330886af_0001.jpg"
+        ],
+        "tagArray": [
+          ""
+        ],
+        "sceneTag": "6",
+        "deptidsTag": "21"
+      },
+      {
+        "fileId": "9d62325e-2c76-485a-b0b0-58a0dfe21d14",
+        "fileSize": 17057,
+        "mediaName": "20260122122417.649.jpg",
+        "deviceSn": "1581F8HGX255W00A0GXT",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/detection_original_snaps/live_1581F8HGX255W00A0GXT-channel/alg_1/20260122122417.649.jpg"
+        ],
+        "tagArray": [
+          ""
+        ],
+        "metadata": "{\"detections\": [{\"bbox\": [100.0, 100.0, 200.0, 200.0], \"class_id\": 1, \"class_name\": \"fire\", \"confidence\": 0.99, \"class_name_cn\": \"火\"}], \"detect_time\": 1735689000, \"total_count\": 1, \"algorithm_id\": 1, \"algorithm_name\": \"测试算法\"}"
+      },
+      {
+        "fileId": "171773fc-4507-4685-9d24-d75ee81508d0",
+        "fileSize": 17057,
+        "mediaName": "20260122122345.067.jpg",
+        "deviceSn": "1581F8HGX255W00A0GXT",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/detection_original_snaps/live_1581F8HGX255W00A0GXT-channel/alg_1/20260122122345.067.jpg"
+        ],
+        "tagArray": [
+          ""
+        ],
+        "metadata": "{\"detections\": [{\"bbox\": [100.0, 100.0, 200.0, 200.0], \"class_id\": 1, \"class_name\": \"fire\", \"confidence\": 0.99, \"class_name_cn\": \"火\"}], \"detect_time\": 1735689000, \"total_count\": 1, \"algorithm_id\": 1}"
+      },
+      {
+        "fileId": "a5724bba-bb4d-4e0e-954f-a015fa4a77f3",
+        "fileSize": 81,
+        "mediaName": "20260122122243.596.jpg",
+        "deviceSn": "1581F8HGX255W00A0GXT",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/detection_original_snaps/live_1581F8HGX255W00A0GXT-channel/alg_1/20260122122243.596.jpg"
+        ],
+        "tagArray": [
+          ""
+        ],
+        "metadata": "{\"detections\": [{\"bbox\": [100.0, 100.0, 200.0, 200.0], \"class_id\": 1, \"class_name\": \"fire\", \"confidence\": 0.99, \"class_name_cn\": \"火\"}], \"detect_time\": 1735689000, \"total_count\": 1, \"algorithm_id\": 1}"
+      },
+      {
+        "fileId": "1f830891-9ab1-4818-9379-9df1970b8d9a",
+        "fileSize": 81,
+        "mediaName": "20260122121615.363.jpg",
+        "deviceSn": "1581F8HGX255W00A0GXT",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/detection_original_snaps/live_1581F8HGX255W00A0GXT-channel/alg_1/20260122121615.363.jpg"
+        ],
+        "tagArray": [
+          ""
+        ],
+        "metadata": "{\"detections\": [{\"bbox\": [100.0, 100.0, 200.0, 200.0], \"class_id\": 1, \"class_name\": \"fire\", \"confidence\": 0.99, \"class_name_cn\": \"火\"}], \"detect_time\": 1735689000, \"total_count\": 1, \"algorithm_id\": 1, \"algorithm_name\": \"测试算法\"}"
+      },
+      {
+        "fileId": "4e88cb4a-8427-4251-af69-61b31d88c99a",
+        "fileSize": 17057,
+        "mediaName": "20260118021148.444.jpg",
+        "deviceSn": "1581F8HGX255W00A0GXT",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/detection_original_snaps/live_1581F8HGX255W00A0GXT-channel/alg_1/20260118021148.444.jpg"
+        ],
+        "tagArray": [
+          ""
+        ],
+        "metadata": "{\"detections\": [{\"bbox\": [100.0, 100.0, 200.0, 200.0], \"class_id\": 1, \"class_name\": \"fire\", \"confidence\": 0.99, \"class_name_cn\": \"火\"}], \"detect_time\": 1735689000, \"total_count\": 1, \"algorithm_id\": 1, \"algorithm_name\": \"测试算法\"}"
+      },
+      {
+        "fileId": "65541741-fa30-4bef-bd81-219039257d28",
+        "fileSize": 17057,
+        "mediaName": "20260117184954.066.jpg",
+        "deviceSn": "1581F8HGX255W00A0GXT",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/detection_original_snaps/live_1581F8HGX255W00A0GXT-channel/alg_1/20260117184954.066.jpg"
+        ],
+        "tagArray": [
+          ""
+        ],
+        "metadata": "{\"detections\": [{\"bbox\": [100.0, 100.0, 200.0, 200.0], \"class_id\": 1, \"class_name\": \"fire\", \"confidence\": 0.99, \"class_name_cn\": \"火\"}], \"detect_time\": 1735689000, \"total_count\": 1, \"algorithm_id\": 1, \"algorithm_name\": \"测试算法\"}"
+      },
+      {
+        "fileId": "7df6253c-e6c8-45b0-b9d5-5ebd1259fcf9",
+        "fileSize": 4335843,
+        "mediaName": "20260117123839.652.jpg",
+        "deviceSn": "1581F8HGX255W00A0GXT",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/detection_original_snaps/live_1581F8HGX255W00A0GXT-channel/alg_1/20260117123839.652.jpg"
+        ],
+        "tagArray": [
+          ""
+        ],
+        "metadata": "{\"detections\": [{\"bbox\": [100.0, 100.0, 200.0, 200.0], \"class_id\": 1, \"class_name\": \"fire\", \"confidence\": 0.99, \"class_name_cn\": \"火\"}], \"detect_time\": 1735689000, \"total_count\": 1, \"algorithm_id\": 1, \"algorithm_name\": \"测试算法\"}"
+      },
+      {
+        "fileId": "a0b35b58-f5ff-408f-86a9-a419e3b85b7e",
+        "fileSize": 81,
+        "mediaName": "20260117005402.482.jpg",
+        "deviceSn": "1581F8HGX255W00A0GXT",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/detection_original_snaps/live_1581F8HGX255W00A0GXT-channel/alg_1/20260117005402.482.jpg"
+        ],
+        "tagArray": [
+          ""
+        ],
+        "metadata": "{\"detections\": [{\"bbox\": [100.0, 100.0, 200.0, 200.0], \"class_id\": 1, \"class_name\": \"fire\", \"confidence\": 0.99, \"class_name_cn\": \"火\"}], \"detect_time\": 1735689000, \"total_count\": 1, \"algorithm_id\": 1, \"algorithm_name\": \"测试算法\"}"
+      },
+      {
+        "fileId": "56051a658d8c45599ae44bed992ee6b0    ",
+        "fileSize": 402590,
+        "mediaName": "temp.png",
+        "deviceSn": "N/A",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/ach_pic/pic/20251216/id_5ed6a3197b4f4710bb072b70c792836b/file_56051a658d8c45599ae44bed992ee6b0_1765874936658.png"
+        ],
+        "tagArray": [
+          ""
+        ]
+      },
+      {
+        "fileId": "e34a249a853c497ca297967c229fcf48    ",
+        "fileSize": 402590,
+        "mediaName": "temp.png",
+        "deviceSn": "N/A",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/ach_pic/pic/20251215/id_bd9e51387f114c609e28b9cae5175157/file_e34a249a853c497ca297967c229fcf48_1765767313169.png"
+        ],
+        "tagArray": [
+          ""
+        ]
+      },
+      {
+        "fileId": "d654ba4929c843b1ab1aa99b1f8e6294    ",
+        "fileSize": 3437,
+        "mediaName": "12_154809_5649BBA3CE5647D2BD85456C496ECAE3_(?? 14@2x).png",
+        "deviceSn": "N/A",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/ach_pic/pic/20251212/id_6a64850f568f483fb87f7a5ead4a4ffc/file_d654ba4929c843b1ab1aa99b1f8e6294_1765525695899.png"
+        ],
+        "tagArray": [
+          ""
+        ]
+      },
+      {
+        "fileId": "d3dd30d77db24028bac7403c5f12d530    ",
+        "fileSize": 523984,
+        "mediaName": "???.png",
+        "deviceSn": "N/A",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/ach_pic/pic/20251211/id_1032cc935b704504a343ecdd4c4f69a7/file_d3dd30d77db24028bac7403c5f12d530_1765445690286.png"
+        ],
+        "tagArray": [
+          ""
+        ]
+      },
+      {
+        "fileId": "5eb137dcd6384e2da8fb774c594bf8b2    ",
+        "fileSize": 523984,
+        "mediaName": "???.png",
+        "deviceSn": "N/A",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/ach_pic/pic/20251211/id_2187e9c3f2e1465aa1cee337e64aee08/file_5eb137dcd6384e2da8fb774c594bf8b2_1765445643993.png"
+        ],
+        "tagArray": [
+          ""
+        ]
+      },
+      {
+        "fileId": "c6bd5ec4230f4f948822584ce0ec5189    ",
+        "fileSize": 402590,
+        "mediaName": "temp.png",
+        "deviceSn": "N/A",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/ach_pic/pic/20251211/id_5c182804d000498a8085754b6196d6b5/file_c6bd5ec4230f4f948822584ce0ec5189_1765431192314.png"
+        ],
+        "tagArray": [
+          ""
+        ]
+      },
+      {
+        "fileId": "38fcb3cc77704e95b43695f34bea0370    ",
+        "fileSize": 254550,
+        "mediaName": "事件截图1764837618377.png",
+        "deviceSn": "N/A",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/ach_pic/pic/20251211/id_eeda788e4c0043b8a356c3cf48408c58/file_38fcb3cc77704e95b43695f34bea0370_1765420877718.png"
+        ],
+        "tagArray": [
+          ""
+        ]
+      },
+      {
+        "fileId": "be33b5609a4e4d4fa03cc99a5be27f83    ",
+        "fileSize": 402590,
+        "mediaName": "temp.png",
+        "deviceSn": "N/A",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/ach_pic/pic/20251211/id_50fffaf7ddd143f3ae62cb526eec51fd/file_be33b5609a4e4d4fa03cc99a5be27f83_1765417947245.png"
+        ],
+        "tagArray": [
+          ""
+        ]
+      },
+      {
+        "fileId": "5c5b5d9b39ec4934b78ec63f6799ecd3    ",
+        "fileSize": 402590,
+        "mediaName": "temp.png",
+        "deviceSn": "N/A",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/ach_pic/pic/20251211/id_ff8bb671f27f44a69bd438cfbfe0057e/file_5c5b5d9b39ec4934b78ec63f6799ecd3_1765415381071.png"
+        ],
+        "tagArray": [
+          ""
+        ]
+      },
+      {
+        "fileId": "6e7da111ba4a46f8a5e089c9f0e0a48d    ",
+        "fileSize": 882541,
+        "mediaName": "事件截图1764836592555.png",
+        "deviceSn": "N/A",
+        "imgUrlArray": [
+          "http://61.169.171.82:51230/dikong/ach_pic/pic/20251210/id_62430b8a20ef40ccb7ed699d45bae8ee/file_6e7da111ba4a46f8a5e089c9f0e0a48d_1765354466144.png"
+        ],
+        "tagArray": [
+          ""
+        ]
+      }
+    ],
+    "current": 1,
+    "size": 20,
+    "pages": 8,
+    "hasNext": true,
+    "hasPrevious": false
+  }
+}

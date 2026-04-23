@@ -12,6 +12,9 @@ import respx
 from swarmmind.config.schema import FlyReportDikongConfig
 from swarmmind.domains.fly_report.data_fetcher import DataFetcher, _previous_period
 from swarmmind.domains.fly_report.dikong.client import DikongClient
+from swarmmind.domains.fly_report.dikong.token_provider import (
+    StaticDikongTokenProvider,
+)
 from swarmmind.domains.fly_report.schemas import (
     Dimension,
     NormalizedFilter,
@@ -29,7 +32,8 @@ _BASE = "http://dikong.test"
 def _cfg(**overrides) -> FlyReportDikongConfig:
     defaults = dict(
         base_url=_BASE,
-        token="t",
+        account="a",
+        password="p",
         max_retries=0,
         retry_backoff_seconds=0,
         max_concurrency=8,
@@ -37,6 +41,12 @@ def _cfg(**overrides) -> FlyReportDikongConfig:
     )
     defaults.update(overrides)
     return FlyReportDikongConfig(**defaults)
+
+
+def _client(cfg: FlyReportDikongConfig) -> DikongClient:
+    """Build a client with a static token so tests don't need a login mock."""
+
+    return DikongClient(cfg, token_provider=StaticDikongTokenProvider("test-token"))
 
 
 def _make_filter(
@@ -97,7 +107,7 @@ async def test_fetch_flight_only():
         router.get("/missions/getFlyStatis").respond(
             json=_envelope(FLY_STATIS_DATA)
         )
-        async with DikongClient(cfg) as client:
+        async with _client(cfg) as client:
             fetcher = DataFetcher(client)
             ds = await fetcher.fetch(filt)
 
@@ -116,7 +126,7 @@ async def test_fetch_multiple_indicators():
         router.get("/missions/getFlyStatis").respond(json=_envelope(FLY_STATIS_DATA))
         router.get("/missions/getWarnStatic").respond(json=_envelope(WARN_DATA))
         router.get("/devices/hms/stats").respond(json=_envelope(HMS_DATA))
-        async with DikongClient(cfg) as client:
+        async with _client(cfg) as client:
             fetcher = DataFetcher(client)
             ds = await fetcher.fetch(filt)
 
@@ -135,7 +145,7 @@ async def test_fetch_with_dept_id():
         route = router.get("/missions/getFlyStatis").respond(
             json=_envelope(FLY_STATIS_DATA)
         )
-        async with DikongClient(cfg) as client:
+        async with _client(cfg) as client:
             fetcher = DataFetcher(client)
             ds = await fetcher.fetch(filt)
 
@@ -155,7 +165,7 @@ async def test_fetch_media_dedup():
         route = router.get("/missions/getMediaStatic").respond(
             json=_envelope(MEDIA_DATA)
         )
-        async with DikongClient(cfg) as client:
+        async with _client(cfg) as client:
             fetcher = DataFetcher(client)
             ds = await fetcher.fetch(filt)
 
@@ -187,7 +197,7 @@ async def test_fetch_graceful_on_partial_failure():
     with respx.mock(base_url=_BASE) as router:
         router.get("/missions/getFlyStatis").respond(json=_envelope(FLY_STATIS_DATA))
         router.get("/missions/getWarnStatic").respond(status_code=500)
-        async with DikongClient(cfg) as client:
+        async with _client(cfg) as client:
             fetcher = DataFetcher(client)
             ds = await fetcher.fetch(filt)
 

@@ -26,10 +26,12 @@ import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
+from zoneinfo import ZoneInfo
 
+from swarmmind.config.settings import get_settings
 from swarmmind.domains.fly_report.analyzer import analyze
 from swarmmind.domains.fly_report.composer import compose_report_context
 from swarmmind.domains.fly_report.conflict_checker import (
@@ -45,9 +47,8 @@ from swarmmind.domains.fly_report.errors import (
     SessionNotFound,
 )
 from swarmmind.domains.fly_report.export import RendererRouter
-from swarmmind.domains.fly_report.intent.rule_parser import (
-    RuleBasedIntentParser,
-)
+from swarmmind.domains.fly_report.intent.parser import IntentParser
+
 from swarmmind.domains.fly_report.observability import (
     FlyReportMetrics,
     make_event,
@@ -63,7 +64,6 @@ from swarmmind.domains.fly_report.repository import (
 from swarmmind.domains.fly_report.schemas import (
     AnalysisResult,
     ChatTurn,
-    DraftFilterSpec,
     FilterSpec,
     NormalizedFilter,
     OutputFormat,
@@ -79,18 +79,11 @@ from swarmmind.domains.fly_report.state_machine import (
 
 logger = logging.getLogger(__name__)
 
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+
 
 def _utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
-# ---------------------------------------------------------------------------
-# Protocols (duck-typed dependencies)
-# ---------------------------------------------------------------------------
-
-
-class _IntentParserLike(Protocol):
-    async def parse(self, user_text: str, **_: Any) -> DraftFilterSpec: ...
+    return datetime.now(SHANGHAI_TZ)
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +140,8 @@ class FlyReportService:
     def __init__(
         self,
         *,
-        intent_parser: _IntentParserLike | None = None,
-        data_fetcher: DataFetcher | None = None,
+        intent_parser: IntentParser,
+        data_fetcher: DataFetcher,
         renderer_router: RendererRouter | None = None,
         output_root: Path | str | None = None,
         repository: FlyReportRepository | None = None,
@@ -159,12 +152,8 @@ class FlyReportService:
         render_timeout_seconds: float = 60.0,
         max_text_length: int = 4000,
     ) -> None:
-        self._intent_parser: _IntentParserLike = (
-            intent_parser or RuleBasedIntentParser()
-        )
-        self._data_fetcher: DataFetcher = data_fetcher or DataFetcher(
-            FakeDikongClient()  # type: ignore[arg-type]
-        )
+        self._intent_parser = intent_parser
+        self._data_fetcher = data_fetcher
         self._renderer_router: RendererRouter = (
             renderer_router or RendererRouter()
         )
@@ -255,13 +244,28 @@ class FlyReportService:
         record.turns.append(user_turn)
         await self._persist_turn(record, user_turn)
 
+        config = get_settings()
+
         stages: list[dict[str, Any]] = []
 
         try:
             # ----- PARSING -----
+            """
+            1. 如果是多轮的，包括之前模糊的，需要把多轮对话传进来
+            """
             self._enter(record, SessionState.PARSING, "user_message")
             t0 = time.perf_counter()
-            draft = await self._intent_parser.parse(text)
+            # 1. get 时间范围
+            # 2. TODO get 部门列表
+            dept_names = await self._data_fetcher.get_department_name_list_by_id_list(
+                dept_id_list=config.fly_report.dikong.department_id_list
+            )
+            draft = await self._intent_parser.parse(
+                text,
+                now=_utcnow(),
+                extra_metadata={"dept_names": dept_names},
+            )
+
             self._metrics.observe_stage("parsing", time.perf_counter() - t0)
             # Merge follow-up clarifications with the previously-known filter.
             had_prior_spec = bool(
@@ -278,7 +282,7 @@ class FlyReportService:
                 {
                     "stage": "parsing",
                     "period": (
-                        record.filter_spec.period.label
+                        f"{record.filter_spec.period.start}~{record.filter_spec.period.end}"
                         if record.filter_spec.period
                         else None
                     ),
@@ -291,7 +295,7 @@ class FlyReportService:
                 record,
                 {
                     "period": (
-                        record.filter_spec.period.label
+                        f"{record.filter_spec.period.start}~{record.filter_spec.period.end}"
                         if record.filter_spec.period
                         else None
                     ),
@@ -365,6 +369,7 @@ class FlyReportService:
             record.clarify_round = 0
 
             # ----- AUTHORIZING (real permission gate, DESIGN-2 §14.4.1) -----
+            # TODO 针对用户本身的权限进行过滤，针对用户请求的维度/部门进行过滤
             self._enter(record, SessionState.AUTHORIZING, "intent_parsed")
             t0 = time.perf_counter()
             normalized = NormalizedFilter.from_filter(record.filter_spec)
@@ -485,32 +490,130 @@ class FlyReportService:
                     "section_count": len(record.ctx.sections),
                 },
             )
-        except FlyReportError:
+        except FlyReportError as exc:
+            logger.exception(
+                "fly_report.pipeline_failed",
+                extra={
+                    "session_id": record.id,
+                    "user_id": record.user_id,
+                    "state": record.state.value,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                    "stage": "pipeline",
+                },
+            )
             self._enter(record, SessionState.FAILED, "pipeline_error")
             await self._emit("fly_report.failed", record, {"stage": "pipeline"})
             raise
-        except Exception:
+        except Exception as exc:
+            logger.exception(
+                "fly_report.pipeline_unhandled_exception",
+                extra={
+                    "session_id": record.id,
+                    "user_id": record.user_id,
+                    "state": record.state.value,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                    "stage": "pipeline",
+                },
+            )
             self._enter(record, SessionState.FAILED, "pipeline_error")
             await self._emit("fly_report.failed", record, {"stage": "pipeline"})
             raise
 
+        # Auto-render once parsing/fetching/analyzing is complete so the
+        # API caller can get a final artifact in a single round-trip.
+        self._enter(record, SessionState.RENDERING, "auto_render")
+        output_format = normalized.options.output_format
+        session_dir = self._output_root / record.id / output_format
+        t0 = time.perf_counter()
+        try:
+            artifact = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._renderer_router.render,
+                    record.ctx,
+                    output_format=output_format,
+                    output_dir=session_dir,
+                    template_ref=None,
+                ),
+                timeout=self._render_timeout_seconds,
+            )
+        except (Exception, asyncio.TimeoutError) as exc:
+            logger.exception(
+                "fly_report.render_failed",
+                extra={
+                    "session_id": record.id,
+                    "user_id": record.user_id,
+                    "state": record.state.value,
+                    "output_format": output_format,
+                    "template_ref": None,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                    "stage": "rendering",
+                },
+            )
+            self._metrics.record_render(success=False)
+            self._metrics.observe_stage("rendering", time.perf_counter() - t0)
+            self._enter(record, SessionState.FAILED, "render_error")
+            await self._emit(
+                "fly_report.failed",
+                record,
+                {"stage": "rendering"},
+            )
+            raise
+        self._metrics.record_render(success=True)
+        self._metrics.observe_stage("rendering", time.perf_counter() - t0)
+        stages.append(
+            {
+                "stage": "rendering",
+                "output_format": artifact.output_format,
+                "template_ref": artifact.template_ref,
+                "filename": Path(artifact.artifact_path).name,
+            }
+        )
+        artifact_record = {
+            "output_format": artifact.output_format,
+            "template_ref": artifact.template_ref,
+            "artifact_path": artifact.artifact_path,
+            "chart_paths": list(artifact.chart_paths),
+            "warnings": list(artifact.warnings),
+            "created_at": _utcnow().isoformat(),
+            "filename": Path(artifact.artifact_path).name,
+            "download_url": (
+                f"/v1/fly-reports/sessions/{record.id}"
+                f"/artifacts/{Path(artifact.artifact_path).name}"
+                f"?user_id={record.user_id}"
+            ),
+        }
+        record.artifacts.append(artifact_record)
+        self._enter(record, SessionState.ARCHIVED, "render_succeeded")
+        await self._emit(
+            "fly_report.generated",
+            record,
+            {
+                "output_format": artifact.output_format,
+                "template_ref": artifact.template_ref,
+                "filename": Path(artifact.artifact_path).name,
+            },
+        )
+
         reply = ChatTurn(
             role="assistant",
             text=(
-                f"已生成预览 (revision={record.ctx.revision}, "
-                f"period={normalized.period.label}, "
-                f"sections={len(record.ctx.sections)})。"
-                " 输入 /confirm [docx|pdf|markdown] [template_ref] 出稿。"
+                f"报告已生成：{artifact.artifact_path} "
+                f"(format={artifact.output_format}, template={artifact.template_ref})"
             ),
             payload={
                 "state": record.state.value,
                 "filter_hash": normalized.hash,
                 "stages": stages,
                 "preview_brief": record.ctx.brief(),
+                **artifact_record,
             },
         )
         record.turns.append(reply)
         record.updated_at = _utcnow()
+        await self._persist_artifact(record, artifact_record)
         await self._persist_turn(record, reply)
         await self._persist_session(record)
         return reply
@@ -557,7 +660,20 @@ class FlyReportService:
                     ),
                     timeout=self._render_timeout_seconds,
                 )
-            except (Exception, asyncio.TimeoutError):
+            except (Exception, asyncio.TimeoutError) as exc:
+                logger.exception(
+                    "fly_report.render_failed",
+                    extra={
+                        "session_id": record.id,
+                        "user_id": record.user_id,
+                        "state": record.state.value,
+                        "output_format": output_format,
+                        "template_ref": template_ref,
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                        "stage": "rendering",
+                    },
+                )
                 self._metrics.record_render(success=False)
                 self._metrics.observe_stage(
                     "rendering", time.perf_counter() - t0
@@ -944,7 +1060,7 @@ class FlyReportService:
             scanned += 1
             try:
                 mtime = datetime.fromtimestamp(
-                    child.stat().st_mtime, tz=UTC
+                    child.stat().st_mtime, tz=SHANGHAI_TZ
                 )
             except OSError:
                 continue
