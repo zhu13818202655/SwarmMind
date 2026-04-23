@@ -315,7 +315,7 @@ def main() -> int:
     p.add_argument(
         "question",
         nargs="?",
-        default="生成农业局上周飞行周报",
+        default="生成公安局上周飞行周报",
         help="initial_query passed to POST /v1/fly-reports/sessions",
     )
     p.add_argument("--base-url", default="http://127.0.0.1:8000")

@@ -28,7 +28,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 from zoneinfo import ZoneInfo
 
 from swarmmind.config.settings import get_settings
@@ -65,6 +65,7 @@ from swarmmind.domains.fly_report.schemas import (
     AnalysisResult,
     ChatTurn,
     FilterSpec,
+    Indicator,
     NormalizedFilter,
     OutputFormat,
     RawDataset,
@@ -250,21 +251,13 @@ class FlyReportService:
 
         try:
             # ----- PARSING -----
-            """
-            1. 如果是多轮的，包括之前模糊的，需要把多轮对话传进来
-            """
             self._enter(record, SessionState.PARSING, "user_message")
             t0 = time.perf_counter()
-            # 1. get 时间范围
-            # 2. TODO get 部门列表
             dept_names = await self._data_fetcher.get_department_name_list_by_id_list(
                 dept_id_list=config.fly_report.dikong.department_id_list
             )
-            draft = await self._intent_parser.parse(
-                text,
-                now=_utcnow(),
-                extra_metadata={"dept_names": dept_names},
-            )
+            parse_ctx = self._build_intent_parse_context(record, text, dept_names)
+            draft = await self._intent_parser.parse(**parse_ctx)
 
             self._metrics.observe_stage("parsing", time.perf_counter() - t0)
             # Merge follow-up clarifications with the previously-known filter.
@@ -373,6 +366,8 @@ class FlyReportService:
             self._enter(record, SessionState.AUTHORIZING, "intent_parsed")
             t0 = time.perf_counter()
             normalized = NormalizedFilter.from_filter(record.filter_spec)
+            normalized.indicators = list(get_args(Indicator))
+            normalized.dimension.department_ids = [ _id for name, _id in zip(dept_names, config.fly_report.dikong.department_id_list) if name in normalized.dept_names ]
             decision = self._permission_gate.evaluate(
                 tenant_id=record.tenant_id,
                 user_id=record.user_id,
@@ -859,6 +854,32 @@ class FlyReportService:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_intent_parse_context(
+        record: _SessionRecord,
+        text: str,
+        dept_names: list[str],
+    ) -> dict[str, Any]:
+        """Collect structured context for :meth:`IntentParser.parse`.
+
+        Mirrors ``Planner._compose_planning_prompt`` — service gathers the
+        business context, parser renders it into the user prompt.
+        """
+        # Determine whether we already have a prior filter (multi-turn).
+        has_prior = bool(
+            record.filter_spec.period
+            or record.filter_spec.indicators
+            or record.filter_spec.dimension.scope != "overall"
+        )
+        return {
+            "user_text": text,
+            "now": _utcnow(),
+            "dept_names": dept_names,
+            "preference": None,
+            "existing_filter": record.filter_spec if has_prior else None,
+            "recent_turns": record.turns[-6:] if record.turns else None,
+        }
 
     async def _emit(
         self,

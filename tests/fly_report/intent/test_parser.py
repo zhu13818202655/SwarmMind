@@ -196,8 +196,8 @@ async def test_overall_weekly_report(stub_agent_factory) -> None:
     assert draft.indicators == ["flight"]
     assert draft.options.output_format == "docx"
     assert draft.missing == [] and draft.conflicts == []
-    # `now` is forwarded as ISO string in metadata.
-    assert agent.calls[0].metadata["now"].startswith("2026-04-15")
+    # `now` is rendered into the user prompt content.
+    assert "2026-04-15" in agent.calls[0].content
 
 
 @pytest.mark.asyncio
@@ -240,8 +240,8 @@ async def test_department_comparison_with_preference(stub_agent_factory) -> None
     assert draft.dimension.department_ids == ["d-001", "d-002"]
     assert draft.options.include_compare is True
     assert draft.options.output_format == "pdf"
-    # preference is propagated as metadata to the agent.
-    assert agent.calls[0].metadata["preference"] == preference
+    # preference is rendered into the user prompt content.
+    assert "pdf" in agent.calls[0].content
 
 
 @pytest.mark.asyncio

@@ -13,11 +13,13 @@ from swarmmind.prompt_template.fly_report.followup_patch import (
 )
 from swarmmind.prompt_template.fly_report.intent_parse import (
     INTENT_PARSE_SYSTEM_PROMPT,
+    INTENT_PARSE_USER_PROMPT,
 )
 
 
 __all__ = [
     "INTENT_PARSE_SYSTEM_PROMPT",
+    "INTENT_PARSE_USER_PROMPT",
     "CLARIFY_SYSTEM_PROMPT",
     "FOLLOWUP_PATCH_SYSTEM_PROMPT",
 ]

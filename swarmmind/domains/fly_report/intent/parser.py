@@ -12,7 +12,9 @@ from agentscope.message import Msg
 from pydantic import ValidationError
 
 from swarmmind.domains.fly_report.errors import FilterParseError
-from swarmmind.domains.fly_report.schemas import DraftFilterSpec
+from swarmmind.domains.fly_report.schemas import ChatTurn, DraftFilterSpec, FilterSpec
+from swarmmind.prompt_template.fly_report.intent_parse import INTENT_PARSE_USER_PROMPT
+from swarmmind.prompt_template.renderer import render_prompt
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
@@ -38,9 +40,30 @@ class IntentParser:
         *,
         preference: dict[str, Any] | None = None,
         now: datetime | None = None,
-        extra_metadata: dict[str, Any] | None = None,
+        dept_names: list[str] | None = None,
+        existing_filter: FilterSpec | None = None,
+        recent_turns: list[ChatTurn] | None = None,
     ) -> DraftFilterSpec:
         """Parse a single user utterance into a :class:`DraftFilterSpec`.
+
+        The method composes a structured user prompt (mirroring the pattern in
+        ``Planner._compose_planning_prompt``) and sends it to the LLM agent
+        whose system prompt contains only the role identity.
+
+        Parameters
+        ----------
+        user_text:
+            Raw user utterance.
+        preference:
+            Optional user preference dict (reserved for future use).
+        now:
+            Current time in Asia/Shanghai; used to resolve relative periods.
+        dept_names:
+            Available department names for fuzzy matching.
+        existing_filter:
+            Previously parsed :class:`FilterSpec` in multi-turn scenarios.
+        recent_turns:
+            Recent conversation turns for multi-turn context.
 
         Notes
         -----
@@ -53,19 +76,19 @@ class IntentParser:
         if not user_text or not user_text.strip():
             raise FilterParseError("empty user text")
 
-        metadata: dict[str, Any] = {}
-        if preference is not None:
-            metadata["preference"] = preference
-        if now is not None:
-            metadata["当前时间"] = now.isoformat()
-        if extra_metadata:
-            metadata.update(extra_metadata)
+        prompt = self._compose_parse_prompt(
+            user_text=user_text,
+            now=now,
+            dept_names=dept_names,
+            preference=preference,
+            existing_filter=existing_filter,
+            recent_turns=recent_turns,
+        )
 
         msg = Msg(
             name="user",
             role="user",
-            content=user_text,
-            metadata=metadata or None,
+            content=prompt,
         )
 
         reply = await self._agent(msg)
@@ -79,6 +102,56 @@ class IntentParser:
                 "intent parser produced invalid DraftFilterSpec",
                 details={"errors": exc.errors(), "raw": text[:1000]},
             ) from exc
+
+    # ------------------------------------------------------------------
+    # Prompt composition (mirrors Planner._compose_planning_prompt)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compose_parse_prompt(
+        *,
+        user_text: str,
+        now: datetime | None = None,
+        dept_names: list[str] | None = None,
+        preference: dict[str, Any] | None = None,
+        existing_filter: FilterSpec | None = None,
+        recent_turns: list[ChatTurn] | None = None,
+    ) -> str:
+        """Render the user prompt template with structured context."""
+
+        existing_filter_data: dict[str, Any] | None = None
+        if existing_filter is not None:
+            existing_filter_data = existing_filter.model_dump(mode="json")
+
+        recent_turns_data: list[dict[str, Any]] = []
+        if recent_turns:
+            recent_turns_data = [
+                {"role": t.role, "text": t.text} for t in recent_turns
+            ]
+
+        return render_prompt(
+            INTENT_PARSE_USER_PROMPT,
+            {
+                "user_text": user_text,
+                "now_iso": now.isoformat() if now else "",
+                "dept_names_json": json.dumps(
+                    dept_names or [], ensure_ascii=False
+                ),
+                "preference_json": json.dumps(
+                    preference or {}, ensure_ascii=False
+                ),
+                "existing_filter_json": json.dumps(
+                    existing_filter_data or {}, ensure_ascii=False
+                ),
+                "recent_turns_json": json.dumps(
+                    recent_turns_data, ensure_ascii=False
+                ),
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Response extraction helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _extract_text(reply: Any) -> str:

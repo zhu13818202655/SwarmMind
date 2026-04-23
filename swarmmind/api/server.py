@@ -326,9 +326,7 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
 
     intent_parser = IntentParser(build_intent_agent(settings.agent.model))
     dikong_client = DikongClient(settings.fly_report.dikong)
-    data_fetcher = DataFetcher(
-        dikong_client,
-    )
+    data_fetcher = DataFetcher(dikong_client)
     app.state.fly_report_service = FlyReportService(
         repository=fly_report_repo,
         event_bus=fly_report_event_bus,

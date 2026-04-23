@@ -219,7 +219,7 @@ class DikongClient:
         envelope = await self._request(
             EndpointKey.GET_DEPT_LIST
         )
-        if not envelope:
+        if not envelope.data:
             return []
         names = [dept["deptName"] for dept in envelope.data if dept.get("deptId") in id_list]
         return names
