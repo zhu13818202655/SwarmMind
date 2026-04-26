@@ -55,7 +55,6 @@ def _report_view(ctx: ReportContext) -> dict[str, object]:
         "scope_kind": f.dimension.scope,
         "department_ids": list(f.dimension.department_ids),
         "pilot_ids": list(f.dimension.pilot_ids),
-        "indicators": list(f.indicators),
         "session_id": ctx.session_id,
         "revision": ctx.revision,
         "generated_at": ctx.generated_at.strftime("%Y-%m-%d %H:%M"),

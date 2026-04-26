@@ -82,7 +82,6 @@ def _write_meta(doc: Document, ctx: ReportContext, style: DocxStyle) -> None:
         parts.append("部门：" + ", ".join(f.dimension.department_ids))
     if f.dimension.pilot_ids:
         parts.append("飞手：" + ", ".join(f.dimension.pilot_ids))
-    parts.append("指标：" + ", ".join(f.indicators))
     parts.append(f"修订 v{ctx.revision}")
     p = doc.add_paragraph()
     run = p.add_run(" · ".join(parts))

@@ -109,19 +109,178 @@ class FlyStatisResp(BaseModel):
     algorithm_count: int | None = Field(default=None, alias="algorithmCount")
 
 
+class FlyJobLogRow(BaseModel):
+    """One row from ``GET /job/log/list`` -> ``data.records``."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    id: int | None = None
+    name: str | None = None
+    no: str | None = None
+    type: str | int | None = None
+    algorithm_type: str | int | None = Field(default=None, alias="algorithmType")
+    auto_return: bool | None = Field(default=None, alias="autoReturn")
+    begin_time: str | None = Field(default=None, alias="beginTime")
+    end_time: str | None = Field(default=None, alias="endTime")
+    params: dict[str, Any] = Field(default_factory=dict)
+    del_flag: bool | None = Field(default=None, alias="delFlag")
+    deptids_tag: str | None = Field(default=None, alias="deptidsTag")
+    deptids_tag_name: str | None = Field(default=None, alias="deptidsTagName")
+    device_sn: str | None = Field(default=None, alias="deviceSn")
+    emergency_action: int | str | None = Field(default=None, alias="emergencyAction")
+    is_collect: int | bool | None = Field(default=None, alias="isCollect")
+    job_log_id: str | None = Field(default=None, alias="jobLogId")
+    job_log_no: str | None = Field(default=None, alias="jobLogNo")
+    job_id: int | str | None = Field(default=None, alias="jobId")
+    job_name: str | None = Field(default=None, alias="jobName")
+    job_group: str | None = Field(default=None, alias="jobGroup")
+    invoke_target: str | None = Field(default=None, alias="invokeTarget")
+    job_message: str | None = Field(default=None, alias="jobMessage")
+    mission_id: int | str | None = Field(default=None, alias="missionId")
+    operator_id: int | str | None = Field(default=None, alias="operatorId")
+    operator_name: str | None = Field(default=None, alias="operatorName")
+    region: int | str | None = None
+    return_height: float | str | None = Field(default=None, alias="returnHeight")
+    route_id: int | str | None = Field(default=None, alias="routeId")
+    route_name: str | None = Field(default=None, alias="routeName")
+    scene_tag: str | None = Field(default=None, alias="sceneTag")
+    scene_tag_name: str | None = Field(default=None, alias="sceneTagName")
+    status: str | int | None = None
+    exception_info: str | None = Field(default=None, alias="exceptionInfo")
+    start_time: str | None = Field(default=None, alias="startTime")
+    stop_time: str | None = Field(default=None, alias="stopTime")
+    create_time: str | None = Field(default=None, alias="createTime")
+    total_length: float | int | str | None = Field(default=None, alias="totalLength")
+    update_by: str | None = Field(default=None, alias="updateBy")
+    data_status: int | None = Field(default=None, alias="dataStatus")
+
+
+class FlyJobLogResp(BaseModel):
+    """``GET /job/log/list`` -> ``data``."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    size: int | None = None
+    current: int | None = None
+    total: int | None = None
+    pages: int | None = None
+    records: list[FlyJobLogRow] = Field(default_factory=list)
+
+
+class FlyJobLogDetailResp(BaseModel):
+    """``GET /job/log/{jobLogId}`` -> ``data``."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    no: str | None = None
+    name: str | None = None
+    mission_id: int | str | None = Field(default=None, alias="missionId")
+    algorithm_type_name: str | None = Field(default=None, alias="algorithmTypeName")
+    device_type_name: str | None = Field(default=None, alias="deviceTypeName")
+    type: int | str | None = None
+    job_log_no: str | None = Field(default=None, alias="jobLogNo")
+    plan_start_time: str | None = Field(default=None, alias="planStartTime")
+    total_length: str | float | None = Field(default=None, alias="totalLength")
+    route_id: int | str | None = Field(default=None, alias="routeId")
+    route_planning_name: str | None = Field(default=None, alias="routePlanningName")
+    operator_name: str | None = Field(default=None, alias="operatorName")
+    device_mn: str | None = Field(default=None, alias="deviceMn")
+    device_sn: str | None = Field(default=None, alias="deviceSn")
+    device_name: str | None = Field(default=None, alias="deviceName")
+    plan_exec_time: str | None = Field(default=None, alias="planExecTime")
+    plan_end_time: str | None = Field(default=None, alias="planEndTime")
+    job_time: str | None = Field(default=None, alias="jobTime")
+    max_speed: str | float | None = Field(default=None, alias="maxSpeed")
+    ave_speed: str | float | None = Field(default=None, alias="aveSpeed")
+    real_total_length: str | float | None = Field(default=None, alias="realTotallength")
+
+
+class WarnStaticRow(BaseModel):
+    """One row from ``GET /missions/getWarnStatic`` -> ``data.records``."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    id: int | str | None = None
+    object_key: str | None = Field(default=None, alias="objectKey")
+    file_url: str | None = Field(default=None, alias="fileUrl")
+    file_type: str | None = Field(default=None, alias="fileType")
+    algorithm_id: int | str | None = Field(default=None, alias="algorithmId")
+    algorithm_name: str | None = Field(default=None, alias="algorithmName")
+    algorithm_result: str | None = Field(default=None, alias="algorithmResult")
+    extra_result: str | None = Field(default=None, alias="extraResult")
+    joblog_id: str | None = Field(default=None, alias="joblogId")
+    mission_id: int | str | None = Field(default=None, alias="missionId")
+    mission_no: str | None = Field(default=None, alias="missionNo")
+    mission_name: str | None = Field(default=None, alias="missionName")
+    device_sn: str | None = Field(default=None, alias="deviceSn")
+    status: int | str | None = None
+    create_time: str | None = Field(default=None, alias="createTime")
+    approval_time: str | None = Field(default=None, alias="approvalTime")
+    dispose_time: str | None = Field(default=None, alias="disposeTime")
+    approvaler: int | str | None = None
+    disposer: int | str | None = None
+    approvaler_name: str | None = Field(default=None, alias="approvalerName")
+    disposer_name: str | None = Field(default=None, alias="disposerName")
+    work_order_no: str | None = Field(default=None, alias="workOrderNo")
+    work_order_name: str | None = Field(default=None, alias="workOrderName")
+    level: int | str | None = None
+    longitude: str | float | None = None
+    latitude: str | float | None = None
+    work_order_remark: str | None = Field(default=None, alias="workOrderRemark")
+    address: str | None = None
+    push_result: str | None = Field(default=None, alias="pushResult")
+    push_status: int | str | None = Field(default=None, alias="pushStatus")
+    starttime: str | None = None
+    endtime: str | None = None
+    push_platform: int | str | None = Field(default=None, alias="pushPlatform")
+    third_dispose_time: str | None = Field(default=None, alias="thirdDisposeTime")
+    third_dispose_name: str | None = Field(default=None, alias="thirdDisposeName")
+    third_object_key: str | None = Field(default=None, alias="thirdObjectKey")
+    is_artificial: int | bool | None = Field(default=None, alias="isArtificial")
+
+
 class WarnStaticResp(BaseModel):
-    """``GET /missions/getWarnStatic`` -> ``data`` (loose-typed map)."""
+    """``GET /missions/getWarnStatic`` -> ``data``."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
 
+    size: int | None = None
+    current: int | None = None
+    total: int | None = None
+    pages: int | None = None
+    records: list[WarnStaticRow] = Field(default_factory=list)
     raw: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
     def _wrap_unknown(cls, value: Any) -> Any:
-        if isinstance(value, dict) and "raw" not in value:
+        if isinstance(value, dict) and not {
+            "raw",
+            "records",
+            "size",
+            "current",
+            "total",
+            "pages",
+        } & set(value):
             return {"raw": value}
         return value
+
+    @model_validator(mode="after")
+    def _derive_raw_summary(self) -> "WarnStaticResp":
+        if self.raw or not self.records:
+            return self
+
+        summary: dict[str, Any] = {"total": len(self.records)}
+        for record in self.records:
+            key = record.algorithm_name or (
+                f"algorithm_{record.algorithm_id}"
+                if record.algorithm_id is not None
+                else "unknown"
+            )
+            summary[key] = int(summary.get(key, 0)) + 1
+
+        self.raw = summary
+        return self
 
 
 class MediaStaticResp(BaseModel):
@@ -178,11 +337,15 @@ class MissionQueryByPageResp(BaseModel):
 
 __all__ = [
     "DikongEnvelope",
+    "FlyJobLogDetailResp",
+    "FlyJobLogResp",
+    "FlyJobLogRow",
     "FlyStatisResp",
     "HmsStatsResp",
     "MediaStaticResp",
     "MissionPageRow",
     "MissionQueryByPageResp",
+    "WarnStaticRow",
     "WarnStaticResp",
     "parse_envelope",
 ]

@@ -23,7 +23,6 @@ FOLLOWUP_PATCH_SYSTEM_PROMPT = PromptTemplate(
 {
   "period": null,
   "dimension": {"scope": "department", "department_ids": ["d-001"], "pilot_ids": [], "compare_with": []},
-  "indicators": null,
   "options": null,
   "notes": "用户希望按部门维度切换"
 }

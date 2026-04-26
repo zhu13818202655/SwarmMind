@@ -58,6 +58,7 @@ class EndpointKey(str, Enum):
 
     # job log (pilot attribution)
     JOB_LOG_LIST = "job_log_list"
+    JOB_LOG_DETAIL = "job_log_detail"
 
     # device health
     HMS_STATS = "hms_stats"
@@ -100,29 +101,30 @@ class EndpointSpec:
 _SPECS: tuple[EndpointSpec, ...] = (
     EndpointSpec(EndpointKey.LOGIN, HttpMethod.POST, "/system/user/login", EndpointGroup.AUTH, "账号密码登录，返回 accessToken"),
     EndpointSpec(EndpointKey.GET_DEPT_LIST, HttpMethod.GET, "/system/dept/list", EndpointGroup.DEPARTMENT, "部门列表"),
-    EndpointSpec(EndpointKey.GET_FLY_STATIS, HttpMethod.GET, "/missions/getFlyStatis", EndpointGroup.MISSION, "飞行统计数据"),
-    EndpointSpec(EndpointKey.GET_MISSION_STATIS, HttpMethod.GET, "/missions/getMissionStatis", EndpointGroup.MISSION, "查询任务统计数据"),
-    EndpointSpec(EndpointKey.GET_DEVICE_STATIS, HttpMethod.GET, "/missions/getDeviceStatis", EndpointGroup.MISSION, "设备运行统计数据"),
-    EndpointSpec(EndpointKey.GET_MEDIA_STATIC, HttpMethod.GET, "/missions/getMediaStatic", EndpointGroup.MEDIA, "媒体（图片/视频）统计"),
-    EndpointSpec(EndpointKey.GET_WARN_STATIC, HttpMethod.GET, "/missions/getWarnStatic", EndpointGroup.ALGORITHM, "算法告警统计"),
-    EndpointSpec(EndpointKey.MISSION_QUERY_BY_PAGE, HttpMethod.GET, "/missions/queryByPage", EndpointGroup.MISSION, "任务列表（分页明细）"),
-    EndpointSpec(EndpointKey.CALENDAR_OVERVIEW, HttpMethod.GET, "/flight-task/calendar/overview", EndpointGroup.CALENDAR, "月度任务总览"),
-    EndpointSpec(EndpointKey.CALENDAR_DETAIL, HttpMethod.GET, "/flight-task/calendar/detail", EndpointGroup.CALENDAR, "单日任务详情"),
-    EndpointSpec(EndpointKey.JOB_LOG_LIST, HttpMethod.GET, "/job/log/list", EndpointGroup.JOB_LOG, "飞行历史 / 飞手归属"),
-    EndpointSpec(EndpointKey.HMS_STATS, HttpMethod.GET, "/devices/hms/stats", EndpointGroup.DEVICE_HEALTH, "HMS 概览"),
-    EndpointSpec(EndpointKey.HMS_PAGE, HttpMethod.GET, "/devices/hms/page", EndpointGroup.DEVICE_HEALTH, "HMS 明细"),
-    EndpointSpec(EndpointKey.ACHS_PICS, HttpMethod.GET, "/achs/pics", EndpointGroup.MEDIA, "成果中心｜图片列表"),
-    EndpointSpec(EndpointKey.ACHS_VIDEOS, HttpMethod.GET, "/achs/videos", EndpointGroup.MEDIA, "成果中心｜视频列表"),
-    EndpointSpec(EndpointKey.ACHS_STORAGE_STATS, HttpMethod.GET, "/achs/storage/stats", EndpointGroup.MEDIA, "成果中心｜存储统计"),
-    EndpointSpec(EndpointKey.ALGORITHM_RECORD_QUERY, HttpMethod.GET, "/algorithmRecord/queryByPage", EndpointGroup.ALGORITHM, "AI 复核事件"),
-    EndpointSpec(EndpointKey.ALGORITHM_RECORD_QUERY_WARN, HttpMethod.GET, "/algorithmRecord/queryByPageWarn", EndpointGroup.ALGORITHM, "AI 算法事件"),
-    EndpointSpec(EndpointKey.DEVICES_MANAGE_LIST_DEPT, HttpMethod.GET, "/devices/manage/listDept", EndpointGroup.DEPARTMENT, "部门字典"),
-    EndpointSpec(EndpointKey.DEVICES_MANAGE_DRONE_BOUND, HttpMethod.GET, "/devices/manage/drone/bound", EndpointGroup.DEPARTMENT, "设备-部门绑定"),
-    EndpointSpec(EndpointKey.DASHBOARD_TASK, HttpMethod.GET, "/dashboard/stats/task", EndpointGroup.DASHBOARD, "Dashboard 任务统计"),
-    EndpointSpec(EndpointKey.DASHBOARD_RUNNING, HttpMethod.GET, "/dashboard/stats/running", EndpointGroup.DASHBOARD, "Dashboard 运行统计"),
-    EndpointSpec(EndpointKey.DASHBOARD_RESOURCE, HttpMethod.GET, "/dashboard/stats/resource", EndpointGroup.DASHBOARD, "Dashboard 资源统计"),
-    EndpointSpec(EndpointKey.DASHBOARD_ACHIEVEMENT, HttpMethod.GET, "/dashboard/stats/achievement", EndpointGroup.DASHBOARD, "Dashboard 成果统计"),
-    EndpointSpec(EndpointKey.WEATHER_STATS, HttpMethod.GET, "/weatherwarn/getWeatherStats", EndpointGroup.WEATHER, "天气预警统计"),
+    EndpointSpec(EndpointKey.GET_FLY_STATIS, HttpMethod.GET, "/api/device/missions/getFlyStatis", EndpointGroup.MISSION, "飞行统计数据"),
+    EndpointSpec(EndpointKey.GET_MISSION_STATIS, HttpMethod.GET, "/api/device/missions/getMissionStatis", EndpointGroup.MISSION, "查询任务统计数据"),
+    EndpointSpec(EndpointKey.GET_DEVICE_STATIS, HttpMethod.GET, "/api/device/missions/getDeviceStatis", EndpointGroup.MISSION, "设备运行统计数据"),
+    EndpointSpec(EndpointKey.GET_MEDIA_STATIC, HttpMethod.GET, "/api/device/missions/getMediaStatic", EndpointGroup.MEDIA, "媒体（图片/视频）统计"),
+    EndpointSpec(EndpointKey.GET_WARN_STATIC, HttpMethod.GET, "/api/device/missions/getWarnStatic", EndpointGroup.ALGORITHM, "算法告警统计"),
+    EndpointSpec(EndpointKey.MISSION_QUERY_BY_PAGE, HttpMethod.GET, "/api/device/missions/queryByPage", EndpointGroup.MISSION, "任务列表（分页明细）"),
+    EndpointSpec(EndpointKey.CALENDAR_OVERVIEW, HttpMethod.GET, "/api/device/flight-task/calendar/overview", EndpointGroup.CALENDAR, "月度任务总览"),
+    EndpointSpec(EndpointKey.CALENDAR_DETAIL, HttpMethod.GET, "/api/device/flight-task/calendar/detail", EndpointGroup.CALENDAR, "单日任务详情"),
+    EndpointSpec(EndpointKey.JOB_LOG_LIST, HttpMethod.GET, "/api/device/job/log/list", EndpointGroup.JOB_LOG, "飞行历史 / 飞手归属"),
+    EndpointSpec(EndpointKey.JOB_LOG_DETAIL, HttpMethod.GET, "/api/device/job/log/{jobLogId}", EndpointGroup.JOB_LOG, "飞行历史详情"),
+    EndpointSpec(EndpointKey.HMS_STATS, HttpMethod.GET, "/api/device/devices/hms/stats", EndpointGroup.DEVICE_HEALTH, "HMS 概览"),
+    EndpointSpec(EndpointKey.HMS_PAGE, HttpMethod.GET, "/api/device/devices/hms/page", EndpointGroup.DEVICE_HEALTH, "HMS 明细"),
+    EndpointSpec(EndpointKey.ACHS_PICS, HttpMethod.GET, "/api/device/achs/pics", EndpointGroup.MEDIA, "成果中心｜图片列表"),
+    EndpointSpec(EndpointKey.ACHS_VIDEOS, HttpMethod.GET, "/api/device/achs/videos", EndpointGroup.MEDIA, "成果中心｜视频列表"),
+    EndpointSpec(EndpointKey.ACHS_STORAGE_STATS, HttpMethod.GET, "/api/device/achs/storage/stats", EndpointGroup.MEDIA, "成果中心｜存储统计"),
+    EndpointSpec(EndpointKey.ALGORITHM_RECORD_QUERY, HttpMethod.GET, "/api/device/algorithmRecord/queryByPage", EndpointGroup.ALGORITHM, "AI 复核事件"),
+    EndpointSpec(EndpointKey.ALGORITHM_RECORD_QUERY_WARN, HttpMethod.GET, "/api/device/algorithmRecord/queryByPageWarn", EndpointGroup.ALGORITHM, "AI 算法事件"),
+    EndpointSpec(EndpointKey.DEVICES_MANAGE_LIST_DEPT, HttpMethod.GET, "/api/device/devices/manage/listDept", EndpointGroup.DEPARTMENT, "部门字典"),
+    EndpointSpec(EndpointKey.DEVICES_MANAGE_DRONE_BOUND, HttpMethod.GET, "/api/device/devices/manage/drone/bound", EndpointGroup.DEPARTMENT, "设备-部门绑定"),
+    EndpointSpec(EndpointKey.DASHBOARD_TASK, HttpMethod.GET, "/api/device/dashboard/stats/task", EndpointGroup.DASHBOARD, "Dashboard 任务统计"),
+    EndpointSpec(EndpointKey.DASHBOARD_RUNNING, HttpMethod.GET, "/api/device/dashboard/stats/running", EndpointGroup.DASHBOARD, "Dashboard 运行统计"),
+    EndpointSpec(EndpointKey.DASHBOARD_RESOURCE, HttpMethod.GET, "/api/device/dashboard/stats/resource", EndpointGroup.DASHBOARD, "Dashboard 资源统计"),
+    EndpointSpec(EndpointKey.DASHBOARD_ACHIEVEMENT, HttpMethod.GET, "/api/device/dashboard/stats/achievement", EndpointGroup.DASHBOARD, "Dashboard 成果统计"),
+    EndpointSpec(EndpointKey.WEATHER_STATS, HttpMethod.GET, "/api/device/weatherwarn/getWeatherStats", EndpointGroup.WEATHER, "天气预警统计"),
 )
 
 

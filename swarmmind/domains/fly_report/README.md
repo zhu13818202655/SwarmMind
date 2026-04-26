@@ -15,7 +15,7 @@ curl -s "http://127.0.0.1:8000/v1/fly-reports/sessions/$SID/turns?user_id=u1" \
 返回里能看到（实测刚才的输出）：
 ```json
 "stages": [
-  {"stage":"parsing",     "period":"2026年第15周","scope":"overall","indicators":["flight"]},
+  {"stage":"parsing",     "period":"2026年第15周","scope":"overall"},
   {"stage":"authorizing", "decision":"allow","reason":"allow-all"},
   {"stage":"fetching",    "current_keys":["fly_statis"],"previous_keys":["fly_statis"]},
   {"stage":"analyzing",   "kpi_count":5,"anomaly_count":0,"comparison_count":5},

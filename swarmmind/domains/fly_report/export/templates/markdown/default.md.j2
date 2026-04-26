@@ -8,7 +8,7 @@
 - 范围：{{ report.scope_kind }}
 {% if report.department_ids %}- 部门：{{ report.department_ids | join(", ") }}
 {% endif %}{% if report.pilot_ids %}- 飞手：{{ report.pilot_ids | join(", ") }}
-{% endif %}- 指标：{{ report.indicators | join(", ") }}
+{% endif %}
 - 生成时间：{{ report.generated_at }}
 
 ---

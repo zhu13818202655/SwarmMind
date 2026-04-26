@@ -3,8 +3,8 @@
 DESIGN-2 §13 step 8 (M2 minimal scope):
 
 - ``analyze_by_department(raw, filt)`` — given a :class:`RawDataset` whose
-  ``current``/``previous`` dicts include a ``__by_department__`` block
-  populated by :class:`DataFetcher` in fan-out mode, run the per-indicator
+    ``current``/``previous`` dicts include endpoint-keyed department maps
+    populated by :class:`DataFetcher` in fan-out mode, run the supported
   KPI extraction once per department and emit:
     * ``by_department``: ``{dept_id: {"label": str, "kpis": [...]}}``
     * ``comparisons``: ranked list of dept-level comparison rows for the
@@ -53,8 +53,8 @@ def analyze_by_department(
         _media_kpis,
     )
 
-    cur_block = raw.current.get(PER_DEPT_KEY) or {}
-    prev_block = raw.previous.get(PER_DEPT_KEY) or {}
+    cur_block = _department_block(raw.current)
+    prev_block = _department_block(raw.previous)
     if not cur_block:
         return {}, []
 
@@ -65,13 +65,10 @@ def analyze_by_department(
         sub_raw = RawDataset(current=dept_current, previous=dept_previous)
 
         kpis: list[dict[str, Any]] = []
-        if "flight" in filt.indicators:
-            kpis.extend(_flight_kpis(sub_raw))
-        if "algorithm" in filt.indicators:
-            kpis.extend(_algorithm_kpis(sub_raw))
-        if "media_image" in filt.indicators or "media_video" in filt.indicators:
-            kpis.extend(_media_kpis(sub_raw))
-        if "device_health" in filt.indicators:
+        kpis.extend(_flight_kpis(sub_raw))
+        kpis.extend(_algorithm_kpis(sub_raw))
+        kpis.extend(_media_kpis(sub_raw))
+        if sub_raw.current.get("hms_stats") or sub_raw.previous.get("hms_stats"):
             kpis.extend(_device_health_kpis(sub_raw))
 
         label = _dept_label(dept_current, dept_id)
@@ -92,6 +89,39 @@ def _dept_label(payload: dict[str, Any], dept_id: str) -> str:
     fly = payload.get("fly_statis") or {}
     name = fly.get("dept_name") or fly.get("deptName")
     return str(name) if name else f"部门 {dept_id}"
+
+
+def _department_block(period_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Build ``{dept_id: {endpoint: payload}}`` from supported raw shapes."""
+
+    legacy_block = period_data.get(PER_DEPT_KEY)
+    if isinstance(legacy_block, dict):
+        return legacy_block
+
+    endpoints = ("fly_statis", "warn_static", "media_static")
+    dept_ids: set[str] = set()
+    for endpoint in endpoints:
+        endpoint_payload = period_data.get(endpoint)
+        if _is_department_map(endpoint_payload):
+            dept_ids.update(str(dept_id) for dept_id in endpoint_payload)
+
+    block: dict[str, dict[str, Any]] = {}
+    for dept_id in dept_ids:
+        dept_payload: dict[str, Any] = {}
+        for endpoint in endpoints:
+            endpoint_payload = period_data.get(endpoint)
+            if _is_department_map(endpoint_payload) and dept_id in endpoint_payload:
+                dept_payload[endpoint] = endpoint_payload[dept_id]
+        block[dept_id] = dept_payload
+    return block
+
+
+def _is_department_map(value: Any) -> bool:
+    """Return true for endpoint payloads shaped as ``{dept_id: payload}``."""
+    return isinstance(value, dict) and bool(value) and all(
+        str(key).isdigit() and isinstance(item, dict)
+        for key, item in value.items()
+    )
 
 
 def _rank_departments(

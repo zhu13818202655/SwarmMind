@@ -1,22 +1,3 @@
-"""FlyReport service — wires the real pipeline behind the conversational API.
-
-End-to-end flow per ``send_message`` call (DESIGN-2 §3.1, §14.3):
-
-    PARSING      → IntentParser (LLM or rule-based) → DraftFilterSpec
-    AUTHORIZING  → permission gate (placeholder, see DESIGN-2 §14.4.1)
-    FETCHING     → DataFetcher → RawDataset
-    ANALYZING    → analyze() → AnalysisResult
-    PREVIEWING   → SimpleComposer → ReportContext (cached on the session)
-
-``confirm`` then drives PREVIEWING → RENDERING → ARCHIVED via
-:class:`RendererRouter`, returning the on-disk artifact path in
-``ChatTurn.payload``.
-
-Dependencies are injected; defaults make the service usable out-of-the-box
-even without dikong / LLM connectivity (uses ``RuleBasedIntentParser`` +
-``FakeDikongClient``).
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -28,7 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from swarmmind.config.settings import get_settings
@@ -39,7 +20,6 @@ from swarmmind.domains.fly_report.conflict_checker import (
     merge_drafts,
 )
 from swarmmind.domains.fly_report.data_fetcher import DataFetcher
-from swarmmind.domains.fly_report.dikong.fake import FakeDikongClient
 from swarmmind.domains.fly_report.errors import (
     FlyReportError,
     InvalidStateTransition,
@@ -65,7 +45,6 @@ from swarmmind.domains.fly_report.schemas import (
     AnalysisResult,
     ChatTurn,
     FilterSpec,
-    Indicator,
     NormalizedFilter,
     OutputFormat,
     RawDataset,
@@ -87,9 +66,13 @@ def _utcnow() -> datetime:
     return datetime.now(SHANGHAI_TZ)
 
 
-# ---------------------------------------------------------------------------
-# Session record (in-memory; PG persistence lands in DESIGN-2 §14.4.1)
-# ---------------------------------------------------------------------------
+def _empty_filter_spec() -> FilterSpec:
+    return FilterSpec.model_construct(
+        period=None,
+        dept_names=[],
+        missing=[],
+        conflicts=[],
+    )
 
 
 @dataclass
@@ -98,7 +81,7 @@ class _SessionRecord:
     tenant_id: str
     user_id: str
     state: SessionState = SessionState.PARSING
-    filter_spec: FilterSpec = field(default_factory=FilterSpec)
+    filter_spec: FilterSpec = field(default_factory=_empty_filter_spec)
     raw: RawDataset | None = None
     analysis: AnalysisResult | None = None
     ctx: ReportContext | None = None
@@ -263,7 +246,6 @@ class FlyReportService:
             # Merge follow-up clarifications with the previously-known filter.
             had_prior_spec = bool(
                 record.filter_spec.period
-                or record.filter_spec.indicators
                 or record.filter_spec.dimension.scope != "overall"
             )
             if had_prior_spec:
@@ -280,7 +262,6 @@ class FlyReportService:
                         else None
                     ),
                     "scope": record.filter_spec.dimension.scope,
-                    "indicators": list(record.filter_spec.indicators),
                 }
             )
             await self._emit(
@@ -292,7 +273,6 @@ class FlyReportService:
                         if record.filter_spec.period
                         else None
                     ),
-                    "indicators": list(record.filter_spec.indicators),
                     "scope": record.filter_spec.dimension.scope,
                 },
             )
@@ -366,8 +346,7 @@ class FlyReportService:
             self._enter(record, SessionState.AUTHORIZING, "intent_parsed")
             t0 = time.perf_counter()
             normalized = NormalizedFilter.from_filter(record.filter_spec)
-            normalized.indicators = list(get_args(Indicator))
-            normalized.dimension.department_ids = [ _id for name, _id in zip(dept_names, config.fly_report.dikong.department_id_list) if name in normalized.dept_names ]
+            normalized.dept_ids = [ int(_id) for name, _id in zip(dept_names, config.fly_report.dikong.department_id_list) if name in normalized.dept_names ]
             decision = self._permission_gate.evaluate(
                 tenant_id=record.tenant_id,
                 user_id=record.user_id,
@@ -428,7 +407,6 @@ class FlyReportService:
                 "fly_report.data_fetched",
                 record,
                 {
-                    "indicators": list(normalized.indicators),
                     "dept_scope": normalized.dimension.scope,
                 },
             )
@@ -441,18 +419,14 @@ class FlyReportService:
             stages.append(
                 {
                     "stage": "analyzing",
-                    "kpi_count": len(record.analysis.kpis),
-                    "anomaly_count": len(record.analysis.anomalies),
-                    "comparison_count": len(record.analysis.comparisons),
+                    "table_count": _analysis_table_count(record.analysis),
                 }
             )
             await self._emit(
                 "fly_report.analyzed",
                 record,
                 {
-                    "kpi_count": len(record.analysis.kpis),
-                    "anomaly_count": len(record.analysis.anomalies),
-                    "comparison_count": len(record.analysis.comparisons),
+                    "table_count": _analysis_table_count(record.analysis),
                 },
             )
 
@@ -869,7 +843,6 @@ class FlyReportService:
         # Determine whether we already have a prior filter (multi-turn).
         has_prior = bool(
             record.filter_spec.period
-            or record.filter_spec.indicators
             or record.filter_spec.dimension.scope != "overall"
         )
         return {
@@ -1141,7 +1114,7 @@ def _rehydrate(payload: dict[str, Any]) -> _SessionRecord:
     try:
         filter_spec = FilterSpec(**filter_spec_raw)
     except Exception:
-        filter_spec = FilterSpec()
+        filter_spec = _empty_filter_spec()
     return _SessionRecord(
         id=payload["id"],
         tenant_id=payload.get("tenant_id", ""),

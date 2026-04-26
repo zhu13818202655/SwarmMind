@@ -13,6 +13,7 @@ from swarmmind.models.replay import ReplayEntry, ReplayRoot
 from swarmmind.models.run import Run, RunPhase, RunStatus
 from swarmmind.models.session import Session, SessionStatus
 from swarmmind.models.task import SubTask, Task, TaskPriority, TaskRequest, TaskResponse, TaskStatus
+from swarmmind.models.table import DataTable, TableColumn, TableRow
 
 __all__ = [
 	"AgentRole",
@@ -20,6 +21,7 @@ __all__ = [
 	"Artifact",
 	"ArtifactType",
 	"DEFAULT_ROLE_TOOL_GROUPS",
+	"DataTable",
 	"DomainEvent",
 	"ExecutionConfiguration",
 	"ExecutionProfile",
@@ -35,6 +37,8 @@ __all__ = [
 	"SessionStatus",
 	"SubTask",
 	"SkillsMode",
+	"TableColumn",
+	"TableRow",
 	"Task",
 	"TaskPriority",
 	"TaskRequest",

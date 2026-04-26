@@ -72,6 +72,19 @@
       ]
     },
     {
+      "name": "DataFetcher Fetch Test",
+      "consoleName": "DataFetcher Fetch Test",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/test_data_fetcher_fetch.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    },
+    {
       "name": "Task Show",
       "type": "node-terminal",
       "request": "launch",

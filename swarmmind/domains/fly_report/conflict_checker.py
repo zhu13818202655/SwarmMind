@@ -32,7 +32,6 @@ def check_conflicts(spec: FilterSpec | DraftFilterSpec) -> ConflictReport:
     Rules (DESIGN-2 §14.4.2 — clarifier inputs):
 
     - ``period`` is required.
-    - At least one ``indicator`` is required.
     - ``dimension.scope`` must be one of ``{"overall", "department", "pilot"}``;
       a non-``overall`` scope must come with a non-empty target list.
     """
@@ -88,7 +87,7 @@ def merge_drafts(
         else:
             merged.setdefault(field_name, patch_val)
 
-    for name in ("period", "dimension", "indicators", "options"):
+    for name in ("period", "dimension", "options"):
         _take(name)
 
     # Reset the diagnostic fields so the conflict checker can repopulate.

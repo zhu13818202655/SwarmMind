@@ -5,7 +5,7 @@
   {% if report.department_ids %}　部门：{{ report.department_ids | join(", ") }}{% endif %}
   {% if report.pilot_ids %}　飞手：{{ report.pilot_ids | join(", ") }}{% endif %}
   <br>
-  指标：{{ report.indicators | join(", ") }}　·　修订 v{{ report.revision }}
+  修订 v{{ report.revision }}
 </div>
 
 {% for section in sections %}

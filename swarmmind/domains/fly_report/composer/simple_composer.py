@@ -1,15 +1,4 @@
-"""Minimal :class:`AnalysisResult` → :class:`ReportContext` composer.
-
-Groups KPIs by their indicator domain (flight / algorithm / media /
-device_health) into sections, attaches a generated bar chart per section
-showing current-vs-previous values, and produces a one-paragraph
-summary that is good enough to render a usable report without any LLM.
-
-This is intentionally **not** the full §4.1.5 composer: there is no
-SectionSummarizerAgent here, no anomaly narratives, no comparisons table.
-It exists to unblock end-to-end exports today; richer composition lands
-in M2+.
-"""
+"""Minimal :class:`AnalysisResult` -> :class:`ReportContext` composer."""
 
 from __future__ import annotations
 
@@ -23,32 +12,17 @@ from swarmmind.domains.fly_report.schemas import (
     ReportSection,
 )
 
-# Mapping from KPI ``name`` prefix → (section_id, section_title, indicator).
-_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
-    (
-        "flight",
-        "飞行概览",
-        "flight",
-        ("fly_count", "fly_mileage", "fly_time", "drone_count", "drone_job_count"),
-    ),
-    (
-        "algorithm",
-        "算法告警",
-        "algorithm",
-        ("algorithm_warn_total",),
-    ),
-    (
-        "media",
-        "媒体成果",
-        "media",
-        ("media_total",),
-    ),
-    (
-        "device_health",
-        "设备健康",
-        "device_health",
-        ("hms_alert_total",),
-    ),
+_TABLE_SECTIONS: tuple[tuple[str, str, str], ...] = (
+    ("flight_stat_overall", "flight_stat_overall", "总体飞行统计概览"),
+    ("flight_stat_day_trend", "flight_stat_day_trend", "每日飞行趋势"),
+    ("flight_stat_department_share", "flight_stat_department_share", "部门飞行时长占比"),
+    ("media_collection_summary", "media_collection_summary", "图片视频采集统计"),
+    ("algorithm_recognition_overall", "algorithm_recognition_overall", "总的算法识别数据汇总"),
+    ("algorithm_recognition_distribution", "algorithm_recognition_distribution", "算法识别统计"),
+    ("algorithm_disposal_summary", "algorithm_disposal_summary", "算法处置统计"),
+    ("algorithm_high_frequency_locations", "algorithm_high_frequency_locations", "高频案发点统计"),
+    ("algorithm_high_frequency_time_slots", "algorithm_high_frequency_time_slots", "高频案时间段统计"),
+    ("algorithm_push_events", "algorithm_push_events", "算法推送事件"),
 )
 
 
@@ -64,30 +38,21 @@ class SimpleComposer:
         revision: int = 1,
     ) -> ReportContext:
         sections: list[ReportSection] = []
-        kpis_by_name = {k["name"]: k for k in analysis.kpis}
-
-        for section_id, title, _indicator, kpi_names in _GROUPS:
-            section_kpis = [
-                kpis_by_name[name]
-                for name in kpi_names
-                if name in kpis_by_name
-            ]
-            if not section_kpis:
+        for attr_name, section_id, fallback_title in _TABLE_SECTIONS:
+            table = getattr(analysis, attr_name)
+            if not table:
                 continue
+            title = str(table.get("title") or fallback_title)
+            chart = _build_table_chart(section_id, title, table)
             sections.append(
                 ReportSection(
                     id=section_id,
                     title=title,
-                    summary_md=_build_summary(title, section_kpis),
-                    kpis=section_kpis,
-                    charts=[_build_chart(section_id, title, section_kpis)],
+                    summary_md=_build_table_summary(title, table),
+                    tables=[table],
+                    charts=[chart] if chart is not None else [],
                 )
             )
-
-        # Department comparison section (DESIGN-2 §13 step 8).
-        dept_section = _build_dept_compare_section(analysis)
-        if dept_section is not None:
-            sections.append(dept_section)
 
         return ReportContext(
             session_id=session_id,
@@ -119,113 +84,59 @@ def compose_report_context(
 # ---------------------------------------------------------------------------
 
 
-def _build_summary(title: str, kpis: list[dict[str, Any]]) -> str:
-    """Plain-language one-liner derived purely from KPI deltas."""
+def _build_table_summary(title: str, table: dict[str, Any]) -> str:
+    rows = table.get("rows") if isinstance(table.get("rows"), list) else []
+    return f"{title}：共 {len(rows)} 条数据。"
 
-    movers: list[str] = []
-    for k in kpis:
-        change_pct = k.get("change_pct")
-        if change_pct is None:
+
+def _build_table_chart(
+    section_id: str,
+    title: str,
+    table: dict[str, Any],
+) -> ChartSpec | None:
+    rows = table.get("rows")
+    if not isinstance(rows, list):
+        return None
+
+    current_data: list[dict[str, Any]] = []
+    previous_data: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
             continue
-        direction = "上升" if change_pct >= 0 else "下降"
-        movers.append(f"{k.get('label', k['name'])}{direction} {abs(change_pct):.1f}%")
-    if not movers:
-        return f"{title}：本期暂无环比数据。"
-    return f"{title}：" + "；".join(movers[:3]) + "。"
+        meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+        current = meta.get("current_value")
+        previous = meta.get("previous_value")
+        if current is None and previous is None:
+            continue
+        label = _row_label(row)
+        current_data.append({"x": label, "y": current or 0})
+        previous_data.append({"x": label, "y": previous or 0})
 
+    if not current_data and not previous_data:
+        return None
 
-def _build_chart(
-    section_id: str, title: str, kpis: list[dict[str, Any]]
-) -> ChartSpec:
-    """One bar chart per section comparing current vs previous values."""
-
-    current = {
-        "name": "本期",
-        "data": [
-            {
-                "x": k.get("label", k["name"]),
-                "y": k.get("value") if k.get("value") is not None else 0,
-            }
-            for k in kpis
-        ],
-    }
-    previous = {
-        "name": "上期",
-        "data": [
-            {
-                "x": k.get("label", k["name"]),
-                "y": k.get("previous_value") if k.get("previous_value") is not None else 0,
-            }
-            for k in kpis
-        ],
-    }
     return ChartSpec(
         id=f"{section_id}-overview",
         title=f"{title} · 本期 vs 上期",
         chart_type="bar",
-        series=[current, previous],
-    )
-
-
-def _build_dept_compare_section(analysis: AnalysisResult) -> ReportSection | None:
-    """Build the "部门对比" section if per-department data is present."""
-
-    by_dept = analysis.by_department or {}
-    if not by_dept:
-        return None
-
-    rank_rows = [
-        c for c in analysis.comparisons if c.get("kind") == "department_rank"
-    ]
-    if not rank_rows:
-        return None
-
-    summary_parts: list[str] = []
-    leader = rank_rows[0]
-    summary_parts.append(f"领先部门：{leader['label']}（{leader['current']:.0f} 次）")
-    if len(rank_rows) > 1:
-        tail = rank_rows[-1]
-        summary_parts.append(
-            f"末位部门：{tail['label']}（{tail['current']:.0f} 次，"
-            f"较领先 {tail['vs_leader']:+.0f} 次）"
-        )
-
-    chart = ChartSpec(
-        id="dept-compare-overview",
-        title="部门飞行次数对比",
-        chart_type="bar",
         series=[
-            {
-                "name": "本期",
-                "data": [
-                    {"x": r["label"], "y": r["current"]} for r in rank_rows
-                ],
-            },
-            {
-                "name": "上期",
-                "data": [
-                    {"x": r["label"], "y": r.get("previous") or 0}
-                    for r in rank_rows
-                ],
-            },
+            {"name": "本期", "data": current_data},
+            {"name": "上期", "data": previous_data},
         ],
     )
 
-    return ReportSection(
-        id="dept_compare",
-        title="部门对比",
-        summary_md="部门对比：" + "；".join(summary_parts) + "。",
-        kpis=[
-            {
-                "name": f"dept_rank_{r['rank']}",
-                "label": f"#{r['rank']} {r['label']}",
-                "value": r["current"],
-                "previous_value": r.get("previous"),
-                "unit": "次",
-                "change": r.get("change"),
-                "change_pct": r.get("change_pct"),
-            }
-            for r in rank_rows
-        ],
-        charts=[chart],
-    )
+
+def _row_label(row: dict[str, Any]) -> str:
+    for key in (
+        "metric",
+        "statistic_category",
+        "department_name",
+        "algorithm_name",
+        "scene_name",
+        "date",
+        "key",
+    ):
+        value = row.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return "数据项"

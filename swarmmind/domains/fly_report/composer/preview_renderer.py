@@ -35,7 +35,6 @@ def _render_meta(ctx: ReportContext) -> str:
         ("Session", ctx.session_id),
         ("Revision", str(ctx.revision)),
         ("Period", ctx.filter.period.label),
-        ("Indicators", ", ".join(ctx.filter.indicators)),
         ("Generated", ctx.generated_at.isoformat()),
     ]
     inner = "".join(

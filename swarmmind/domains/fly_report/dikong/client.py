@@ -25,11 +25,12 @@ from swarmmind.domains.fly_report.dikong.auth import build_headers
 from swarmmind.domains.fly_report.dikong.endpoints import (
     EndpointKey,
     EndpointSpec,
-    HttpMethod,
     get_endpoint,
 )
 from swarmmind.domains.fly_report.dikong.parsers import (
     DikongEnvelope,
+    FlyJobLogDetailResp,
+    FlyJobLogResp,
     FlyStatisResp,
     HmsStatsResp,
     MediaStaticResp,
@@ -104,10 +105,12 @@ class DikongClient:
         *,
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
+        path_params: dict[str, Any] | None = None,
         data_model: type[BaseModel] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> DikongEnvelope[Any]:
         spec: EndpointSpec = get_endpoint(endpoint)
+        path = _format_path(spec.path, path_params)
 
         cleaned_params = _drop_none(params) if params else None
         attempts = self._config.max_retries + 1
@@ -129,7 +132,7 @@ class DikongClient:
                 async with self._semaphore, self._limiter:
                     response = await self._client.request(
                         spec.method.value,
-                        spec.path,
+                        path,
                         params=cleaned_params,
                         json=json_body,
                         headers=headers,
@@ -138,8 +141,8 @@ class DikongClient:
                 last_exc = exc
                 if attempt + 1 >= attempts:
                     raise DikongApiError(
-                        f"transport failure calling {spec.path}: {exc}",
-                        details={"endpoint": spec.path, "attempt": attempt + 1},
+                        f"transport failure calling {path}: {exc}",
+                        details={"endpoint": path, "attempt": attempt + 1},
                     ) from exc
                 await asyncio.sleep(self._backoff(attempt))
                 continue
@@ -161,18 +164,18 @@ class DikongClient:
                 continue
             if response.status_code == 401:
                 raise DikongAuthError(
-                    f"dikong rejected token for {spec.path}",
+                    f"dikong rejected token for {path}",
                     details={
-                        "endpoint": spec.path,
+                        "endpoint": path,
                         "status": 401,
                         "body_preview": response.text[:512],
                     },
                 )
             if response.status_code >= 400:
                 raise DikongApiError(
-                    f"dikong returned HTTP {response.status_code} for {spec.path}",
+                    f"dikong returned HTTP {response.status_code} for {path}",
                     details={
-                        "endpoint": spec.path,
+                        "endpoint": path,
                         "status": response.status_code,
                         "body_preview": response.text[:512],
                     },
@@ -182,8 +185,8 @@ class DikongClient:
                 payload = response.json()
             except ValueError as exc:
                 raise DikongApiError(
-                    f"dikong returned non-JSON body for {spec.path}",
-                    details={"endpoint": spec.path, "body_preview": response.text[:512]},
+                    f"dikong returned non-JSON body for {path}",
+                    details={"endpoint": path, "body_preview": response.text[:512]},
                 ) from exc
 
             # Envelope-level auth failure (e.g. ``code == 401``) → refresh once.
@@ -198,12 +201,12 @@ class DikongClient:
                 await self._token_provider.invalidate()
                 continue
 
-            return parse_envelope(payload, endpoint=spec.path, data_model=data_model)
+            return parse_envelope(payload, endpoint=path, data_model=data_model)
 
         # Loop exited without returning - exhaustion path.
         raise DikongApiError(
-            f"exhausted retries calling {spec.path}",
-            details={"endpoint": spec.path, "last_error": str(last_exc)},
+            f"exhausted retries calling {path}",
+            details={"endpoint": path, "last_error": str(last_exc)},
         )
 
     def _backoff(self, attempt: int) -> float:
@@ -226,7 +229,6 @@ class DikongClient:
 
     async def get_fly_statis(
         self,
-        *,
         dept_id: int | None = None,
         startdate: str | None = None,
         enddate: str | None = None,
@@ -237,6 +239,40 @@ class DikongClient:
             data_model=FlyStatisResp,
         )
         return envelope.data or FlyStatisResp()
+
+    async def get_fly_job_logs(
+        self,
+        *,
+        begin_time: str | None = None,
+        end_time: str | None = None,
+        status: str | int | None = None,
+        page_num: int | None = None,
+        page_size: int | None = None,
+        name: str | None = None,
+        type: str | int | None = None,
+    ) -> FlyJobLogResp:
+        envelope = await self._request(
+            EndpointKey.JOB_LOG_LIST,
+            params={
+                "beginTime": begin_time,
+                "endTime": end_time,
+                "status": status,
+                "pageNum": page_num,
+                "pageSize": page_size,
+                "name": name,
+                "type": type,
+            },
+            data_model=FlyJobLogResp,
+        )
+        return envelope.data or FlyJobLogResp()
+
+    async def get_fly_job_log_detail(self, job_log_id: str) -> FlyJobLogDetailResp:
+        envelope = await self._request(
+            EndpointKey.JOB_LOG_DETAIL,
+            path_params={"jobLogId": job_log_id},
+            data_model=FlyJobLogDetailResp,
+        )
+        return envelope.data or FlyJobLogDetailResp()
 
     async def get_warn_static(
         self,
@@ -312,6 +348,15 @@ class DikongClient:
 
 def _drop_none(params: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in params.items() if v is not None}
+
+
+def _format_path(path: str, path_params: dict[str, Any] | None) -> str:
+    if not path_params:
+        return path
+    formatted = path
+    for key, value in path_params.items():
+        formatted = formatted.replace("{" + key + "}", str(value))
+    return formatted
 
 
 @asynccontextmanager

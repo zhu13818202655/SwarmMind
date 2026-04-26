@@ -23,13 +23,6 @@ from pydantic import BaseModel, ConfigDict, Field
 PeriodKind = Literal["weekly", "monthly", "custom"]
 ScopeKind = Literal["overall", "department", "pilot"]
 OutputFormat = Literal["docx", "pdf", "markdown"]
-Indicator = Literal[
-    "flight",
-    "algorithm",
-    "media_image",
-    "media_video",
-    "device_health",
-]
 ChatRole = Literal["user", "assistant", "system"]
 
 
@@ -78,10 +71,10 @@ class ReportOptions(BaseModel):
 class FilterSpec(BaseModel):
     """User-visible filter (may still contain ambiguity)."""
 
-    period: Period | None = None
+    period: Period
     dept_names: list[str] = Field(default_factory=list)
+    dept_ids: list[int] = Field(default_factory=list)
     dimension: Dimension = Field(default_factory=Dimension)
-    indicators: list[Indicator] = Field(default_factory=list)
     options: ReportOptions = Field(default_factory=ReportOptions)
     missing: list[str] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
@@ -113,7 +106,6 @@ class FilterPatch(BaseModel):
 
     period: Period | None = None
     dimension: Dimension | None = None
-    indicators: list[Indicator] | None = None
     options: ReportOptions | None = None
     notes: str | None = None
 
@@ -131,12 +123,16 @@ class RawDataset(BaseModel):
 
 
 class AnalysisResult(BaseModel):
-    overall: dict[str, Any] = Field(default_factory=dict)
-    by_department: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    by_pilot: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    comparisons: list[dict[str, Any]] = Field(default_factory=list)
-    anomalies: list[dict[str, Any]] = Field(default_factory=list)
-    kpis: list[dict[str, Any]] = Field(default_factory=list)
+    flight_stat_overall: dict[str, Any] = Field(default_factory=dict)
+    flight_stat_day_trend: dict[str, Any] = Field(default_factory=dict)
+    flight_stat_department_share: dict[str, Any] = Field(default_factory=dict)
+    media_collection_summary: dict[str, Any] = Field(default_factory=dict)
+    algorithm_recognition_overall: dict[str, Any] = Field(default_factory=dict)
+    algorithm_recognition_distribution: dict[str, Any] = Field(default_factory=dict)
+    algorithm_disposal_summary: dict[str, Any] = Field(default_factory=dict)
+    algorithm_high_frequency_locations: dict[str, Any] = Field(default_factory=dict)
+    algorithm_high_frequency_time_slots: dict[str, Any] = Field(default_factory=dict)
+    algorithm_push_events: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +181,6 @@ class ReportContext(BaseModel):
                 f"{self.filter.period.start.isoformat()}"
                 f"~{self.filter.period.end.isoformat()}"
             ),
-            "indicators": list(self.filter.indicators),
             "section_count": len(self.sections),
             "revision": self.revision,
         }

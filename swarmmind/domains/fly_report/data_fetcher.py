@@ -1,7 +1,7 @@
 """DataFetcher: translate a :class:`NormalizedFilter` into DikongClient calls.
 
 Responsibilities (DESIGN-2 §4.1.5 / §6):
-- Map ``indicators × dimension`` to the correct DikongClient methods.
+- Map the requested dimension to the correct DikongClient methods.
 - Fetch current period **and** previous period (for 同比/环比) in parallel.
 - Return a :class:`RawDataset` with ``current`` and ``previous`` keyed by
   endpoint name.
@@ -14,6 +14,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
+from pydantic import BaseModel
+
 from swarmmind.domains.fly_report.dikong.client import DikongClient
 from swarmmind.domains.fly_report.schemas import (
     NormalizedFilter,
@@ -22,6 +24,7 @@ from swarmmind.domains.fly_report.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Date formatting helpers
@@ -32,13 +35,12 @@ def _fmt_date(dt: datetime) -> str:
     """Format a datetime to ``YYYY-MM-DD`` for dikong query params."""
     return dt.strftime("%Y-%m-%d")
 
-
 def _previous_period(period: Period) -> Period:
     """Compute the immediately preceding period of the same length.
 
-    weekly  → previous 7 days
-    monthly → previous calendar month (approximate: same delta)
-    custom  → shift back by ``(end - start)``
+    weekly  -> previous 7 days
+    monthly -> previous calendar month (approximate: same delta)
+    custom  -> shift back by ``(end - start)``
     """
     delta = period.end - period.start
     if delta.total_seconds() <= 0:
@@ -47,85 +49,7 @@ def _previous_period(period: Period) -> Period:
         kind=period.kind,
         start=period.start - delta,
         end=period.end - delta,
-        label=f"上一{period.kind}",
     )
-
-
-# ---------------------------------------------------------------------------
-# Indicator → fetch-functions mapping
-# ---------------------------------------------------------------------------
-
-# Each entry returns a dict of ``{key: pydantic_model_dump}``.
-
-async def _fetch_flight(
-    client: DikongClient,
-    filt: NormalizedFilter,
-    *,
-    period: Period,
-    dept_id: int | None,
-) -> dict[str, Any]:
-    """Fetch flight statistics for a single period."""
-    resp = await client.get_fly_statis(
-        dept_id=dept_id,
-        startdate=_fmt_date(period.start),
-        enddate=_fmt_date(period.end),
-    )
-    return {"fly_statis": resp.model_dump()}
-
-
-async def _fetch_algorithm(
-    client: DikongClient,
-    filt: NormalizedFilter,
-    *,
-    period: Period,
-    dept_id: int | None,
-) -> dict[str, Any]:
-    resp = await client.get_warn_static(
-        dept_id=dept_id,
-        startdate=_fmt_date(period.start),
-        enddate=_fmt_date(period.end),
-    )
-    return {"warn_static": resp.model_dump()}
-
-
-async def _fetch_media(
-    client: DikongClient,
-    filt: NormalizedFilter,
-    *,
-    period: Period,
-    dept_id: int | None,
-) -> dict[str, Any]:
-    resp = await client.get_media_static(
-        dept_id=dept_id,
-        startdate=_fmt_date(period.start),
-        enddate=_fmt_date(period.end),
-    )
-    return {"media_static": resp.model_dump()}
-
-
-async def _fetch_device_health(
-    client: DikongClient,
-    filt: NormalizedFilter,
-    *,
-    period: Period,
-    dept_id: int | None,
-) -> dict[str, Any]:
-    resp = await client.get_hms_stats(dept_id=dept_id)
-    return {"hms_stats": resp.model_dump()}
-
-
-_INDICATOR_FETCHERS = {
-    "flight": _fetch_flight,
-    "algorithm": _fetch_algorithm,
-    "media_image": _fetch_media,
-    "media_video": _fetch_media,  # same endpoint, analyzer splits later
-    "device_health": _fetch_device_health,
-}
-
-
-# ---------------------------------------------------------------------------
-# DataFetcher
-# ---------------------------------------------------------------------------
 
 
 class DataFetcher:
@@ -139,7 +63,7 @@ class DataFetcher:
 
     def __init__(
         self,
-        client: DikongClient
+        client: DikongClient,
     ) -> None:
         self._client = client
 
@@ -148,115 +72,172 @@ class DataFetcher:
         dept_id_list: list[str],
     ) -> list[str]:
         """Fetch department names for a list of department ids."""
-        department_names = await self._client.get_department_name_list_by_id_list(dept_id_list)
-        return department_names
+        return await self._client.get_department_name_list_by_id_list(dept_id_list)
 
     async def fetch(self, filt: NormalizedFilter) -> RawDataset:
-        """Fetch current + previous period data for all requested indicators."""
+        """获取飞行报告所需要的数据。"""
 
         prev_period = _previous_period(filt.period)
+        dept_ids = filt.dept_ids
+        current_start = _fmt_date(filt.period.start)
+        current_end = _fmt_date(filt.period.end)
+        previous_start = _fmt_date(prev_period.start)
+        previous_end = _fmt_date(prev_period.end)
 
-        # Determine the first department id for dept-scoped queries (overall = None).
-        dept_id = self._resolve_dept_id(filt)
-
-        # Deduplicate fetchers (media_image & media_video share the same fn).
-        fetchers: dict[str, Any] = {}
-        for indicator in filt.indicators:
-            fn = _INDICATOR_FETCHERS.get(indicator)
-            if fn is not None and fn not in fetchers.values():
-                fetchers[indicator] = fn
-
-        current_data, previous_data = await asyncio.gather(
-            self._fetch_period(fetchers, filt, filt.period, dept_id),
-            self._fetch_period(fetchers, filt, prev_period, dept_id),
+        current_job_logs_task = asyncio.create_task(
+            self._client.get_fly_job_logs(
+                begin_time=f"{current_start} 00:00:00",
+                end_time=f"{current_end} 23:59:59",
+            )
+        )
+        previous_job_logs_task = asyncio.create_task(
+            self._client.get_fly_job_logs(
+                begin_time=f"{previous_start} 00:00:00",
+                end_time=f"{previous_end} 23:59:59",
+            )
         )
 
-        # M2: per-department fan-out when comparing 2+ departments.
-        if self._needs_dept_fanout(filt):
-            cur_by_dept, prev_by_dept = await asyncio.gather(
-                self._fetch_per_dept(fetchers, filt, filt.period),
-                self._fetch_per_dept(fetchers, filt, prev_period),
+        target_dept_ids: list[int | None] = list(dept_ids) if dept_ids else [None]
+        current_dept_tasks = {
+            dept_id: asyncio.create_task(
+                self._fetch_period_scoped_data(
+                    dept_id=dept_id,
+                    startdate=current_start,
+                    enddate=current_end,
+                )
             )
-            from swarmmind.domains.fly_report.analyzer.comparisons import (
-                PER_DEPT_KEY,
+            for dept_id in target_dept_ids
+        }
+        previous_dept_tasks = {
+            dept_id: asyncio.create_task(
+                self._fetch_period_scoped_data(
+                    dept_id=dept_id,
+                    startdate=previous_start,
+                    enddate=previous_end,
+                )
             )
+            for dept_id in target_dept_ids
+        }
 
-            current_data[PER_DEPT_KEY] = cur_by_dept
-            previous_data[PER_DEPT_KEY] = prev_by_dept
+        current_job_logs = self._filter_job_logs_by_dept_ids(
+            self._to_plain_data(await current_job_logs_task), dept_ids
+        )
+        previous_job_logs = self._filter_job_logs_by_dept_ids(
+            self._to_plain_data(await previous_job_logs_task), dept_ids
+        )
+
+        current_data: dict[str, Any] = {"fly_job_logs": current_job_logs}
+        previous_data: dict[str, Any] = {"fly_job_logs": previous_job_logs}
+
+        if dept_ids:
+            current_by_dept = {
+                str(dept_id): await task
+                for dept_id, task in current_dept_tasks.items()
+                if dept_id is not None
+            }
+            previous_by_dept = {
+                str(dept_id): await task
+                for dept_id, task in previous_dept_tasks.items()
+                if dept_id is not None
+            }
+
+            current_data.update(self._pivot_period_results_by_endpoint(current_by_dept))
+            previous_data.update(self._pivot_period_results_by_endpoint(previous_by_dept))
+        else:
+            current_data.update(await current_dept_tasks[None])
+            previous_data.update(await previous_dept_tasks[None])
 
         return RawDataset(current=current_data, previous=previous_data)
 
-    async def _fetch_per_dept(
+    async def _fetch_period_scoped_data(
         self,
-        fetchers: dict[str, Any],
-        filt: NormalizedFilter,
-        period: Period,
-    ) -> dict[str, dict[str, Any]]:
-        """Run all fetchers once per department id, in parallel."""
-
-        dept_ids = list(filt.dimension.department_ids)
-        results = await asyncio.gather(
-            *(
-                self._fetch_period(fetchers, filt, period, self._coerce_int(d))
-                for d in dept_ids
-            )
-        )
-        return {str(dept_id): payload for dept_id, payload in zip(dept_ids, results)}
-
-    @staticmethod
-    def _needs_dept_fanout(filt: NormalizedFilter) -> bool:
-        if filt.dimension.scope != "department":
-            return False
-        return len(filt.dimension.department_ids) >= 2
-
-    @staticmethod
-    def _coerce_int(val: Any) -> int | None:
-        try:
-            return int(val)
-        except (ValueError, TypeError):
-            return None
-
-    async def _fetch_period(
-        self,
-        fetchers: dict[str, Any],
-        filt: NormalizedFilter,
-        period: Period,
+        *,
         dept_id: int | None,
+        startdate: str,
+        enddate: str,
     ) -> dict[str, Any]:
-        """Run all fetcher functions for one period in parallel."""
+        """Fetch period data that can optionally be scoped by department."""
 
-        tasks = [
-            fn(
-                self._client,
-                filt,
-                period=period,
+        fly_statis, warn_static, media_static = await asyncio.gather(
+            self._client.get_fly_statis(
                 dept_id=dept_id,
-            )
-            for fn in fetchers.values()
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        merged: dict[str, Any] = {}
-        for result in results:
-            if isinstance(result, BaseException):
-                logger.warning("fetcher failed: %s", result)
-                continue
-            merged.update(result)
-        return merged
+                startdate=startdate,
+                enddate=enddate,
+            ),
+            self._client.get_warn_static(
+                dept_id=dept_id,
+                startdate=startdate,
+                enddate=enddate,
+            ),
+            self._client.get_media_static(
+                dept_id=dept_id,
+                startdate=startdate,
+                enddate=enddate,
+            ),
+            return_exceptions=False,
+        )
+        return {
+            "fly_statis": self._to_plain_data(fly_statis),
+            "warn_static": self._to_plain_data(warn_static),
+            "media_static": self._to_plain_data(media_static),
+        }
 
     @staticmethod
-    def _resolve_dept_id(filt: NormalizedFilter) -> int | None:
-        """Extract a single dept id for simple overall/department queries.
+    def _pivot_period_results_by_endpoint(
+        by_dept: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Turn ``{dept_id: {endpoint: payload}}`` into ``{endpoint: {dept_id: payload}}``."""
+        pivoted: dict[str, dict[str, Any]] = {}
+        for dept_id, result in by_dept.items():
+            for endpoint, payload in result.items():
+                pivoted.setdefault(endpoint, {})[dept_id] = payload
+        return pivoted
 
-        If multiple departments are specified (comparison), returns None
-        (the analyzer handles per-dept iteration at a higher level).
-        """
-        ids = filt.dimension.department_ids
-        if len(ids) == 1:
-            try:
-                return int(ids[0])
-            except (ValueError, TypeError):
-                return None
-        return None
+    @staticmethod
+    def _filter_job_logs_by_dept_ids(
+        payload: Any,
+        dept_ids: list[int],
+    ) -> Any:
+        if not dept_ids or not isinstance(payload, dict):
+            return payload
+
+        records = payload.get("records")
+        if not isinstance(records, list):
+            return payload
+
+        allowed = {str(dept_id) for dept_id in dept_ids}
+        filtered_records = [
+            record
+            for record in records
+            if DataFetcher._job_log_matches_dept_ids(record, allowed)
+        ]
+        filtered = dict(payload)
+        filtered["records"] = filtered_records
+        filtered["total"] = len(filtered_records)
+        filtered["size"] = len(filtered_records)
+        filtered["pages"] = 1 if filtered_records else 0
+        return filtered
+
+    @staticmethod
+    def _job_log_matches_dept_ids(record: Any, allowed: set[str]) -> bool:
+        if not isinstance(record, dict):
+            return False
+        raw_tags = record.get("deptids_tag")
+        if raw_tags is None:
+            return False
+        tags = {part.strip() for part in str(raw_tags).split(",") if part.strip()}
+        return bool(tags & allowed)
+
+    @staticmethod
+    def _to_plain_data(value: Any) -> Any:
+        """Convert pydantic payloads to plain JSON-compatible data."""
+        if isinstance(value, BaseModel):
+            return value.model_dump(mode="json")
+        if isinstance(value, list):
+            return [DataFetcher._to_plain_data(item) for item in value]
+        if isinstance(value, dict):
+            return {key: DataFetcher._to_plain_data(item) for key, item in value.items()}
+        return value
 
 
 __all__ = ["DataFetcher"]
