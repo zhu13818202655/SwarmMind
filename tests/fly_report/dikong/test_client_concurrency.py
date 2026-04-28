@@ -42,7 +42,7 @@ async def test_max_concurrency_caps_in_flight_requests(dikong_config, static_tok
         return httpx.Response(200, json={"code": 0, "data": {"droneCount": 1}})
 
     with respx.mock(base_url=config.base_url) as router:
-        router.get("/missions/getFlyStatis").mock(side_effect=handler)
+        router.get("/api/device/missions/getFlyStatis").mock(side_effect=handler)
         async with DikongClient(config, token_provider=static_token_provider) as client:
             await asyncio.gather(*[client.get_fly_statis() for _ in range(8)])
 
@@ -65,7 +65,7 @@ async def test_rate_limiter_throttles_burst(dikong_config, static_token_provider
     )
 
     with respx.mock(base_url=config.base_url) as router:
-        router.get("/missions/getFlyStatis").respond(
+        router.get("/api/device/missions/getFlyStatis").respond(
             200, json={"code": 0, "data": {"droneCount": 1}}
         )
         async with DikongClient(config, token_provider=static_token_provider) as client:

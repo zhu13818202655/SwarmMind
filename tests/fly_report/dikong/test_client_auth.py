@@ -13,6 +13,8 @@ from swarmmind.domains.fly_report.dikong.token_provider import (
 )
 from swarmmind.domains.fly_report.errors import DikongAuthError
 
+FLY_STATIS_PATH = "/api/device/missions/getFlyStatis"
+
 
 def _dynamic_cfg(**overrides) -> FlyReportDikongConfig:
     base = dict(
@@ -37,9 +39,9 @@ async def test_back_token_header_is_set_from_dynamic_login() -> None:
 
     with respx.mock(base_url=cfg.base_url, assert_all_called=True) as router:
         login_route = router.post("/system/user/login").respond(
-            200, json={"code": 0, "data": {"accessToken": "fresh-tok"}},
+            200, json={"code": "200", "data": {"accessToken": "fresh-tok"}},
         )
-        data_route = router.get("/missions/getFlyStatis").respond(
+        data_route = router.get(FLY_STATIS_PATH).respond(
             200, json={"code": 0, "data": {"droneCount": 1}},
         )
         async with DikongClient(cfg) as client:
@@ -60,11 +62,11 @@ async def test_401_triggers_token_refresh_and_retry() -> None:
     with respx.mock(base_url=cfg.base_url) as router:
         login_route = router.post("/system/user/login").mock(
             side_effect=[
-                httpx.Response(200, json={"code": 0, "data": {"accessToken": "tok-1"}}),
-                httpx.Response(200, json={"code": 0, "data": {"accessToken": "tok-2"}}),
+                httpx.Response(200, json={"code": "200", "data": {"accessToken": "tok-1"}}),
+                httpx.Response(200, json={"code": "200", "data": {"accessToken": "tok-2"}}),
             ],
         )
-        data_route = router.get("/missions/getFlyStatis").mock(
+        data_route = router.get(FLY_STATIS_PATH).mock(
             side_effect=[
                 httpx.Response(401, text="expired"),
                 httpx.Response(200, json={"code": 0, "data": {"droneCount": 7}}),
@@ -89,9 +91,9 @@ async def test_persistent_401_eventually_raises_auth_error() -> None:
 
     with respx.mock(base_url=cfg.base_url) as router:
         router.post("/system/user/login").respond(
-            200, json={"code": 0, "data": {"accessToken": "tok-x"}},
+            200, json={"code": "200", "data": {"accessToken": "tok-x"}},
         )
-        router.get("/missions/getFlyStatis").respond(401, text="nope")
+        router.get(FLY_STATIS_PATH).respond(401, text="nope")
         async with DikongClient(cfg) as client:
             with pytest.raises(DikongAuthError) as exc_info:
                 await client.get_fly_statis()
@@ -107,7 +109,7 @@ async def test_static_token_mode_does_not_retry_on_401() -> None:
     static = StaticDikongTokenProvider("static-tok")
 
     with respx.mock(base_url=cfg.base_url) as router:
-        route = router.get("/missions/getFlyStatis").respond(401, text="nope")
+        route = router.get(FLY_STATIS_PATH).respond(401, text="nope")
         async with DikongClient(cfg, token_provider=static) as client:
             with pytest.raises(DikongAuthError):
                 await client.get_fly_statis()
@@ -140,7 +142,7 @@ async def test_injected_token_provider_is_used() -> None:
     stub = _StubProvider()
 
     with respx.mock(base_url=cfg.base_url) as router:
-        route = router.get("/missions/getFlyStatis").respond(
+        route = router.get(FLY_STATIS_PATH).respond(
             200, json={"code": 0, "data": {"droneCount": 1}},
         )
         async with DikongClient(cfg, token_provider=stub) as client:

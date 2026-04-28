@@ -24,7 +24,6 @@ from psycopg.types.json import Jsonb
 
 from swarmmind.repositories.postgres import PostgresStore
 
-
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
@@ -59,12 +58,67 @@ CREATE TABLE IF NOT EXISTS fly_report_chat_turn (
 CREATE INDEX IF NOT EXISTS fly_report_chat_turn_session_idx
     ON fly_report_chat_turn (session_id, id);
 
+CREATE TABLE IF NOT EXISTS fly_report_interaction (
+    id              TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL REFERENCES fly_report_session(id) ON DELETE CASCADE,
+    tenant_id       TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    phase           TEXT NOT NULL DEFAULT 'intake',
+    input_text      TEXT NOT NULL,
+    output_format   TEXT,
+    template_ref    TEXT,
+    error           TEXT,
+    message_count   INTEGER NOT NULL DEFAULT 0,
+    artifact_count  INTEGER NOT NULL DEFAULT 0,
+    payload         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS fly_report_interaction_session_idx
+    ON fly_report_interaction (session_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS fly_report_interaction_user_idx
+    ON fly_report_interaction (tenant_id, user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS fly_report_interaction_status_idx
+    ON fly_report_interaction (status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS fly_report_message (
+    id              TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL REFERENCES fly_report_session(id) ON DELETE CASCADE,
+    interaction_id  TEXT NOT NULL REFERENCES fly_report_interaction(id) ON DELETE CASCADE,
+    tenant_id       TEXT NOT NULL,
+    user_id         TEXT NOT NULL,
+    role            TEXT NOT NULL,
+    message_type    TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'completed',
+    title           TEXT,
+    text            TEXT NOT NULL DEFAULT '',
+    sequence        INTEGER NOT NULL,
+    payload         JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS fly_report_message_session_idx
+    ON fly_report_message (session_id, created_at ASC, sequence ASC);
+CREATE INDEX IF NOT EXISTS fly_report_message_interaction_idx
+    ON fly_report_message (interaction_id, sequence ASC);
+CREATE INDEX IF NOT EXISTS fly_report_message_user_idx
+    ON fly_report_message (tenant_id, user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS fly_report_message_interaction_sequence_idx
+    ON fly_report_message (interaction_id, sequence);
+
 CREATE TABLE IF NOT EXISTS fly_report_artifact (
     id              BIGSERIAL PRIMARY KEY,
     session_id      TEXT NOT NULL REFERENCES fly_report_session(id) ON DELETE CASCADE,
+    interaction_id  TEXT REFERENCES fly_report_interaction(id) ON DELETE SET NULL,
     filename        TEXT NOT NULL,
     output_format   TEXT NOT NULL,
     template_ref    TEXT,
+    content_type    TEXT,
     artifact_path   TEXT NOT NULL,
     payload         JSONB NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -72,6 +126,8 @@ CREATE TABLE IF NOT EXISTS fly_report_artifact (
 
 CREATE INDEX IF NOT EXISTS fly_report_artifact_session_idx
     ON fly_report_artifact (session_id, id);
+CREATE INDEX IF NOT EXISTS fly_report_artifact_interaction_idx
+    ON fly_report_artifact (interaction_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS fly_report_artifact_unique_filename_idx
     ON fly_report_artifact (session_id, filename);
 
@@ -118,6 +174,25 @@ class FlyReportRepository(Protocol):
 
     async def list_turns(self, session_id: str) -> list[dict[str, Any]]: ...
 
+    async def upsert_interaction(
+        self, interaction: dict[str, Any]
+    ) -> None: ...
+
+    async def get_interaction(
+        self, interaction_id: str
+    ) -> dict[str, Any] | None: ...
+
+    async def append_message(self, message: dict[str, Any]) -> None: ...
+
+    async def list_messages(
+        self,
+        session_id: str,
+        *,
+        user_id: str,
+        limit: int = 100,
+        before_message_id: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
     async def append_artifact(
         self, session_id: str, artifact: dict[str, Any]
     ) -> None: ...
@@ -163,6 +238,29 @@ class InMemoryFlyReportRepository:
         return None
 
     async def list_turns(self, session_id: str) -> list[dict[str, Any]]:
+        return []
+
+    async def upsert_interaction(
+        self, interaction: dict[str, Any]
+    ) -> None:
+        return None
+
+    async def get_interaction(
+        self, interaction_id: str
+    ) -> dict[str, Any] | None:
+        return None
+
+    async def append_message(self, message: dict[str, Any]) -> None:
+        return None
+
+    async def list_messages(
+        self,
+        session_id: str,
+        *,
+        user_id: str,
+        limit: int = 100,
+        before_message_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         return []
 
     async def append_artifact(
@@ -314,6 +412,135 @@ class PostgresFlyReportRepository:
         )
         return list(rows)
 
+    # ---------------- interactions / messages ----------------
+
+    async def upsert_interaction(
+        self, interaction: dict[str, Any]
+    ) -> None:
+        await self._store.execute(
+            """
+            INSERT INTO fly_report_interaction (
+                id, session_id, tenant_id, user_id, status, phase,
+                input_text, output_format, template_ref, error,
+                message_count, artifact_count, payload, created_at,
+                started_at, completed_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE
+              SET status         = EXCLUDED.status,
+                  phase          = EXCLUDED.phase,
+                  error          = EXCLUDED.error,
+                  message_count  = EXCLUDED.message_count,
+                  artifact_count = EXCLUDED.artifact_count,
+                  payload        = EXCLUDED.payload,
+                  started_at     = EXCLUDED.started_at,
+                  completed_at   = EXCLUDED.completed_at,
+                  updated_at     = EXCLUDED.updated_at
+            """,
+            (
+                interaction["id"],
+                interaction["session_id"],
+                interaction["tenant_id"],
+                interaction["user_id"],
+                interaction["status"],
+                interaction.get("phase", "intake"),
+                interaction["input_text"],
+                interaction.get("output_format"),
+                interaction.get("template_ref"),
+                interaction.get("error"),
+                int(interaction.get("message_count", 0)),
+                int(interaction.get("artifact_count", 0)),
+                Jsonb(_jsonable(interaction.get("payload") or {})),
+                interaction["created_at"],
+                interaction.get("started_at"),
+                interaction.get("completed_at"),
+                interaction["updated_at"],
+            ),
+        )
+
+    async def get_interaction(
+        self, interaction_id: str
+    ) -> dict[str, Any] | None:
+        row = await self._store.fetch_one(
+            """
+            SELECT id, session_id, tenant_id, user_id, status, phase,
+                   input_text, output_format, template_ref, error,
+                   message_count, artifact_count, payload, created_at,
+                   started_at, completed_at, updated_at
+              FROM fly_report_interaction
+             WHERE id = %s
+            """,
+            (interaction_id,),
+        )
+        return None if row is None else dict(row)
+
+    async def append_message(self, message: dict[str, Any]) -> None:
+        await self._store.execute(
+            """
+            INSERT INTO fly_report_message (
+                id, session_id, interaction_id, tenant_id, user_id,
+                role, message_type, status, title, text, sequence,
+                payload, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO UPDATE
+              SET status     = EXCLUDED.status,
+                  title      = EXCLUDED.title,
+                  text       = EXCLUDED.text,
+                  payload    = EXCLUDED.payload,
+                  updated_at = EXCLUDED.updated_at
+            """,
+            (
+                message["id"],
+                message["session_id"],
+                message["interaction_id"],
+                message["tenant_id"],
+                message["user_id"],
+                message["role"],
+                message["message_type"],
+                message.get("status", "completed"),
+                message.get("title"),
+                message.get("text", ""),
+                int(message["sequence"]),
+                Jsonb(_jsonable(message.get("payload") or {})),
+                message["created_at"],
+                message["updated_at"],
+            ),
+        )
+
+    async def list_messages(
+        self,
+        session_id: str,
+        *,
+        user_id: str,
+        limit: int = 100,
+        before_message_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = [session_id, user_id]
+        before_clause = ""
+        if before_message_id:
+            before_clause = """
+              AND created_at < (
+                    SELECT created_at FROM fly_report_message WHERE id = %s
+                  )
+            """
+            params.append(before_message_id)
+        params.append(limit)
+        rows = await self._store.fetch_all(
+            f"""
+            SELECT id, session_id, interaction_id, tenant_id, user_id,
+                   role, message_type, status, title, text, sequence,
+                   payload, created_at, updated_at
+              FROM fly_report_message
+             WHERE session_id = %s AND user_id = %s
+             {before_clause}
+             ORDER BY created_at ASC, sequence ASC
+             LIMIT %s
+            """,
+            tuple(params),
+        )
+        return [dict(r) for r in rows]
+
     # ---------------- artifacts ----------------
 
     async def append_artifact(
@@ -322,20 +549,24 @@ class PostgresFlyReportRepository:
         await self._store.execute(
             """
             INSERT INTO fly_report_artifact
-                (session_id, filename, output_format, template_ref,
-                 artifact_path, payload, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (session_id, interaction_id, filename, output_format,
+                 template_ref, content_type, artifact_path, payload, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (session_id, filename) DO UPDATE
               SET output_format = EXCLUDED.output_format,
+                                    interaction_id = EXCLUDED.interaction_id,
                   template_ref  = EXCLUDED.template_ref,
+                                    content_type   = EXCLUDED.content_type,
                   artifact_path = EXCLUDED.artifact_path,
                   payload       = EXCLUDED.payload
             """,
             (
                 session_id,
+                artifact.get("interaction_id"),
                 artifact["filename"],
                 artifact["output_format"],
                 artifact.get("template_ref"),
+                artifact.get("content_type"),
                 artifact["artifact_path"],
                 Jsonb(_jsonable(artifact)),
                 artifact["created_at"],

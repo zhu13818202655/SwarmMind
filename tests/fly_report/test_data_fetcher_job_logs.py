@@ -13,7 +13,13 @@ from swarmmind.domains.fly_report.dikong.parsers import (
     MediaStaticResp,
     WarnStaticResp,
 )
-from swarmmind.domains.fly_report.schemas import Dimension, FilterSpec, NormalizedFilter, Period, RawDataset
+from swarmmind.domains.fly_report.schemas import (
+    Dimension,
+    FilterSpec,
+    NormalizedFilter,
+    Period,
+    RawDataset,
+)
 
 
 class _FakeDikongClient:
@@ -66,6 +72,7 @@ def _filter() -> FilterSpec:
             end=datetime(2026, 4, 19, 23, 59, 59, tzinfo=timezone.utc),
         ),
         dept_ids=[42],
+        indicators=["flight"],
         dimension=Dimension(scope="department", department_ids=["42"]),
     )
 

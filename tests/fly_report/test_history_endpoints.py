@@ -8,11 +8,12 @@ from fastapi.testclient import TestClient
 
 from swarmmind.domains.fly_report.api import create_fly_report_router
 from swarmmind.domains.fly_report.service import FlyReportService
+from tests.fly_report.service_test_utils import build_fly_report_service
 
 
 @pytest.fixture
 def client(tmp_path):
-    svc = FlyReportService(output_root=tmp_path)
+    svc = build_fly_report_service(output_root=tmp_path)
     app = FastAPI()
     app.include_router(create_fly_report_router(svc))
     app.state.svc = svc

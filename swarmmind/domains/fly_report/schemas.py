@@ -24,6 +24,27 @@ PeriodKind = Literal["weekly", "monthly", "custom"]
 ScopeKind = Literal["overall", "department", "pilot"]
 OutputFormat = Literal["docx", "pdf", "markdown"]
 ChatRole = Literal["user", "assistant", "system"]
+InteractionStatus = Literal[
+    "pending", "streaming", "completed", "failed", "cancelled"
+]
+InteractionPhase = Literal[
+    "intake",
+    "parsing",
+    "clarifying",
+    "authorizing",
+    "fetching",
+    "analyzing",
+    "previewing",
+    "rendering",
+    "delivering",
+    "done",
+]
+FlyReportMessageStatus = Literal[
+    "pending", "running", "completed", "failed", "cancelled"
+]
+FlyReportMessageType = Literal[
+    "plain_text", "todo", "phase", "artifact", "error", "summary"
+]
 
 
 class SessionState(str, Enum):
@@ -50,6 +71,7 @@ class Period(BaseModel):
     kind: PeriodKind
     start: datetime
     end: datetime
+    label: str | None = None
 
 
 class Dimension(BaseModel):
@@ -71,9 +93,10 @@ class ReportOptions(BaseModel):
 class FilterSpec(BaseModel):
     """User-visible filter (may still contain ambiguity)."""
 
-    period: Period
+    period: Period | None = None
     dept_names: list[str] = Field(default_factory=list)
     dept_ids: list[int] = Field(default_factory=list)
+    indicators: list[str] = Field(default_factory=list)
     dimension: Dimension = Field(default_factory=Dimension)
     options: ReportOptions = Field(default_factory=ReportOptions)
     missing: list[str] = Field(default_factory=list)
@@ -196,6 +219,43 @@ class ChatTurn(BaseModel):
     text: str
     payload: dict[str, Any] | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class FlyReportInteraction(BaseModel):
+    id: str
+    session_id: str
+    tenant_id: str
+    user_id: str
+    status: InteractionStatus = "pending"
+    phase: InteractionPhase = "intake"
+    input_text: str
+    output_format: OutputFormat | None = None
+    template_ref: str | None = None
+    error: str | None = None
+    message_count: int = 0
+    artifact_count: int = 0
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class FlyReportMessage(BaseModel):
+    id: str
+    session_id: str
+    interaction_id: str
+    tenant_id: str
+    user_id: str
+    role: ChatRole
+    message_type: FlyReportMessageType
+    status: FlyReportMessageStatus = "completed"
+    title: str | None = None
+    text: str = ""
+    sequence: int
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class PreviewPayload(BaseModel):

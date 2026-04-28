@@ -10,12 +10,18 @@ from swarmmind.domains.fly_report.analyzer.aggregations import (
     build_algorithm_push_events,
     build_algorithm_recognition_distribution,
     build_algorithm_recognition_overall,
-    build_flight_stat_department_share,
     build_flight_stat_day_trend,
+    build_flight_stat_department_share,
     build_flight_stat_overall,
     build_media_collection_summary,
 )
-from swarmmind.domains.fly_report.schemas import Dimension, NormalizedFilter, Period, RawDataset, ReportOptions
+from swarmmind.domains.fly_report.schemas import (
+    Dimension,
+    NormalizedFilter,
+    Period,
+    RawDataset,
+    ReportOptions,
+)
 
 
 def _filter(kind: str) -> NormalizedFilter:
@@ -177,16 +183,16 @@ def test_flight_stat_day_trend_returns_table_with_zero_filled_dates():
 def test_analyze_includes_overall_and_day_trend_tables():
     result = analyze(RawDataset(), _filter("weekly"))
 
-    assert "flight_stat_overall" in result.overall
-    assert result.overall["flight_stat_day_trend"]["title"] == "每日飞行趋势"
-    assert result.overall["flight_stat_department_share"]["title"] == "部门飞行时长占比"
-    assert result.overall["media_collection_summary"]["title"] == "图片视频采集统计"
-    assert result.overall["algorithm_recognition_overall"]["title"] == "总的算法识别数据汇总"
-    assert result.overall["algorithm_recognition_distribution"]["title"] == "算法识别统计"
-    assert result.overall["algorithm_disposal_summary"]["title"] == "算法处置统计"
-    assert result.overall["algorithm_high_frequency_locations"]["title"] == "高频案发点统计"
-    assert result.overall["algorithm_high_frequency_time_slots"]["title"] == "高频案时间段统计"
-    assert result.overall["algorithm_push_events"]["title"] == "算法推送事件"
+    assert result.flight_stat_overall["title"] == "总体飞行统计概览"
+    assert result.flight_stat_day_trend["title"] == "每日飞行趋势"
+    assert result.flight_stat_department_share["title"] == "部门飞行时长占比"
+    assert result.media_collection_summary["title"] == "图片视频采集统计"
+    assert result.algorithm_recognition_overall["title"] == "总的算法识别数据汇总"
+    assert result.algorithm_recognition_distribution["title"] == "算法识别统计"
+    assert result.algorithm_disposal_summary["title"] == "算法处置统计"
+    assert result.algorithm_high_frequency_locations["title"] == "高频案发点统计"
+    assert result.algorithm_high_frequency_time_slots["title"] == "高频案时间段统计"
+    assert result.algorithm_push_events["title"] == "算法推送事件"
 
 
 def test_flight_stat_department_share_returns_ranked_table_without_other_bucket():

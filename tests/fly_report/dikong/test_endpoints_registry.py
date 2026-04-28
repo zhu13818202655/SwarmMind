@@ -73,5 +73,5 @@ def test_groups_cover_each_indicator_family() -> None:
 
 def test_get_endpoint_returns_spec() -> None:
     spec = get_endpoint(EndpointKey.GET_FLY_STATIS)
-    assert spec.path == "/missions/getFlyStatis"
+    assert spec.path == "/api/device/missions/getFlyStatis"
     assert spec.method is HttpMethod.GET

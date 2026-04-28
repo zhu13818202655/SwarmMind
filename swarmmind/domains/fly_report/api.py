@@ -16,10 +16,11 @@ exposing download endpoints are deferred to M2+ per §4.1.6.1.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from swarmmind.domains.fly_report.errors import (
@@ -29,7 +30,6 @@ from swarmmind.domains.fly_report.errors import (
 from swarmmind.domains.fly_report.export import TemplateLoader
 from swarmmind.domains.fly_report.schemas import OutputFormat
 from swarmmind.domains.fly_report.service import FlyReportService
-
 
 # ---------------------------------------------------------------------------
 # Request / response models
@@ -53,11 +53,26 @@ class StartSessionRequest(BaseModel):
 
 class StartSessionResponse(BaseModel):
     session_id: str
+    status: str = "created"
+    links: dict[str, str] = Field(default_factory=dict)
 
 
 class SendMessageRequest(BaseModel):
     user_id: str
     text: str
+
+
+class StreamMessageRequest(BaseModel):
+    user_id: str
+    text: str
+    output_format: OutputFormat | None = None
+    template_ref: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CancelInteractionRequest(BaseModel):
+    user_id: str
+    reason: str | None = "user_requested"
 
 
 class ConfirmRequest(BaseModel):
@@ -99,12 +114,55 @@ class SessionListItem(BaseModel):
 
 
 class ArtifactView(BaseModel):
+    artifact_id: str | None = None
+    interaction_id: str | None = None
     filename: str
     output_format: str
     template_ref: str | None = None
+    content_type: str | None = None
     artifact_path: str
     download_url: str | None = None
     created_at: str | None = None
+
+
+class MessageView(BaseModel):
+    message_id: str
+    interaction_id: str
+    role: str
+    type: str
+    text: str
+    status: str
+    created_at: str
+    title: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class MessageListResponse(BaseModel):
+    session_id: str
+    messages: list[MessageView]
+    next_before_message_id: str | None = None
+
+
+class InteractionView(BaseModel):
+    interaction_id: str
+    session_id: str
+    status: str
+    phase: str
+    message_count: int
+    artifact_count: int
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    error: str | None = None
+
+
+class CancelInteractionResponse(BaseModel):
+    interaction_id: str
+    session_id: str
+    status: str
+    message: str
 
 
 class AuditView(BaseModel):
@@ -163,7 +221,14 @@ def create_fly_report_router(
             user_id=req.user_id,
             initial_query=req.initial_query,
         )
-        return StartSessionResponse(session_id=session_id)
+        return StartSessionResponse(
+            session_id=session_id,
+            links={
+                "session": f"/v1/fly-reports/sessions/{session_id}",
+                "messages": f"/v1/fly-reports/sessions/{session_id}/messages",
+                "stream": f"/v1/fly-reports/sessions/{session_id}/messages/stream",
+            },
+        )
 
     @router.post(
         "/sessions/{session_id}/messages", response_model=TurnView
@@ -193,6 +258,123 @@ def create_fly_report_router(
                 status_code=status.HTTP_409_CONFLICT, detail=detail
             ) from exc
         return _turn_view(turn)
+
+    @router.post("/sessions/{session_id}/messages/stream")
+    async def stream_message(
+        session_id: str, req: StreamMessageRequest
+    ) -> StreamingResponse:
+        try:
+            interaction = await service.start_streaming_message(
+                session_id,
+                req.text,
+                user_id=req.user_id,
+                output_format=req.output_format,
+                template_ref=req.template_ref,
+                metadata=req.metadata,
+                start_background=False,
+            )
+        except SessionNotFound as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        except InvalidStateTransition as exc:
+            detail = str(exc)
+            if detail.startswith("text must be") or "exceeds max" in detail:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=detail
+                ) from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=detail
+            ) from exc
+
+        async def event_iter():
+            async for item in service.stream_interaction_events(
+                interaction.id, start_background=True
+            ):
+                yield _sse(item["event"], item.get("data") or {})
+
+        return StreamingResponse(
+            event_iter(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @router.get(
+        "/sessions/{session_id}/messages",
+        response_model=MessageListResponse,
+    )
+    async def list_messages(
+        session_id: str,
+        user_id: str,
+        limit: int = 100,
+        before_message_id: str | None = None,
+    ) -> MessageListResponse:
+        try:
+            messages = await service.list_messages(
+                session_id,
+                user_id=user_id,
+                limit=max(1, min(limit, 500)),
+                before_message_id=before_message_id,
+            )
+        except SessionNotFound as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        views = [_message_view(message) for message in messages]
+        return MessageListResponse(
+            session_id=session_id,
+            messages=views,
+            next_before_message_id=views[0].message_id if len(views) == limit else None,
+        )
+
+    @router.get(
+        "/interactions/{interaction_id}",
+        response_model=InteractionView,
+    )
+    async def get_interaction(
+        interaction_id: str, user_id: str
+    ) -> InteractionView:
+        try:
+            interaction = await service.get_interaction(
+                interaction_id, user_id=user_id
+            )
+        except SessionNotFound as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        return _interaction_view(interaction)
+
+    @router.post(
+        "/interactions/{interaction_id}/cancel",
+        response_model=CancelInteractionResponse,
+    )
+    async def cancel_interaction(
+        interaction_id: str, req: CancelInteractionRequest
+    ) -> CancelInteractionResponse:
+        try:
+            interaction = await service.cancel_interaction(
+                interaction_id,
+                user_id=req.user_id,
+                reason=req.reason,
+            )
+        except SessionNotFound as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        except InvalidStateTransition as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+            ) from exc
+        return CancelInteractionResponse(
+            interaction_id=interaction.id,
+            session_id=interaction.session_id,
+            status=interaction.status,
+            message="Interaction cancellation accepted",
+        )
 
     @router.post(
         "/sessions/{session_id}/confirm", response_model=TurnView
@@ -344,17 +526,17 @@ def create_fly_report_router(
         response_model=list[ArtifactView],
     )
     async def list_session_artifacts(
-        session_id: str, user_id: str
+        session_id: str, user_id: str, interaction_id: str | None = None
     ) -> list[ArtifactView]:
         try:
-            snap = await service.get_session_snapshot(
-                session_id, user_id=user_id
+            artifacts = await service.list_artifacts(
+                session_id, user_id=user_id, interaction_id=interaction_id
             )
         except SessionNotFound as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
             ) from exc
-        return [_artifact_view(a) for a in snap.get("artifacts", [])]
+        return [_artifact_view(a) for a in artifacts]
 
     @router.get(
         "/sessions/{session_id}/audits",
@@ -432,13 +614,53 @@ def _session_list_item(row: dict[str, Any]) -> SessionListItem:
 
 def _artifact_view(row: dict[str, Any]) -> ArtifactView:
     return ArtifactView(
+        artifact_id=str(row.get("id") or row.get("artifact_id") or row.get("filename") or ""),
+        interaction_id=row.get("interaction_id"),
         filename=row.get("filename", ""),
         output_format=row.get("output_format", ""),
         template_ref=row.get("template_ref"),
+        content_type=row.get("content_type"),
         artifact_path=row.get("artifact_path", ""),
         download_url=row.get("download_url"),
         created_at=_iso(row.get("created_at")),
     )
+
+
+def _message_view(message) -> MessageView:
+    payload = message.payload or {}
+    return MessageView(
+        message_id=message.id,
+        interaction_id=message.interaction_id,
+        role=message.role,
+        type=message.message_type,
+        title=message.title,
+        text=message.text,
+        status=message.status,
+        created_at=message.created_at.isoformat(),
+        data=payload.get("data") or {},
+        actions=payload.get("actions") or [],
+        meta=payload.get("meta") or {},
+    )
+
+
+def _interaction_view(interaction) -> InteractionView:
+    return InteractionView(
+        interaction_id=interaction.id,
+        session_id=interaction.session_id,
+        status=interaction.status,
+        phase=interaction.phase,
+        message_count=interaction.message_count,
+        artifact_count=interaction.artifact_count,
+        created_at=interaction.created_at.isoformat(),
+        started_at=interaction.started_at.isoformat() if interaction.started_at else None,
+        completed_at=interaction.completed_at.isoformat() if interaction.completed_at else None,
+        error=interaction.error,
+    )
+
+
+def _sse(event: str, data: dict[str, Any]) -> str:
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {payload}\n\n"
 
 
 def _audit_view(row: dict[str, Any]) -> AuditView:

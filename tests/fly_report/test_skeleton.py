@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from swarmmind.domains.fly_report import FlyReportService
 from swarmmind.domains.fly_report.errors import (
     InvalidStateTransition,
     SessionNotFound,
@@ -35,6 +34,7 @@ from swarmmind.prompt_template.fly_report import (
     FOLLOWUP_PATCH_SYSTEM_PROMPT,
     INTENT_PARSE_SYSTEM_PROMPT,
 )
+from tests.fly_report.service_test_utils import build_fly_report_service
 
 
 def test_load_prompts() -> None:
@@ -117,10 +117,10 @@ def test_failed_state_reachable_from_active_states() -> None:
 async def test_service_pipeline_runs_end_to_end(tmp_path) -> None:
     """Service should drive the full PARSING → ARCHIVED pipeline.
 
-    Uses the default :class:`RuleBasedIntentParser` + :class:`FakeDikongClient`,
-    so no LLM/dikong access is required.
+    Injects a rule-based parser and fake Dikong client, so no LLM/dikong access
+    is required.
     """
-    service = FlyReportService(output_root=tmp_path)
+    service = build_fly_report_service(output_root=tmp_path)
     sid = await service.start_session(tenant_id="t1", user_id="u1")
     assert sid
 
@@ -158,7 +158,7 @@ async def test_service_pipeline_runs_end_to_end(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_service_artifact_download_path(tmp_path) -> None:
-    service = FlyReportService(output_root=tmp_path)
+    service = build_fly_report_service(output_root=tmp_path)
     sid = await service.start_session(
         tenant_id="t1", user_id="u1", initial_query="飞行周报"
     )
@@ -176,7 +176,7 @@ async def test_service_artifact_download_path(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_service_isolates_users() -> None:
-    service = FlyReportService()
+    service = build_fly_report_service()
     sid = await service.start_session(tenant_id="t1", user_id="u1")
     with pytest.raises(SessionNotFound):
         await service.get_session_snapshot(sid, user_id="someone-else")

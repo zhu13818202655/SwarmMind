@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
-
 from swarmmind.domains.fly_report.analyzer import analyze
 from swarmmind.domains.fly_report.schemas import (
     AnalysisResult,
@@ -30,6 +28,10 @@ def _filter(indicators: list[str] | None = None) -> NormalizedFilter:
         options=ReportOptions(),
         hash="h",
     )
+
+
+def _row(table: dict, key: str) -> dict:
+    return next(row for row in table["rows"] if row.get("key") == key)
 
 
 # ---------------------------------------------------------------------------
@@ -61,16 +63,12 @@ def test_flight_kpis_computed():
     result = analyze(raw, _filter(["flight"]))
 
     assert isinstance(result, AnalysisResult)
-    assert "flight" in result.overall
-    assert result.overall["flight"]["fly_count"] == 120.0
-
-    # Find the fly_count KPI.
-    fly_count = next(k for k in result.kpis if k["name"] == "fly_count")
-    assert fly_count["value"] == 120.0
-    assert fly_count["previous_value"] == 100.0
-    assert fly_count["change"] == 20.0
-    assert fly_count["change_pct"] == 20.0
-    assert fly_count["unit"] == "次"
+    flight_count = _row(result.flight_stat_overall, "flight_count")
+    assert flight_count["meta"]["current_value"] == 120.0
+    assert flight_count["meta"]["previous_value"] == 100.0
+    assert flight_count["meta"]["change_value"] == 20.0
+    assert flight_count["meta"]["change_pct"] == 20.0
+    assert flight_count["meta"]["unit"] == "次"
 
 
 def test_flight_trend_up():
@@ -79,8 +77,7 @@ def test_flight_trend_up():
         previous={"fly_statis": {"num_total": 100}},
     )
     result = analyze(raw, _filter(["flight"]))
-    comp = next(c for c in result.comparisons if c["kpi"] == "fly_count")
-    assert comp["trend"] == "up"
+    assert _row(result.flight_stat_overall, "flight_count")["meta"]["trend"] == "up"
 
 
 def test_flight_trend_down():
@@ -89,9 +86,9 @@ def test_flight_trend_down():
         previous={"fly_statis": {"num_total": 100}},
     )
     result = analyze(raw, _filter(["flight"]))
-    comp = next(c for c in result.comparisons if c["kpi"] == "fly_count")
-    assert comp["trend"] == "down"
-    assert comp["change_pct"] == -20.0
+    flight_count = _row(result.flight_stat_overall, "flight_count")
+    assert flight_count["meta"]["trend"] == "down"
+    assert flight_count["meta"]["change_pct"] == -20.0
 
 
 def test_flight_anomaly_flagged():
@@ -101,9 +98,9 @@ def test_flight_anomaly_flagged():
         previous={"fly_statis": {"num_total": 100}},
     )
     result = analyze(raw, _filter(["flight"]))
-    fly_anomalies = [a for a in result.anomalies if a["kpi"] == "fly_count"]
-    assert len(fly_anomalies) == 1
-    assert fly_anomalies[0]["severity"] == "high"  # 100% change
+    flight_count = _row(result.flight_stat_overall, "flight_count")
+    assert flight_count["meta"]["change_pct"] == 100.0
+    assert flight_count["change"] == "↑ 100.0%"
 
 
 def test_no_anomaly_below_threshold():
@@ -112,8 +109,7 @@ def test_no_anomaly_below_threshold():
         previous={"fly_statis": {"num_total": 100}},
     )
     result = analyze(raw, _filter(["flight"]))
-    fly_anomalies = [a for a in result.anomalies if a["kpi"] == "fly_count"]
-    assert fly_anomalies == []
+    assert _row(result.flight_stat_overall, "flight_count")["meta"]["change_pct"] == 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -139,11 +135,10 @@ def test_multiple_indicators():
     filt = _filter(["flight", "algorithm", "media_image", "device_health"])
     result = analyze(raw, filt)
 
-    assert "flight" in result.overall
-    assert "algorithm" in result.overall
-    assert "media" in result.overall
-    assert "device_health" in result.overall
-    assert len(result.kpis) >= 4
+    assert result.flight_stat_overall["rows"]
+    assert result.algorithm_recognition_overall["rows"]
+    assert result.media_collection_summary["rows"]
+    assert result.flight_stat_day_trend["rows"]
 
 
 # ---------------------------------------------------------------------------
@@ -155,9 +150,7 @@ def test_empty_raw_dataset():
     raw = RawDataset()
     result = analyze(raw, _filter(["flight"]))
     assert isinstance(result, AnalysisResult)
-    # KPIs exist but values are None.
-    fly_count = next(k for k in result.kpis if k["name"] == "fly_count")
-    assert fly_count["value"] is None
+    assert _row(result.flight_stat_overall, "flight_count")["meta"]["current_value"] is None
 
 
 def test_missing_previous_period():
@@ -166,7 +159,7 @@ def test_missing_previous_period():
         previous={},
     )
     result = analyze(raw, _filter(["flight"]))
-    fly_count = next(k for k in result.kpis if k["name"] == "fly_count")
-    assert fly_count["value"] == 100.0
-    assert fly_count["previous_value"] is None
-    assert fly_count["change"] is None
+    flight_count = _row(result.flight_stat_overall, "flight_count")
+    assert flight_count["meta"]["current_value"] == 100.0
+    assert flight_count["meta"]["previous_value"] is None
+    assert flight_count["meta"]["change_value"] is None

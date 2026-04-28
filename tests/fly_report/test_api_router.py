@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from swarmmind.domains.fly_report.api import create_fly_report_router
-from swarmmind.domains.fly_report.service import FlyReportService
+from tests.fly_report.service_test_utils import build_fly_report_service
 
 
 @pytest.fixture
@@ -18,12 +20,12 @@ def client(tmp_path) -> TestClient:
     boots the whole SwarmMind container (tasks, runs, sandbox, ...). For a
     domain smoke test we only need the FlyReport endpoints, served against
     a fresh in-memory :class:`FlyReportService` (defaults to rule-based
-    intent parser + fake dikong client).
+    explicitly injected rule-based parser + fake dikong client).
     """
 
     app = FastAPI()
     app.include_router(
-        create_fly_report_router(FlyReportService(output_root=tmp_path))
+        create_fly_report_router(build_fly_report_service(output_root=tmp_path))
     )
     return TestClient(app)
 
@@ -212,3 +214,100 @@ def test_cancel_then_send_returns_409(client: TestClient):
         json={"user_id": "u-1", "text": "still there?"},
     )
     assert resp.status_code == 409
+
+
+def test_streaming_message_persists_history_and_interaction(client: TestClient):
+    resp = client.post(
+        "/v1/fly-reports/sessions",
+        json={"tenant_id": "t-1", "user_id": "u-1"},
+    )
+    assert resp.status_code == 201, resp.text
+    session_id = resp.json()["session_id"]
+
+    with client.stream(
+        "POST",
+        f"/v1/fly-reports/sessions/{session_id}/messages/stream",
+        json={"user_id": "u-1", "text": "这个指标是什么意思？"},
+    ) as stream_resp:
+        assert stream_resp.status_code == 200, stream_resp.text
+        body = stream_resp.read().decode("utf-8")
+
+    events = _parse_sse(body)
+    names = [event for event, _ in events]
+    assert names[0] == "interaction.started"
+    assert "message.delta" in names
+    assert "message.item" in names
+    assert names[-1] == "interaction.completed"
+    interaction_id = events[0][1]["interaction_id"]
+
+    resp = client.get(
+        f"/v1/fly-reports/interactions/{interaction_id}",
+        params={"user_id": "u-1"},
+    )
+    assert resp.status_code == 200, resp.text
+    interaction = resp.json()
+    assert interaction["status"] == "completed"
+    assert interaction["message_count"] >= 2
+
+    resp = client.get(
+        f"/v1/fly-reports/sessions/{session_id}/messages",
+        params={"user_id": "u-1"},
+    )
+    assert resp.status_code == 200, resp.text
+    messages = resp.json()["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert messages[-1]["type"] == "plain_text"
+
+
+def test_streaming_report_generates_artifact_card(client: TestClient):
+    resp = client.post(
+        "/v1/fly-reports/sessions",
+        json={"tenant_id": "t-1", "user_id": "u-1"},
+    )
+    assert resp.status_code == 201, resp.text
+    session_id = resp.json()["session_id"]
+
+    with client.stream(
+        "POST",
+        f"/v1/fly-reports/sessions/{session_id}/messages/stream",
+        json={
+            "user_id": "u-1",
+            "text": "生成飞行周报，导出 markdown",
+        },
+    ) as stream_resp:
+        assert stream_resp.status_code == 200, stream_resp.text
+        body = stream_resp.read().decode("utf-8")
+
+    events = _parse_sse(body)
+    interaction_id = events[0][1]["interaction_id"]
+    item_payloads = [data for event, data in events if event == "message.item"]
+    item_types = [payload["type"] for payload in item_payloads]
+    assert "phase" in item_types
+    assert "todo" in item_types
+    assert "artifact" in item_types
+    assert events[-1][0] == "interaction.completed"
+
+    resp = client.get(
+        f"/v1/fly-reports/sessions/{session_id}/artifacts",
+        params={"user_id": "u-1", "interaction_id": interaction_id},
+    )
+    assert resp.status_code == 200, resp.text
+    artifacts = resp.json()
+    assert len(artifacts) == 1
+    assert artifacts[0]["interaction_id"] == interaction_id
+    assert artifacts[0]["filename"].endswith(".md")
+
+
+def _parse_sse(body: str) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    for block in body.strip().split("\n\n"):
+        event_name = ""
+        data = "{}"
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                event_name = line.removeprefix("event: ")
+            elif line.startswith("data: "):
+                data = line.removeprefix("data: ")
+        if event_name:
+            events.append((event_name, json.loads(data)))
+    return events

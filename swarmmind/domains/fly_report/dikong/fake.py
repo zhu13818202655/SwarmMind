@@ -12,6 +12,8 @@ heavy ``httpx``-backed object. We just duck-type the 5 core methods.
 from __future__ import annotations
 
 from swarmmind.domains.fly_report.dikong.parsers import (
+    FlyJobLogResp,
+    FlyJobLogRow,
     FlyStatisResp,
     HmsStatsResp,
     MediaStaticResp,
@@ -100,6 +102,41 @@ class FakeDikongClient:
     ) -> HmsStatsResp:
         s = _seed(None, dept_id)
         return HmsStatsResp(raw={"warn": 2 + s % 5, "error": 1 + s % 3})
+
+    async def get_department_name_list_by_id_list(
+        self, dept_id_list: list[str]
+    ) -> list[str]:
+        return [f"部门{dept_id}" for dept_id in dept_id_list]
+
+    async def get_fly_job_logs(
+        self,
+        *,
+        begin_time: str | None = None,
+        end_time: str | None = None,
+        page_num: int = 1,
+        page_size: int = 500,
+    ) -> FlyJobLogResp:
+        s = _seed(begin_time, None)
+        records = [
+            FlyJobLogRow(
+                id=i,
+                name=f"巡检任务{i}",
+                jobLogId=f"fake-job-{s}-{i}",
+                jobLogNo=f"FJ{s:02d}{i:03d}",
+                beginTime=begin_time,
+                endTime=end_time,
+                deptidsTag=str(380 + i % 5),
+                deptidsTagName=f"部门{380 + i % 5}",
+                deviceSn=f"SN-{i:03d}",
+                operatorName="离线演示员",
+                totalLength=str(3.5 + i),
+                status="completed",
+            )
+            for i in range(1, min(page_size, 8) + 1)
+        ]
+        return FlyJobLogResp(
+            size=len(records), current=page_num, total=len(records), pages=1, records=records
+        )
 
     async def query_missions_by_page(
         self,

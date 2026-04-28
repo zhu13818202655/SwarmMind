@@ -7,7 +7,9 @@ import pytest
 import respx
 
 from swarmmind.domains.fly_report.dikong.client import DikongClient
-from swarmmind.domains.fly_report.errors import DikongApiError
+from swarmmind.domains.fly_report.errors import DikongApiError, DikongAuthError
+
+FLY_STATIS_PATH = "/api/device/missions/getFlyStatis"
 
 
 @pytest.mark.asyncio
@@ -19,7 +21,7 @@ async def test_get_fly_statis_happy_path(dikong_config, static_token_provider) -
         "data": {"droneCount": 4, "numTotal": 12, "flyTimeTotal": 9000.0},
     }
     with respx.mock(base_url=dikong_config.base_url, assert_all_called=True) as router:
-        route = router.get("/missions/getFlyStatis").respond(200, json=body)
+        route = router.get(FLY_STATIS_PATH).respond(200, json=body)
         async with DikongClient(dikong_config, token_provider=static_token_provider) as client:
             result = await client.get_fly_statis(
                 dept_id=42, startdate="2026-04-01", enddate="2026-04-07"
@@ -40,20 +42,20 @@ async def test_get_fly_statis_happy_path(dikong_config, static_token_provider) -
 async def test_get_fly_statis_business_error_raises(dikong_config, static_token_provider) -> None:
     body = {"code": 1001, "msg": "no permission", "data": None}
     with respx.mock(base_url=dikong_config.base_url) as router:
-        router.get("/missions/getFlyStatis").respond(200, json=body)
+        router.get(FLY_STATIS_PATH).respond(200, json=body)
         async with DikongClient(dikong_config, token_provider=static_token_provider) as client:
             with pytest.raises(DikongApiError) as exc_info:
                 await client.get_fly_statis()
 
     assert exc_info.value.details["code"] == 1001
-    assert exc_info.value.details["endpoint"] == "/missions/getFlyStatis"
+    assert exc_info.value.details["endpoint"] == FLY_STATIS_PATH
 
 
 @pytest.mark.asyncio
 async def test_get_fly_statis_retries_on_5xx_then_succeeds(dikong_config, static_token_provider) -> None:
     body = {"code": 0, "data": {"droneCount": 1}}
     with respx.mock(base_url=dikong_config.base_url) as router:
-        route = router.get("/missions/getFlyStatis").mock(
+        route = router.get(FLY_STATIS_PATH).mock(
             side_effect=[
                 httpx.Response(503, text="busy"),
                 httpx.Response(503, text="busy"),
@@ -70,11 +72,11 @@ async def test_get_fly_statis_retries_on_5xx_then_succeeds(dikong_config, static
 @pytest.mark.asyncio
 async def test_get_fly_statis_4xx_is_not_retried(dikong_config, static_token_provider) -> None:
     with respx.mock(base_url=dikong_config.base_url) as router:
-        route = router.get("/missions/getFlyStatis").mock(
+        route = router.get(FLY_STATIS_PATH).mock(
             return_value=httpx.Response(401, text="nope"),
         )
         async with DikongClient(dikong_config, token_provider=static_token_provider) as client:
-            with pytest.raises(DikongApiError) as exc_info:
+            with pytest.raises(DikongAuthError) as exc_info:
                 await client.get_fly_statis()
 
     assert route.call_count == 1
@@ -84,7 +86,7 @@ async def test_get_fly_statis_4xx_is_not_retried(dikong_config, static_token_pro
 @pytest.mark.asyncio
 async def test_get_fly_statis_transport_error_retries_then_raises(dikong_config, static_token_provider) -> None:
     with respx.mock(base_url=dikong_config.base_url) as router:
-        route = router.get("/missions/getFlyStatis").mock(
+        route = router.get(FLY_STATIS_PATH).mock(
             side_effect=httpx.ConnectError("boom"),
         )
         async with DikongClient(dikong_config, token_provider=static_token_provider) as client:

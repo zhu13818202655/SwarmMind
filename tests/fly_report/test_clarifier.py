@@ -16,7 +16,7 @@ from swarmmind.domains.fly_report.schemas import (
     FilterSpec,
     Period,
 )
-from swarmmind.domains.fly_report.service import FlyReportService
+from tests.fly_report.service_test_utils import build_fly_report_service
 
 
 def _period() -> Period:
@@ -29,11 +29,10 @@ def _period() -> Period:
     )
 
 
-def test_check_conflicts_flags_missing_period_and_indicators() -> None:
+def test_check_conflicts_flags_missing_period() -> None:
     rep = check_conflicts(FilterSpec())
     assert rep.needs_clarification
     assert "period" in rep.missing
-    assert "indicators" in rep.missing
 
 
 def test_check_conflicts_flags_dept_without_ids() -> None:
@@ -58,7 +57,7 @@ def test_merge_drafts_keeps_prior_period() -> None:
     assert merged.period is not None and merged.period.label == "本周"
     assert merged.dimension.scope == "department"
     assert merged.dimension.department_ids == ["A"]
-    assert merged.indicators == ["algorithm"]
+    assert merged.indicators == ["flight"]
 
 
 @pytest.mark.asyncio
@@ -68,14 +67,14 @@ async def test_service_routes_to_clarifying_for_dept_without_ids(
     period = _period()
 
     class _ParserMissingIds:
-        async def parse(self, text: str, **_) -> DraftFilterSpec:
+        async def parse(self, user_text: str, **_) -> DraftFilterSpec:
             return DraftFilterSpec(
                 period=period,
                 indicators=["flight"],
                 dimension=Dimension(scope="department"),
             )
 
-    svc = FlyReportService(
+    svc = build_fly_report_service(
         output_root=tmp_path, intent_parser=_ParserMissingIds()
     )
     sid = await svc.start_session(tenant_id="t1", user_id="u1")
@@ -92,8 +91,8 @@ async def test_service_followup_resolves_clarification(tmp_path) -> None:
     period = _period()
 
     class _PatchParser:
-        async def parse(self, text: str, **_) -> DraftFilterSpec:
-            if "ids" in text:
+        async def parse(self, user_text: str, **_) -> DraftFilterSpec:
+            if "ids" in user_text:
                 return DraftFilterSpec(
                     dimension=Dimension(
                         scope="department", department_ids=["X"]
@@ -105,7 +104,7 @@ async def test_service_followup_resolves_clarification(tmp_path) -> None:
                 dimension=Dimension(scope="department"),
             )
 
-    svc = FlyReportService(output_root=tmp_path, intent_parser=_PatchParser())
+    svc = build_fly_report_service(output_root=tmp_path, intent_parser=_PatchParser())
     sid = await svc.start_session(tenant_id="t1", user_id="u1")
     first = await svc.send_message(sid, "请看部门数据", user_id="u1")
     assert first.payload["state"] == "clarifying"

@@ -11,12 +11,12 @@ from swarmmind.domains.fly_report.permissions import (
     PermissionDecision,
 )
 from swarmmind.domains.fly_report.schemas import NormalizedFilter
-from swarmmind.domains.fly_report.service import FlyReportService
+from tests.fly_report.service_test_utils import build_fly_report_service
 
 
 @pytest.mark.asyncio
 async def test_allow_all_gate_lets_pipeline_finish(tmp_path) -> None:
-    svc = FlyReportService(
+    svc = build_fly_report_service(
         output_root=tmp_path,
         permission_gate=AllowAllPermissionGate(),
     )
@@ -29,7 +29,7 @@ async def test_allow_all_gate_lets_pipeline_finish(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_deny_gate_marks_session_failed(tmp_path) -> None:
-    svc = FlyReportService(
+    svc = build_fly_report_service(
         output_root=tmp_path,
         permission_gate=DenyAllPermissionGate(),
     )
@@ -66,7 +66,7 @@ class _ScopedGate:
 
 @pytest.mark.asyncio
 async def test_scoped_gate_separates_users(tmp_path) -> None:
-    svc = FlyReportService(
+    svc = build_fly_report_service(
         output_root=tmp_path,
         permission_gate=_ScopedGate({"alice"}),
     )

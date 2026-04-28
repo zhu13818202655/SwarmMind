@@ -13,7 +13,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -25,12 +24,11 @@ import pytest
 from swarmmind.domains.fly_report import FlyReportService
 from swarmmind.domains.fly_report.errors import (
     InvalidStateTransition,
-    SessionNotFound,
 )
 from swarmmind.domains.fly_report.observability import FlyReportMetrics
 from swarmmind.domains.fly_report.schemas import DraftFilterSpec, SessionState
 from swarmmind.events.in_memory_bus import InMemoryEventBus
-
+from tests.fly_report.service_test_utils import build_fly_report_service
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -40,13 +38,13 @@ from swarmmind.events.in_memory_bus import InMemoryEventBus
 class _AmbiguousIntentParser:
     """Always produces a draft that triggers clarify (no period/indicators)."""
 
-    async def parse(self, text: str, **_: Any) -> DraftFilterSpec:
+    async def parse(self, user_text: str, **_: Any) -> DraftFilterSpec:
         return DraftFilterSpec()
 
 
 @pytest.fixture
 def service(tmp_path: Path) -> FlyReportService:
-    return FlyReportService(
+    return build_fly_report_service(
         output_root=tmp_path,
         event_bus=InMemoryEventBus(),
         metrics=FlyReportMetrics(),
@@ -67,7 +65,7 @@ async def test_send_message_rejects_empty_text(service: FlyReportService) -> Non
 
 @pytest.mark.asyncio
 async def test_send_message_rejects_too_long_text(tmp_path: Path) -> None:
-    svc = FlyReportService(output_root=tmp_path, max_text_length=16)
+    svc = build_fly_report_service(output_root=tmp_path, max_text_length=16)
     sid = await svc.start_session(tenant_id="t", user_id="u")
     with pytest.raises(InvalidStateTransition, match="exceeds max"):
         await svc.send_message(sid, "x" * 32, user_id="u")
@@ -131,7 +129,7 @@ class _SlowRouter:
 
 @pytest.mark.asyncio
 async def test_render_timeout_marks_session_failed(tmp_path: Path) -> None:
-    svc = FlyReportService(
+    svc = build_fly_report_service(
         output_root=tmp_path,
         renderer_router=_SlowRouter(),  # type: ignore[arg-type]
         render_timeout_seconds=0.05,
@@ -153,7 +151,7 @@ async def test_render_timeout_marks_session_failed(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_clarify_round_limit_returns_guidance(tmp_path: Path) -> None:
-    svc = FlyReportService(
+    svc = build_fly_report_service(
         output_root=tmp_path,
         intent_parser=_AmbiguousIntentParser(),
         max_clarify_rounds=2,
@@ -208,7 +206,7 @@ async def test_list_user_sessions_keyword_and_state_filter(
 
 @pytest.mark.asyncio
 async def test_cleanup_old_sessions_removes_stale_dirs(tmp_path: Path) -> None:
-    svc = FlyReportService(output_root=tmp_path)
+    svc = build_fly_report_service(output_root=tmp_path)
     # Create 2 directories: one fresh, one aged.
     old = tmp_path / "old-session"
     old.mkdir()

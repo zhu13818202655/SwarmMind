@@ -17,7 +17,6 @@ from swarmmind.domains.fly_report.dikong.token_provider import (
 )
 from swarmmind.domains.fly_report.errors import DikongAuthError
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -53,7 +52,7 @@ def _dynamic_config(**overrides: Any) -> FlyReportDikongConfig:
     return FlyReportDikongConfig(**base)
 
 
-def _login_body(token: str = "tok-1", code: int = 0) -> dict[str, Any]:
+def _login_body(token: str = "tok-1", code: str | int = "200") -> dict[str, Any]:
     return {"code": code, "msg": "ok", "data": {"accessToken": token}}
 
 
@@ -194,7 +193,7 @@ async def test_dynamic_provider_envelope_error_raises_auth_error() -> None:
 
     with respx.mock(base_url=cfg.base_url) as router:
         router.post("/system/user/login").respond(
-            200, json={"code": 401, "msg": "bad creds", "data": None},
+            200, json={"code": "401", "msg": "bad creds", "data": None},
         )
         provider = InMemoryDikongTokenProvider(cfg, clock=FakeClock())
         try:
@@ -203,7 +202,7 @@ async def test_dynamic_provider_envelope_error_raises_auth_error() -> None:
         finally:
             await provider.aclose()
 
-    assert exc_info.value.details["code"] == 401
+    assert exc_info.value.details["code"] == "401"
 
 
 @pytest.mark.asyncio

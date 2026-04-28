@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 from zoneinfo import ZoneInfo
 
 from swarmmind.config.settings import get_settings
@@ -28,7 +28,6 @@ from swarmmind.domains.fly_report.errors import (
 )
 from swarmmind.domains.fly_report.export import RendererRouter
 from swarmmind.domains.fly_report.intent.parser import IntentParser
-
 from swarmmind.domains.fly_report.observability import (
     FlyReportMetrics,
     make_event,
@@ -45,6 +44,10 @@ from swarmmind.domains.fly_report.schemas import (
     AnalysisResult,
     ChatTurn,
     FilterSpec,
+    FlyReportInteraction,
+    FlyReportMessage,
+    FlyReportMessageType,
+    InteractionPhase,
     NormalizedFilter,
     OutputFormat,
     RawDataset,
@@ -55,7 +58,6 @@ from swarmmind.domains.fly_report.state_machine import (
     assert_transition,
     is_terminal,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +99,15 @@ class _SessionRecord:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
+@dataclass
+class _InteractionRuntime:
+    interaction_id: str
+    session_id: str
+    user_id: str
+    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    started_at: datetime | None = None
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -108,11 +119,9 @@ class FlyReportService:
     Parameters
     ----------
     intent_parser:
-        Anything with ``async parse(text) -> DraftFilterSpec``. Defaults to
-        :class:`RuleBasedIntentParser` (no LLM required).
+        Anything with ``async parse(text) -> DraftFilterSpec``.
     data_fetcher:
-        Pre-built :class:`DataFetcher`. Defaults to one wrapping
-        :class:`FakeDikongClient` so the service runs offline.
+        Pre-built :class:`DataFetcher`.
     renderer_router:
         Optional override; defaults to :class:`RendererRouter`.
     output_root:
@@ -159,6 +168,14 @@ class FlyReportService:
         self._max_clarify_rounds = max(1, int(max_clarify_rounds))
         self._render_timeout_seconds = float(render_timeout_seconds)
         self._max_text_length = int(max_text_length)
+        self._interactions: dict[str, FlyReportInteraction] = {}
+        self._interaction_tasks: dict[str, asyncio.Task] = {}
+        self._interaction_runtimes: dict[str, _InteractionRuntime] = {}
+        self._interaction_subscribers: dict[str, set[asyncio.Queue]] = {}
+        self._messages_by_session: dict[str, list[FlyReportMessage]] = {}
+        self._messages_by_id: dict[str, FlyReportMessage] = {}
+        self._message_sequences: dict[str, int] = {}
+        self._stream_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Public accessors for observability / ops tooling
@@ -193,6 +210,170 @@ class FlyReportService:
         if initial_query:
             await self.send_message(session_id, initial_query, user_id=user_id)
         return session_id
+
+    # ------------------------------------------------------------------
+    # Streaming interactions
+    # ------------------------------------------------------------------
+
+    async def start_streaming_message(
+        self,
+        session_id: str,
+        text: str,
+        *,
+        user_id: str,
+        output_format: OutputFormat | None = None,
+        template_ref: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        start_background: bool = True,
+    ) -> FlyReportInteraction:
+        if not isinstance(text, str) or not text.strip():
+            raise InvalidStateTransition("text must be a non-empty string")
+        if len(text) > self._max_text_length:
+            raise InvalidStateTransition(
+                f"text length {len(text)} exceeds max {self._max_text_length}"
+            )
+        record = await self._load_session(session_id, user_id=user_id)
+        async with self._stream_lock:
+            interaction = FlyReportInteraction(
+                id=f"it_{uuid.uuid4().hex}",
+                session_id=record.id,
+                tenant_id=record.tenant_id,
+                user_id=record.user_id,
+                status="pending",
+                phase="intake",
+                input_text=text,
+                output_format=output_format,
+                template_ref=template_ref,
+                payload={"metadata": metadata or {}},
+                created_at=_utcnow(),
+                updated_at=_utcnow(),
+            )
+            self._interactions[interaction.id] = interaction
+            self._interaction_runtimes[interaction.id] = _InteractionRuntime(
+                interaction_id=interaction.id,
+                session_id=record.id,
+                user_id=record.user_id,
+            )
+            self._interaction_subscribers.setdefault(interaction.id, set())
+            await self._persist_interaction(interaction)
+            await self._record_interaction_message(
+                interaction,
+                role="user",
+                message_type="plain_text",
+                text=text,
+                status="completed",
+                payload={"data": {}, "actions": [], "meta": metadata or {}},
+                publish=False,
+            )
+            if start_background:
+                self._start_interaction_task(interaction.id)
+        return interaction
+
+    async def stream_interaction_events(
+        self, interaction_id: str, *, start_background: bool = False
+    ) -> AsyncIterator[dict[str, Any]]:
+        interaction = await self.get_interaction(interaction_id)
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._interaction_subscribers.setdefault(interaction_id, set()).add(queue)
+        if start_background:
+            self._start_interaction_task(interaction_id)
+        yield {
+            "event": "interaction.started",
+            "data": self._interaction_payload(interaction),
+        }
+        if interaction.status in {"completed", "failed", "cancelled"}:
+            yield self._terminal_event(interaction)
+            return
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    latest = await self.get_interaction(interaction_id)
+                    yield self._terminal_event(latest)
+                    return
+                yield item
+        finally:
+            subscribers = self._interaction_subscribers.get(interaction_id)
+            if subscribers is not None:
+                subscribers.discard(queue)
+
+    def _start_interaction_task(self, interaction_id: str) -> None:
+        existing = self._interaction_tasks.get(interaction_id)
+        if existing is not None and not existing.done():
+            return
+        self._interaction_tasks[interaction_id] = asyncio.create_task(
+            self._run_streaming_interaction(interaction_id)
+        )
+
+    async def get_interaction(
+        self, interaction_id: str, *, user_id: str | None = None
+    ) -> FlyReportInteraction:
+        interaction = self._interactions.get(interaction_id)
+        if interaction is None:
+            payload = await self._repo.get_interaction(interaction_id)
+            if payload is None:
+                raise SessionNotFound(f"interaction {interaction_id} not found")
+            interaction = FlyReportInteraction.model_validate(payload)
+            self._interactions[interaction_id] = interaction
+        if user_id is not None and interaction.user_id != user_id:
+            raise SessionNotFound(f"interaction {interaction_id} not found")
+        return interaction
+
+    async def cancel_interaction(
+        self, interaction_id: str, *, user_id: str, reason: str | None = None
+    ) -> FlyReportInteraction:
+        interaction = await self.get_interaction(interaction_id, user_id=user_id)
+        if interaction.status in {"completed", "failed", "cancelled"}:
+            raise InvalidStateTransition(
+                f"interaction {interaction_id} is terminal ({interaction.status})"
+            )
+        runtime = self._interaction_runtimes.get(interaction_id)
+        if runtime is not None:
+            runtime.cancel_event.set()
+        await self._update_interaction(
+            interaction,
+            status="cancelled",
+            phase=interaction.phase,
+            error=reason or "user_requested",
+            completed_at=_utcnow(),
+        )
+        await self._record_interaction_message(
+            interaction,
+            role="system",
+            message_type="error",
+            title="已取消",
+            text="Interaction cancellation accepted",
+            status="cancelled",
+            payload={"data": {"reason": reason or "user_requested"}},
+        )
+        await self._finish_interaction_stream(interaction.id)
+        return interaction
+
+    async def list_messages(
+        self,
+        session_id: str,
+        *,
+        user_id: str,
+        limit: int = 100,
+        before_message_id: str | None = None,
+    ) -> list[FlyReportMessage]:
+        record = await self._load_session(session_id, user_id=user_id)
+        rows = await self._repo.list_messages(
+            record.id,
+            user_id=user_id,
+            limit=max(1, min(limit, 500)),
+            before_message_id=before_message_id,
+        )
+        if rows:
+            return [FlyReportMessage.model_validate(row) for row in rows]
+        messages = list(self._messages_by_session.get(record.id, []))
+        if before_message_id:
+            before_index = next(
+                (i for i, msg in enumerate(messages) if msg.id == before_message_id),
+                len(messages),
+            )
+            messages = messages[:before_index]
+        return messages[: max(1, min(limit, 500))]
 
     # ------------------------------------------------------------------
     # send_message: drive PARSING → ... → PREVIEWING
@@ -419,15 +600,12 @@ class FlyReportService:
             stages.append(
                 {
                     "stage": "analyzing",
-                    "table_count": _analysis_table_count(record.analysis),
                 }
             )
             await self._emit(
                 "fly_report.analyzed",
                 record,
-                {
-                    "table_count": _analysis_table_count(record.analysis),
-                },
+                {},
             )
 
             # ----- PREVIEWING -----
@@ -490,99 +668,18 @@ class FlyReportService:
             await self._emit("fly_report.failed", record, {"stage": "pipeline"})
             raise
 
-        # Auto-render once parsing/fetching/analyzing is complete so the
-        # API caller can get a final artifact in a single round-trip.
-        self._enter(record, SessionState.RENDERING, "auto_render")
-        output_format = normalized.options.output_format
-        session_dir = self._output_root / record.id / output_format
-        t0 = time.perf_counter()
-        try:
-            artifact = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self._renderer_router.render,
-                    record.ctx,
-                    output_format=output_format,
-                    output_dir=session_dir,
-                    template_ref=None,
-                ),
-                timeout=self._render_timeout_seconds,
-            )
-        except (Exception, asyncio.TimeoutError) as exc:
-            logger.exception(
-                "fly_report.render_failed",
-                extra={
-                    "session_id": record.id,
-                    "user_id": record.user_id,
-                    "state": record.state.value,
-                    "output_format": output_format,
-                    "template_ref": None,
-                    "error_type": type(exc).__name__,
-                    "error_message": str(exc),
-                    "stage": "rendering",
-                },
-            )
-            self._metrics.record_render(success=False)
-            self._metrics.observe_stage("rendering", time.perf_counter() - t0)
-            self._enter(record, SessionState.FAILED, "render_error")
-            await self._emit(
-                "fly_report.failed",
-                record,
-                {"stage": "rendering"},
-            )
-            raise
-        self._metrics.record_render(success=True)
-        self._metrics.observe_stage("rendering", time.perf_counter() - t0)
-        stages.append(
-            {
-                "stage": "rendering",
-                "output_format": artifact.output_format,
-                "template_ref": artifact.template_ref,
-                "filename": Path(artifact.artifact_path).name,
-            }
-        )
-        artifact_record = {
-            "output_format": artifact.output_format,
-            "template_ref": artifact.template_ref,
-            "artifact_path": artifact.artifact_path,
-            "chart_paths": list(artifact.chart_paths),
-            "warnings": list(artifact.warnings),
-            "created_at": _utcnow().isoformat(),
-            "filename": Path(artifact.artifact_path).name,
-            "download_url": (
-                f"/v1/fly-reports/sessions/{record.id}"
-                f"/artifacts/{Path(artifact.artifact_path).name}"
-                f"?user_id={record.user_id}"
-            ),
-        }
-        record.artifacts.append(artifact_record)
-        self._enter(record, SessionState.ARCHIVED, "render_succeeded")
-        await self._emit(
-            "fly_report.generated",
-            record,
-            {
-                "output_format": artifact.output_format,
-                "template_ref": artifact.template_ref,
-                "filename": Path(artifact.artifact_path).name,
-            },
-        )
-
         reply = ChatTurn(
             role="assistant",
-            text=(
-                f"报告已生成：{artifact.artifact_path} "
-                f"(format={artifact.output_format}, template={artifact.template_ref})"
-            ),
+            text="已生成报告预览，请确认后导出。",
             payload={
                 "state": record.state.value,
                 "filter_hash": normalized.hash,
                 "stages": stages,
                 "preview_brief": record.ctx.brief(),
-                **artifact_record,
             },
         )
         record.turns.append(reply)
         record.updated_at = _utcnow()
-        await self._persist_artifact(record, artifact_record)
         await self._persist_turn(record, reply)
         await self._persist_session(record)
         return reply
@@ -794,6 +891,25 @@ class FlyReportService:
         record = await self._load_session(session_id, user_id=user_id)
         return list(record.turns)
 
+    async def list_artifacts(
+        self,
+        session_id: str,
+        *,
+        user_id: str,
+        interaction_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        record = await self._load_session(session_id, user_id=user_id)
+        artifacts = list(record.artifacts)
+        if not artifacts:
+            artifacts = await self._repo.list_artifacts(record.id)
+        if interaction_id:
+            artifacts = [
+                artifact
+                for artifact in artifacts
+                if artifact.get("interaction_id") == interaction_id
+            ]
+        return artifacts
+
     # ------------------------------------------------------------------
     # Artifact access (used by the download endpoint)
     # ------------------------------------------------------------------
@@ -1001,6 +1117,371 @@ class FlyReportService:
                 extra={"session_id": record.id},
             )
 
+    async def _run_streaming_interaction(self, interaction_id: str) -> None:
+        interaction = await self.get_interaction(interaction_id)
+        runtime = self._interaction_runtimes.get(interaction_id)
+        started_at = _utcnow()
+        if runtime is not None:
+            runtime.started_at = started_at
+        await self._update_interaction(
+            interaction,
+            status="streaming",
+            phase="intake",
+            started_at=started_at,
+        )
+        try:
+            if self._is_report_request(interaction.input_text):
+                await self._run_report_interaction(interaction)
+            else:
+                await self._run_plain_text_interaction(interaction)
+        except asyncio.CancelledError:
+            await self._update_interaction(
+                interaction,
+                status="cancelled",
+                error="task_cancelled",
+                completed_at=_utcnow(),
+            )
+            await self._finish_interaction_stream(interaction.id)
+            raise
+        except Exception as exc:
+            logger.exception(
+                "fly_report.streaming_interaction_failed",
+                extra={
+                    "interaction_id": interaction.id,
+                    "session_id": interaction.session_id,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                },
+            )
+            await self._update_interaction(
+                interaction,
+                status="failed",
+                error=str(exc),
+                completed_at=_utcnow(),
+            )
+            await self._record_interaction_message(
+                interaction,
+                role="assistant",
+                message_type="error",
+                title="处理失败",
+                text=str(exc) or "报告处理失败。",
+                status="failed",
+                payload={"data": {}, "actions": [], "meta": {"source": "fly_report"}},
+            )
+            await self._finish_interaction_stream(interaction.id)
+
+    async def _run_plain_text_interaction(
+        self, interaction: FlyReportInteraction
+    ) -> None:
+        await self._ensure_not_cancelled(interaction)
+        message_id = f"msg_{uuid.uuid4().hex}"
+        answer = self._plain_text_answer(interaction.input_text)
+        midpoint = max(1, len(answer) // 2)
+        for chunk in (answer[:midpoint], answer[midpoint:]):
+            if not chunk:
+                continue
+            await self._publish_interaction_event(
+                interaction.id,
+                {
+                    "event": "message.delta",
+                    "data": {
+                        "message_id": message_id,
+                        "interaction_id": interaction.id,
+                        "text": chunk,
+                    },
+                },
+            )
+        await self._record_interaction_message(
+            interaction,
+            message_id=message_id,
+            role="assistant",
+            message_type="plain_text",
+            text=answer,
+            status="completed",
+            payload={"data": {}, "actions": [], "meta": {"source": "fly_report"}},
+        )
+        await self._update_interaction(
+            interaction,
+            status="completed",
+            phase="done",
+            completed_at=_utcnow(),
+        )
+        await self._finish_interaction_stream(interaction.id)
+
+    async def _run_report_interaction(
+        self, interaction: FlyReportInteraction
+    ) -> None:
+        record = await self._load_session(
+            interaction.session_id, user_id=interaction.user_id
+        )
+        async with record.lock:
+            await self._ensure_not_cancelled(interaction)
+            await self._emit_phase(interaction, "parsing", "解析需求", "正在解析你的报告需求。")
+            await self._record_interaction_message(
+                interaction,
+                role="assistant",
+                message_type="todo",
+                title="报告生成计划",
+                text="已生成报告处理计划。",
+                status="running",
+                payload={
+                    "data": {
+                        "items": [
+                            {"id": "step_1", "text": "解析报告时间和范围", "status": "running"},
+                            {"id": "step_2", "text": "获取并分析业务数据", "status": "pending"},
+                            {"id": "step_3", "text": "生成报告文件", "status": "pending"},
+                        ]
+                    },
+                    "actions": [],
+                    "meta": {"source": "fly_report", "phase": "parsing"},
+                },
+            )
+            if is_terminal(record.state):
+                record.state = SessionState.PARSING
+            turn = await self._drive_pipeline(record, interaction.input_text)
+            await self._ensure_not_cancelled(interaction)
+            await self._emit_phase(interaction, "rendering", "生成文件", "正在生成报告文件。")
+            assert record.ctx is not None
+            output_format = interaction.output_format or record.ctx.filter.options.output_format
+            session_dir = self._output_root / record.id / output_format
+            t0 = time.perf_counter()
+            artifact = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._renderer_router.render,
+                    record.ctx,
+                    output_format=output_format,
+                    output_dir=session_dir,
+                    template_ref=interaction.template_ref,
+                ),
+                timeout=self._render_timeout_seconds,
+            )
+            self._metrics.record_render(success=True)
+            self._metrics.observe_stage("rendering", time.perf_counter() - t0)
+            await self._ensure_not_cancelled(interaction)
+            filename = Path(artifact.artifact_path).name
+            artifact_record = {
+                "interaction_id": interaction.id,
+                "output_format": artifact.output_format,
+                "template_ref": artifact.template_ref,
+                "content_type": _content_type_for_format(artifact.output_format, filename),
+                "artifact_path": artifact.artifact_path,
+                "chart_paths": list(artifact.chart_paths),
+                "warnings": list(artifact.warnings),
+                "created_at": _utcnow().isoformat(),
+                "filename": filename,
+                "download_url": (
+                    f"/v1/fly-reports/sessions/{record.id}"
+                    f"/artifacts/{filename}?user_id={record.user_id}"
+                ),
+            }
+            record.artifacts.append(artifact_record)
+            record.updated_at = _utcnow()
+            await self._persist_artifact(record, artifact_record)
+            await self._persist_session(record)
+            await self._update_interaction(
+                interaction,
+                phase="delivering",
+                artifact_count=interaction.artifact_count + 1,
+            )
+            await self._record_interaction_message(
+                interaction,
+                role="assistant",
+                message_type="artifact",
+                title="报告已生成",
+                text="报告文件已生成。",
+                status="completed",
+                payload={
+                    "data": {
+                        "artifact_id": filename,
+                        "artifact_name": filename,
+                        "content_type": artifact_record["content_type"],
+                        "download_url": artifact_record["download_url"],
+                    },
+                    "actions": [],
+                    "meta": {"source": "fly_report", "phase": "delivering"},
+                },
+            )
+            await self._record_interaction_message(
+                interaction,
+                role="assistant",
+                message_type="summary",
+                title="处理完成",
+                text=turn.text,
+                status="completed",
+                payload={
+                    "data": {"preview_brief": (turn.payload or {}).get("preview_brief")},
+                    "actions": [],
+                    "meta": {"source": "fly_report", "phase": "done"},
+                },
+            )
+        await self._update_interaction(
+            interaction,
+            status="completed",
+            phase="done",
+            completed_at=_utcnow(),
+        )
+        await self._finish_interaction_stream(interaction.id)
+
+    async def _emit_phase(
+        self,
+        interaction: FlyReportInteraction,
+        phase: InteractionPhase,
+        label: str,
+        text: str,
+    ) -> None:
+        await self._update_interaction(interaction, phase=phase)
+        await self._record_interaction_message(
+            interaction,
+            role="assistant",
+            message_type="phase",
+            title="阶段更新",
+            text=text,
+            status="running",
+            payload={
+                "data": {"phase": phase, "label": label},
+                "actions": [],
+                "meta": {"source": "fly_report", "phase": phase},
+            },
+        )
+
+    async def _ensure_not_cancelled(
+        self, interaction: FlyReportInteraction
+    ) -> None:
+        runtime = self._interaction_runtimes.get(interaction.id)
+        if runtime is not None and runtime.cancel_event.is_set():
+            raise asyncio.CancelledError()
+        latest = await self.get_interaction(interaction.id)
+        if latest.status == "cancelled":
+            raise asyncio.CancelledError()
+
+    async def _record_interaction_message(
+        self,
+        interaction: FlyReportInteraction,
+        *,
+        role: str,
+        message_type: FlyReportMessageType,
+        text: str,
+        status: str = "completed",
+        title: str | None = None,
+        payload: dict[str, Any] | None = None,
+        message_id: str | None = None,
+        publish: bool = True,
+    ) -> FlyReportMessage:
+        sequence = self._message_sequences.get(interaction.id, 0) + 1
+        self._message_sequences[interaction.id] = sequence
+        now = _utcnow()
+        message = FlyReportMessage(
+            id=message_id or f"msg_{uuid.uuid4().hex}",
+            session_id=interaction.session_id,
+            interaction_id=interaction.id,
+            tenant_id=interaction.tenant_id,
+            user_id=interaction.user_id,
+            role=role,  # type: ignore[arg-type]
+            message_type=message_type,
+            status=status,  # type: ignore[arg-type]
+            title=title,
+            text=text,
+            sequence=sequence,
+            payload=payload or {"data": {}, "actions": [], "meta": {}},
+            created_at=now,
+            updated_at=now,
+        )
+        self._messages_by_id[message.id] = message
+        self._messages_by_session.setdefault(interaction.session_id, []).append(message)
+        await self._repo.append_message(message.model_dump(mode="json"))
+        await self._update_interaction(
+            interaction,
+            message_count=interaction.message_count + 1,
+        )
+        if publish:
+            await self._publish_interaction_event(
+                interaction.id,
+                {"event": "message.item", "data": self._message_payload(message)},
+            )
+        return message
+
+    async def _update_interaction(
+        self,
+        interaction: FlyReportInteraction,
+        **changes: Any,
+    ) -> FlyReportInteraction:
+        for key, value in changes.items():
+            if value is not None or key in {"error", "completed_at"}:
+                setattr(interaction, key, value)
+        interaction.updated_at = _utcnow()
+        self._interactions[interaction.id] = interaction
+        await self._persist_interaction(interaction)
+        return interaction
+
+    async def _persist_interaction(
+        self, interaction: FlyReportInteraction
+    ) -> None:
+        try:
+            await self._repo.upsert_interaction(interaction.model_dump(mode="json"))
+        except Exception:  # pragma: no cover
+            logger.exception(
+                "fly_report.persist_interaction_failed",
+                extra={"interaction_id": interaction.id},
+            )
+
+    async def _publish_interaction_event(
+        self, interaction_id: str, event: dict[str, Any]
+    ) -> None:
+        for queue in list(self._interaction_subscribers.get(interaction_id, set())):
+            await queue.put(event)
+
+    async def _finish_interaction_stream(self, interaction_id: str) -> None:
+        for queue in list(self._interaction_subscribers.get(interaction_id, set())):
+            await queue.put(None)
+
+    def _interaction_payload(self, interaction: FlyReportInteraction) -> dict[str, Any]:
+        return {
+            "interaction_id": interaction.id,
+            "session_id": interaction.session_id,
+            "status": interaction.status,
+            "phase": interaction.phase,
+            "message_count": interaction.message_count,
+            "artifact_count": interaction.artifact_count,
+            "created_at": interaction.created_at.isoformat(),
+            "started_at": interaction.started_at.isoformat() if interaction.started_at else None,
+            "completed_at": interaction.completed_at.isoformat() if interaction.completed_at else None,
+            "error": interaction.error,
+        }
+
+    def _terminal_event(self, interaction: FlyReportInteraction) -> dict[str, Any]:
+        event_name = {
+            "completed": "interaction.completed",
+            "failed": "interaction.failed",
+            "cancelled": "interaction.cancelled",
+        }.get(interaction.status, "interaction.completed")
+        return {"event": event_name, "data": self._interaction_payload(interaction)}
+
+    def _message_payload(self, message: FlyReportMessage) -> dict[str, Any]:
+        payload = message.payload or {}
+        return {
+            "message_id": message.id,
+            "interaction_id": message.interaction_id,
+            "role": message.role,
+            "type": message.message_type,
+            "title": message.title,
+            "text": message.text,
+            "status": message.status,
+            "created_at": message.created_at.isoformat(),
+            "data": payload.get("data") or {},
+            "actions": payload.get("actions") or [],
+            "meta": payload.get("meta") or {},
+        }
+
+    @staticmethod
+    def _is_report_request(text: str) -> bool:
+        lowered = text.lower()
+        keywords = ("报告", "周报", "月报", "导出", "docx", "pdf", "markdown", "生成")
+        return any(keyword in lowered for keyword in keywords)
+
+    @staticmethod
+    def _plain_text_answer(text: str) -> str:
+        return f"已收到你的问题：{text}。当前 FlyReport 会话可以继续生成报告或解释已有指标。"
+
     async def list_audits(
         self, session_id: str, *, user_id: str, limit: int = 100
     ) -> list[dict[str, Any]]:
@@ -1127,6 +1608,19 @@ def _rehydrate(payload: dict[str, Any]) -> _SessionRecord:
         last_user_text=payload.get("last_user_text"),
         title=payload.get("title"),
     )
+
+
+def _content_type_for_format(output_format: str, filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if output_format == "docx" or suffix == ".docx":
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if output_format == "pdf" or suffix == ".pdf":
+        return "application/pdf"
+    if output_format == "markdown" or suffix in {".md", ".markdown"}:
+        return "text/markdown; charset=utf-8"
+    if suffix == ".html":
+        return "text/html; charset=utf-8"
+    return "application/octet-stream"
 
 
 __all__ = ["FlyReportService", "FlyReportError"]

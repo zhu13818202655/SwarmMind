@@ -20,6 +20,7 @@ from swarmmind.domains.fly_report.analyzer import analyze
 from swarmmind.domains.fly_report.composer import compose_report_context
 from swarmmind.domains.fly_report.data_fetcher import DataFetcher
 from swarmmind.domains.fly_report.dikong.parsers import (
+    FlyJobLogResp,
     FlyStatisResp,
     HmsStatsResp,
     MediaStaticResp,
@@ -67,10 +68,14 @@ def mock_dikong_client():
         # HMS endpoint has no period; same payload for both periods.
         return HmsStatsResp(raw={"total": 4})
 
+    def job_logs(*, begin_time, end_time, dept_id=None, status=None, tenant_id=None):
+        return FlyJobLogResp(records=[], total=0, size=0, pages=0)
+
     client.get_fly_statis.side_effect = fly
     client.get_warn_static.side_effect = warn
     client.get_media_static.side_effect = media
     client.get_hms_stats.side_effect = hms
+    client.get_fly_job_logs.side_effect = job_logs
     return client
 
 
@@ -94,7 +99,7 @@ async def test_e2e_renders_all_three_formats(
     tmp_path: Path, mock_dikong_client, filter_spec
 ):
     # 1. Fetch
-    fetcher = DataFetcher(mock_dikong_client, tenant_id="t-test")
+    fetcher = DataFetcher(mock_dikong_client)
     raw = await fetcher.fetch(filter_spec)
     assert raw.current and raw.previous
 
@@ -103,9 +108,13 @@ async def test_e2e_renders_all_three_formats(
 
     # 2. Analyze
     analysis = analyze(raw, filter_spec)
-    assert analysis.kpis  # at least one KPI
-    flight_kpis = [k for k in analysis.kpis if k["name"].startswith("fly_")]
-    assert flight_kpis  # flight indicator was requested
+    assert analysis.flight_stat_overall["rows"]
+    flight_count = next(
+        row
+        for row in analysis.flight_stat_overall["rows"]
+        if row.get("key") == "flight_count"
+    )
+    assert flight_count["meta"]["current_value"] == 128.0
 
     # 3. Compose into a renderable ReportContext
     ctx = compose_report_context(
@@ -131,7 +140,7 @@ async def test_e2e_renders_all_three_formats(
     assert md.chart_paths and all(p.endswith(".png") for p in md.chart_paths)
     md_content = Path(md.artifact_path).read_text(encoding="utf-8")
     assert "飞行报告" in md_content
-    assert "飞行总次数" in md_content
+    assert "总体飞行统计概览" in md_content
 
     pdf = router.render(
         ctx, output_format="pdf",
