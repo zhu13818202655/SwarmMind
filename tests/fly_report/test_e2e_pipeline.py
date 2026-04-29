@@ -1,11 +1,11 @@
 """End-to-end test for the FlyReport pipeline (DESIGN-2 §13 step 6).
 
 Path covered: mock ``DikongClient`` → ``DataFetcher`` → ``analyze`` →
-``SimpleComposer`` → all three renderers (markdown / pdf / docx).
+``compose_report_context`` → all three renderers (markdown / pdf / docx).
 
 No LLM is called at this step. The "real LLM" hook documented in §13 step 6
 will be added once the SectionSummarizerAgent is wired in M2+; for now the
-SimpleComposer fills section summaries deterministically.
+``compose_report_context`` fills section summaries deterministically.
 """
 
 from __future__ import annotations
@@ -139,7 +139,8 @@ async def test_e2e_renders_all_three_formats(
     assert md.template_ref == "preset:default_zh"
     assert md.chart_paths and all(p.endswith(".png") for p in md.chart_paths)
     md_content = Path(md.artifact_path).read_text(encoding="utf-8")
-    assert "飞行报告" in md_content
+    assert "武义飞行服务平台" in md_content
+    assert "飞行统计" in md_content
     assert "总体飞行统计概览" in md_content
 
     pdf = router.render(

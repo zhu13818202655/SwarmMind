@@ -4,19 +4,14 @@
 
 # {{ report.title }}
 
-- 周期：**{{ report.period_label }}**
-- 范围：{{ report.scope_kind }}
-{% if report.department_ids %}- 部门：{{ report.department_ids | join(", ") }}
-{% endif %}{% if report.pilot_ids %}- 飞手：{{ report.pilot_ids | join(", ") }}
-{% endif %}
-- 生成时间：{{ report.generated_at }}
-
 ---
 
 {% for section in sections %}
 ## {{ section.title }}
 
-{% if section.summary_md %}{{ section.summary_md }}
+{% if section.rendered_markdown %}{{ section.rendered_markdown }}
+
+{% else %}{% if section.summary_md %}{{ section.summary_md }}
 
 {% endif %}{% if section.kpis %}| 指标 | 本期 | 上期 | 同比 |
 |---|---|---|---|
@@ -30,7 +25,7 @@
 
 ![{{ c.title }}](charts/{{ c.id }}.png)
 
-{% endfor %}{% endif %}{% endfor %}
+{% endfor %}{% endif %}{% endif %}{% endfor %}
 
 ---
 

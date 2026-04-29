@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.responses import Response, StreamingResponse
 
@@ -284,6 +285,13 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
         description=settings.api.description,
         version=settings.api.version,
         lifespan=lifespan,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.api.cors_allow_origins,
+        allow_credentials=settings.api.cors_allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     app.state.settings = settings
 

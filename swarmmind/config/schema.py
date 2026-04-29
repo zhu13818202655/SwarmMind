@@ -35,6 +35,11 @@ class ModelConfig(ValidatedDefaultsModel):
     @classmethod
     def resolve_base_url(cls, value: Any) -> Any:
         return resolve_env_value(value, "OPENAI_BASE_URL")
+    
+    @field_validator("name", mode="before")
+    @classmethod
+    def resolve_name(cls, value: Any) -> Any:
+        return resolve_env_value(value, "OPENAI_MODEL")
 
 
 class SandboxConfig(ValidatedDefaultsModel):
@@ -308,6 +313,14 @@ class ApiConfig(BaseModel):
     host: str = Field(default="127.0.0.1", description="API bind host")
     port: int = Field(default=8000, ge=1, le=65535, description="API bind port")
     reload: bool = Field(default=False, description="Enable uvicorn reload")
+    cors_allow_origins: list[str] = Field(
+        default_factory=lambda: ["*"],
+        description="Allowed CORS origins",
+    )
+    cors_allow_credentials: bool = Field(
+        default=False,
+        description="Allow credentials in CORS requests",
+    )
 
 
 class IdentityConfig(BaseModel):

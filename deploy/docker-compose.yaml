@@ -35,6 +35,8 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.17.0
     container_name: swarmmind-qdrant
+    profiles:
+      - qdrant
     restart: unless-stopped
     ports:
       - "2363:6333"
@@ -47,7 +49,46 @@ services:
       timeout: 5s
       retries: 10
 
+  backend:
+    image: swarmmind:wuyi-report-v0.1
+    container_name: swarmmind-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SWARMMIND_API__HOST: 0.0.0.0
+      SWARMMIND_API__PORT: 8000
+      SWARMMIND_POSTGRES__ENABLED: "true"
+      SWARMMIND_POSTGRES__DSN: postgresql://swarmmind:swarmmind@postgres:5432/swarmmind
+      SWARMMIND_REDIS__ENABLED: "true"
+      SWARMMIND_REDIS__URL: redis://redis:6379/0
+      SWARMMIND_VECTOR_STORE__ENABLED: "${SWARMMIND_VECTOR_STORE__ENABLED:-false}"
+      SWARMMIND_VECTOR_STORE__PROVIDER: qdrant
+      SWARMMIND_VECTOR_STORE__QDRANT_URL: http://qdrant:6333
+      SWARMMIND_STORAGE_PATH: /app/data
+    expose:
+      - "8000"
+    volumes:
+      - backend_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.29.1-alpine
+    container_name: swarmmind-nginx
+    restart: unless-stopped
+    ports:
+      - "50022:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:
   qdrant_data:
+  backend_data:

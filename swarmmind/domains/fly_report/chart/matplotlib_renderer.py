@@ -20,6 +20,7 @@ report still produces a usable artifact instead of crashing.
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 from typing import Any
 
 import matplotlib
@@ -32,22 +33,73 @@ import matplotlib.pyplot as plt  # noqa: E402
 from swarmmind.domains.fly_report.schemas import ChartSpec  # noqa: E402
 
 # Best-effort CJK font detection so Chinese labels render instead of boxes.
-# Falls back silently to the default sans-serif when no CJK font is installed.
+# Matplotlib's own font cache can miss fonts that fontconfig sees, so we ask
+# fontconfig for the actual file and register it explicitly when possible.
 _CJK_CANDIDATES = (
-    "Source Han Sans CN",
     "Noto Sans CJK SC",
-    "PingFang SC",
-    "Microsoft YaHei",
     "SimHei",
+    "WenQuanYi Micro Hei",
     "WenQuanYi Zen Hei",
+    "Source Han Sans CN",
+    "Microsoft YaHei",
+    "PingFang SC",
+    "Droid Sans Fallback",
     "Arial Unicode MS",
 )
-_AVAILABLE_FONTS = {f.name for f in _fm.fontManager.ttflist}
-for _candidate in _CJK_CANDIDATES:
-    if _candidate in _AVAILABLE_FONTS:
-        plt.rcParams["font.sans-serif"] = [_candidate, *plt.rcParams["font.sans-serif"]]
+
+
+def configure_matplotlib_cjk_font() -> str | None:
+    """Configure Matplotlib to use an installed CJK-capable sans font.
+
+    Returns the font family name when a candidate is found. The function is
+    idempotent and safe to call from scripts before creating figures.
+    """
+
+    current = list(plt.rcParams.get("font.sans-serif", []))
+    available = {font.name for font in _fm.fontManager.ttflist}
+    for candidate in _CJK_CANDIDATES:
+        if candidate in available:
+            plt.rcParams["font.sans-serif"] = _prepend_unique(candidate, current)
+            plt.rcParams["axes.unicode_minus"] = False
+            return candidate
+
+    for candidate in _CJK_CANDIDATES:
+        font_path = _fontconfig_match(candidate)
+        if font_path is None:
+            continue
+        try:
+            _fm.fontManager.addfont(str(font_path))
+        except Exception:
+            continue
+        family = _fm.FontProperties(fname=str(font_path)).get_name()
+        plt.rcParams["font.sans-serif"] = _prepend_unique(family, current)
         plt.rcParams["axes.unicode_minus"] = False
-        break
+        return family
+    return None
+
+
+def _fontconfig_match(family: str) -> Path | None:
+    try:
+        result = subprocess.run(
+            ["fc-match", "-f", "%{file}", family],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    path = Path(result.stdout.strip())
+    if result.returncode != 0 or not path.is_file():
+        return None
+    return path
+
+
+def _prepend_unique(value: str, values: list[str]) -> list[str]:
+    return [value, *[item for item in values if item != value]]
+
+
+_CONFIGURED_CJK_FONT = configure_matplotlib_cjk_font()
 
 
 SUPPORTED_TYPES = ("line", "bar", "stacked_bar", "pie")
@@ -177,4 +229,4 @@ def _to_float(val: Any) -> float:
         return 0.0
 
 
-__all__ = ["MatplotlibChartRenderer", "SUPPORTED_TYPES"]
+__all__ = ["MatplotlibChartRenderer", "SUPPORTED_TYPES", "configure_matplotlib_cjk_font"]

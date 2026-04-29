@@ -15,7 +15,9 @@
 {% for section in sections %}
 ## {{ loop.index }}. {{ section.title }}
 
-{% if section.summary_md %}{{ section.summary_md }}
+{% if section.rendered_markdown %}{{ section.rendered_markdown }}
+
+{% else %}{% if section.summary_md %}{{ section.summary_md }}
 
 {% endif %}{% if section.kpis %}（一）核心指标
 
@@ -35,7 +37,7 @@
 
 ![{{ c.title }}](charts/{{ c.id }}.png)
 
-{% endfor %}{% endif %}{% endfor %}
+{% endfor %}{% endif %}{% endif %}{% endfor %}
 
 ---
 

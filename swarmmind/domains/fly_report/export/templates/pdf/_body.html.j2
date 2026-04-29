@@ -10,7 +10,8 @@
 
 {% for section in sections %}
 <h2>{{ section.title }}</h2>
-{% if section.summary_md %}<p>{{ section.summary_md }}</p>{% endif %}
+{% if section.rendered_html %}{{ section.rendered_html | safe }}
+{% else %}{% if section.summary_md %}<p>{{ section.summary_md }}</p>{% endif %}
 
 {% if section.kpis %}
 <table>
@@ -35,6 +36,7 @@
   <h3>{{ t.title | default("数据表") }}</h3>
   <div>{{ t.html | default("") | safe }}</div>
   {% endfor %}
+{% endif %}
 {% endif %}
 {% endfor %}
 

@@ -39,3 +39,9 @@ python-server, gem-server, browser, nginx, websocat, code-server, mcp-server-bro
 - https://www.cnblogs.com/alisystemsoftware/p/19646364
 - https://github.com/alibaba/OpenSandbox/blob/main/examples/aio-sandbox/README.md
 - https://sandbox.agent-infra.com/zh/guide/start/quick-start
+
+
+---
+## 报告智能体
+- cd /home/admin2/proj/SwarmMind/deploy
+- docker compose up -d --force-recreate backend

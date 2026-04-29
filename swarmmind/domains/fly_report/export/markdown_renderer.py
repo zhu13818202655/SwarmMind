@@ -7,6 +7,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from swarmmind.domains.fly_report.export.block_views import section_views
 from swarmmind.domains.fly_report.export.base import (
     BaseRenderer,
     RenderedArtifact,
@@ -35,7 +36,7 @@ class MarkdownRenderer(BaseRenderer):
         template = env.get_template(loaded.template_name)
         rendered = template.render(
             report=_report_view(ctx),
-            sections=ctx.sections,
+            sections=section_views(ctx.sections),
             generated_at=ctx.generated_at,
         )
         out_path = output_dir / f"{ctx.session_id}.md"
@@ -62,6 +63,8 @@ def _report_view(ctx: ReportContext) -> dict[str, object]:
 
 
 def _title(ctx: ReportContext) -> str:
+    if ctx.title:
+        return ctx.title
     period = ctx.filter.period.label
     scope = {
         "overall": "总体",

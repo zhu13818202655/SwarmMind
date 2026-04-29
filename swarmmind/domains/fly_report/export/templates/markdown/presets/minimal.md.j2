@@ -5,10 +5,12 @@
 {% for section in sections %}
 ## {{ section.title }}
 
-{% if section.summary_md %}{{ section.summary_md }}
+{% if section.rendered_markdown %}{{ section.rendered_markdown }}
+
+{% else %}{% if section.summary_md %}{{ section.summary_md }}
 
 {% endif %}{% if section.kpis %}{% for k in section.kpis %}- {{ k.label }}: {{ k.value if k.value is not none else "—" }}{{ k.unit }}{% if k.change_pct is not none %} ({{ "%+.2f"|format(k.change_pct) }}%){% endif %}
 {% endfor %}
 {% endif %}{% if section.charts %}{% for c in section.charts %}![{{ c.title }}](charts/{{ c.id }}.png)
 
-{% endfor %}{% endif %}{% endfor %}
+{% endfor %}{% endif %}{% endif %}{% endfor %}

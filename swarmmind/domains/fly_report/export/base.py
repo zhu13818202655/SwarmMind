@@ -12,7 +12,7 @@ from swarmmind.domains.fly_report.export.template_loader import (
     LoadedTemplate,
     TemplateLoader,
 )
-from swarmmind.domains.fly_report.schemas import OutputFormat, ReportContext
+from swarmmind.domains.fly_report.schemas import ChartSpec, OutputFormat, ReportContext, ReportSection
 
 
 class RenderedArtifact(BaseModel):
@@ -59,7 +59,7 @@ class BaseRenderer(ABC):
     def _render_charts(
         self, ctx: ReportContext, *, output_dir: Path
     ) -> list[Path]:
-        all_charts = [c for section in ctx.sections for c in section.charts]
+        all_charts = _collect_charts(ctx.sections)
         if not all_charts:
             return []
         charts_dir = output_dir / "charts"
@@ -76,3 +76,18 @@ class BaseRenderer(ABC):
         loaded: LoadedTemplate,
         output_dir: Path,
     ) -> RenderedArtifact: ...
+
+
+def _collect_charts(sections: list[ReportSection]) -> list[ChartSpec]:
+    charts_by_id: dict[str, ChartSpec] = {}
+    for section in sections:
+        for block in section.blocks:
+            if block.kind in {"chart", "chart_text"}:
+                chart = getattr(block, "chart", None)
+                if isinstance(chart, ChartSpec):
+                    charts_by_id.setdefault(chart.id, chart)
+        for chart in section.charts:
+            charts_by_id.setdefault(chart.id, chart)
+        for chart in _collect_charts(section.children):
+            charts_by_id.setdefault(chart.id, chart)
+    return list(charts_by_id.values())

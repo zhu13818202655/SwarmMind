@@ -178,7 +178,7 @@
 - [x] **G.8 R3.4** `FlyReportService.cleanup_old_sessions(max_age_days=30)`
   - [x] 扫描 `output_root` 下子目录 mtime，过期则 `shutil.rmtree` 并从内存缓存剔除
   - [x] 返回 `{"removed_dirs", "scanned"}`；可由 cron / APScheduler 直接调用
-- [x] **G.9 R6.1** 延后（当前 pipeline 的 PREVIEWING 阶段为纯函数 `compose_report_context`，未引入 summarizer ReActAgent；待切到真实 LLM 汇总后再挂 `FanoutPipeline`）
+- [x] **G.9 R6.1** 延后（当前 pipeline 的 PREVIEWING 阶段为纯函数 `compose_report_context`；后续大模型能力先抽象为 FlyReport 专用轻量 LM Chat，不绑定章节、composer 或 `FanoutPipeline`，见 [LM-SECTION-SUMMARY-DESIGN.md](LM-SECTION-SUMMARY-DESIGN.md)）
 - [x] **G.10 R8.1** `fly_report.*` 事件发布
   - [x] 新增 [swarmmind/domains/fly_report/observability.py](../../swarmmind/domains/fly_report/observability.py)：`FLY_REPORT_EVENT_TOPICS`、`make_event`
   - [x] 10 个 topic：intent_parsed / clarify_needed / clarify_exhausted / authorize_denied / data_fetched / analyzed / previewed / generated / failed / followup_handled
@@ -251,13 +251,14 @@
 - [ ] **R5.3** `IntentParser` 注入
   - [ ] 解析时把 top-K 偏好传入 prompt 上下文（与 `intent.parser.parse(preference=...)` 接口一致）
 
-### 2.6 🟡 AgentScope 章节并发（DESIGN-2 §12.6.3 (A)）
+### 2.6 🟡 轻量 LM Chat（替代原 AgentScope 章节并发预留）
 
-- [ ] **R6.1** Composer 阶段引入 `FanoutPipeline(summarizers, enable_gather=True)`
-  - 当前 pipeline 的 PREVIEWING 阶段走 **纯函数** `compose_report_context`，不含 ReActAgent，无可并发对象；
-  - 一旦未来引入按章节 LLM 汇总器（summarizer agents），即可无缝挂接 `FanoutPipeline`；
-  - 预留工作：`agents/factory.py` 新增 `build_section_summarizers(ctx)` 返回 `list[ReActAgent]`；
-  - 单测建议：`tests/fly_report/test_section_summary_fanout.py`，用 `MockChatModel` 计数 + 并发断言。
+- [ ] **R6.1** 引入 FlyReport 专用轻量 LM Chat 客户端
+  - LM 层只接收 `system_prompt` / `user_prompt` / 可选 `messages`，异步调用模型并返回输出；
+  - 输入可以是任意字符串，输出可以是普通文本、JSON、Markdown 或其他文本格式；
+  - 不再按 `ReActAgent` / `FanoutPipeline` / summarizer agent 方向实现；
+  - 不使用 `AuditedOpenAIChatModel`，也不接入 toolkit / MsgHub / ReAct loop；
+  - 详细设计见 [LM-SECTION-SUMMARY-DESIGN.md](LM-SECTION-SUMMARY-DESIGN.md)。
 
 ### 2.7 🟡 真实 PermissionGate 接入
 

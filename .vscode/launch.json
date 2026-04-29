@@ -11,9 +11,9 @@
         "swarmmind.api.server:create_app",
         "--factory",
         "--host",
-        "127.0.0.1",
+        "0.0.0.0",
         "--port",
-        "8000"
+        "50019"
       ],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",

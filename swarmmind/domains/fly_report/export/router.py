@@ -29,6 +29,10 @@ class RendererRouter:
     ) -> None:
         loader = template_loader or TemplateLoader()
         charts = chart_renderer or MatplotlibChartRenderer()
+        docx_renderer = DocxRenderer(
+            template_loader=loader, chart_renderer=charts
+        )
+        self._docx_renderer = docx_renderer
         self._renderers: dict[OutputFormat, BaseRenderer] = {
             "markdown": MarkdownRenderer(
                 template_loader=loader, chart_renderer=charts
@@ -36,9 +40,7 @@ class RendererRouter:
             "pdf": PdfRenderer(
                 template_loader=loader, chart_renderer=charts
             ),
-            "docx": DocxRenderer(
-                template_loader=loader, chart_renderer=charts
-            ),
+            "docx": docx_renderer,
         }
 
     def render(
@@ -59,4 +61,28 @@ class RendererRouter:
             ctx,
             output_dir=output_dir,
             template_ref=template_ref,
+        )
+
+    def render_markdown_to_docx(
+        self,
+        markdown: str,
+        *,
+        output_dir: Path,
+        filename: str = "markdown-report.docx",
+        template_ref: str | None = None,
+        title: str | None = None,
+    ) -> RenderedArtifact:
+        """Render a Markdown document directly to ``.docx``.
+
+        This path is intentionally separate from :meth:`render`: callers can
+        pass a complete Markdown report without first reshaping it into a
+        :class:`ReportContext` template tree.
+        """
+
+        return self._docx_renderer.render_markdown(
+            markdown,
+            output_dir=output_dir,
+            filename=filename,
+            template_ref=template_ref,
+            title=title,
         )

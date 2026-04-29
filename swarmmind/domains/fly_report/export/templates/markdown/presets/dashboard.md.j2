@@ -11,7 +11,9 @@
 {% for section in sections %}
 ### 🎯 {{ section.title }}
 
-{% if section.kpis %}{% for k in section.kpis %}{{ kpi_card(k) }}
+{% if section.rendered_markdown %}{{ section.rendered_markdown }}
+
+{% else %}{% if section.kpis %}{% for k in section.kpis %}{{ kpi_card(k) }}
 {% endfor %}
 {% endif %}{% if section.summary_md %}> {{ section.summary_md }}
 
@@ -23,7 +25,7 @@
 
 </details>
 
-{% endfor %}{% endif %}{% endfor %}
+{% endfor %}{% endif %}{% endif %}{% endfor %}
 
 ---
 

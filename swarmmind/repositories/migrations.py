@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Final
 
@@ -28,7 +29,23 @@ from alembic.config import Config
 logger = logging.getLogger(__name__)
 
 
-PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
+def _resolve_project_root() -> Path:
+    candidates: list[Path] = []
+    if env_root := os.environ.get("SWARMMIND_PROJECT_ROOT"):
+        candidates.append(Path(env_root))
+    candidates.extend(
+        [
+            Path.cwd(),
+            Path(__file__).resolve().parents[2],
+        ]
+    )
+    for candidate in candidates:
+        if (candidate / "alembic.ini").is_file() and (candidate / "alembic").is_dir():
+            return candidate
+    return Path(__file__).resolve().parents[2]
+
+
+PROJECT_ROOT: Final[Path] = _resolve_project_root()
 ALEMBIC_INI_PATH: Final[Path] = PROJECT_ROOT / "alembic.ini"
 ALEMBIC_SCRIPT_LOCATION: Final[Path] = PROJECT_ROOT / "alembic"
 
@@ -38,7 +55,7 @@ def _build_config(dsn: str | None = None) -> Config:
     if not ALEMBIC_INI_PATH.is_file():
         raise FileNotFoundError(
             f"alembic.ini not found at {ALEMBIC_INI_PATH}; "
-            "is the package installed in editable mode?"
+            "set SWARMMIND_PROJECT_ROOT or run from the project root."
         )
     cfg = Config(str(ALEMBIC_INI_PATH))
     # Force the script location to the absolute path so the runtime works

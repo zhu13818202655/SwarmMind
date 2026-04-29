@@ -11,6 +11,10 @@ from swarmmind.domains.fly_report.schemas import (
 )
 from swarmmind.models.table import DataTable, TableColumn
 
+# TODO 怎么定义高频
+_HIGH_FREQUENCY_MAX_ROWS = 5
+_HIGH_FREQUENCY_MIN_OCCURRENCES = 2
+
 
 def analyze(raw: RawDataset, filt: NormalizedFilter) -> AnalysisResult:
 
@@ -451,23 +455,27 @@ def build_algorithm_recognition_overall(raw: RawDataset, filt: NormalizedFilter)
 
 def build_algorithm_recognition_distribution(raw: RawDataset, filt: NormalizedFilter) -> dict[str, Any]:
     records = _warn_static_records(raw.current.get("warn_static", {}), filt)
-    by_algorithm: dict[str, dict[str, Any]] = {}
+    by_algorithm_department: dict[tuple[str, str], dict[str, Any]] = {}
 
     for item in records:
         record = item["record"]
         algorithm_name = _algorithm_name(record)
         if not algorithm_name:
             continue
-        bucket = by_algorithm.setdefault(
-            algorithm_name,
-            {"recognized_count": 0.0, "departments": set()},
+        department_name = item["department_name"]
+        key = (algorithm_name, department_name)
+        bucket = by_algorithm_department.setdefault(
+            key,
+            {"recognized_count": 0.0},
         )
         bucket["recognized_count"] += _recognized_target_count([record])
-        if item["department_name"]:
-            bucket["departments"].add(item["department_name"])
 
-    total_count = sum(float(item["recognized_count"]) for item in by_algorithm.values())
-    rows = sorted(by_algorithm.items(), key=lambda item: float(item[1]["recognized_count"]), reverse=True)
+    total_count = sum(float(item["recognized_count"]) for item in by_algorithm_department.values())
+    rows = sorted(
+        by_algorithm_department.items(),
+        key=lambda item: float(item[1]["recognized_count"]),
+        reverse=True,
+    )
 
     table = DataTable(
         title="算法识别统计",
@@ -479,10 +487,9 @@ def build_algorithm_recognition_distribution(raw: RawDataset, filt: NormalizedFi
         ],
     )
 
-    for algorithm_name, bucket in rows:
+    for (algorithm_name, department_name), bucket in rows:
         recognized_count = int(bucket["recognized_count"])
         share_value = round(recognized_count / total_count * 100, 1) if total_count else 0.0
-        department_name = "、".join(sorted(bucket["departments"]))
         table.add_row(
             {
                 "algorithm_name": algorithm_name,
@@ -490,7 +497,7 @@ def build_algorithm_recognition_distribution(raw: RawDataset, filt: NormalizedFi
                 "recognized_count": recognized_count,
                 "share": f"{share_value:.1f}%",
             },
-            key=algorithm_name,
+            key=f"{algorithm_name}:{department_name}",
             meta={
                 "recognized_count_value": recognized_count,
                 "share_value": share_value,
@@ -565,7 +572,7 @@ def build_algorithm_high_frequency_locations(raw: RawDataset, filt: NormalizedFi
         key = (scene_name, department_name, location)
         by_scene_department_location[key] = by_scene_department_location.get(key, 0) + 1
 
-    rows = sorted(by_scene_department_location.items(), key=lambda item: item[1], reverse=True)
+    rows = _top_high_frequency_rows(by_scene_department_location.items())
     table = DataTable(
         title="高频案发点统计",
         columns=[
@@ -608,7 +615,7 @@ def build_algorithm_high_frequency_time_slots(raw: RawDataset, filt: NormalizedF
         key = (scene_name, department_name, time_slot)
         by_scene_department_slot[key] = by_scene_department_slot.get(key, 0) + 1
 
-    rows = sorted(by_scene_department_slot.items(), key=lambda item: item[1], reverse=True)
+    rows = _top_high_frequency_rows(by_scene_department_slot.items())
     table = DataTable(
         title="高频案时间段统计",
         columns=[
@@ -674,6 +681,16 @@ def _job_log_records(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, dict) and isinstance(payload.get("records"), list):
         return [item for item in payload["records"] if isinstance(item, dict)]
     return []
+
+
+def _top_high_frequency_rows(
+    rows: Any,
+    *,
+    min_occurrences: int = _HIGH_FREQUENCY_MIN_OCCURRENCES,
+    max_rows: int = _HIGH_FREQUENCY_MAX_ROWS,
+) -> list[Any]:
+    sorted_rows = sorted(rows, key=lambda item: item[1], reverse=True)
+    return [item for item in sorted_rows if item[1] >= min_occurrences][:max_rows]
 
 
 def _warn_static_records(payload: Any, filt: NormalizedFilter) -> list[dict[str, Any]]:

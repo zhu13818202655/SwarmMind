@@ -7,9 +7,6 @@ LLM-driven SectionSummarizerAgent. Richer composers (LLM summaries,
 narrative generation, multi-section breakdowns) land in M2+.
 """
 
-from swarmmind.domains.fly_report.composer.simple_composer import (
-    SimpleComposer,
-    compose_report_context,
-)
+from swarmmind.domains.fly_report.composer.simple_composer import compose_report_context
 
-__all__ = ["SimpleComposer", "compose_report_context"]
+__all__ = ["compose_report_context"]

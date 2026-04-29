@@ -369,6 +369,7 @@ def test_algorithm_recognition_distribution_groups_by_algorithm_and_department()
                     "102": {
                         "records": [
                             {"algorithmName": "车牌识别", "extraResult": '{"plate": 4}'},
+                            {"algorithmName": "漂浮物识别", "extraResult": '{"count": 1}'},
                         ]
                     },
                 }
@@ -379,12 +380,16 @@ def test_algorithm_recognition_distribution_groups_by_algorithm_and_department()
 
     rows = table["rows"]
     assert [column["label"] for column in table["columns"]] == ["算法名称", "识别数量", "占比", "使用部门"]
-    assert rows[0]["algorithm_name"] == "漂浮物识别"
-    assert rows[0]["recognized_count"] == 5
-    assert rows[0]["share"] == "55.6%"
-    assert rows[0]["department_name"] == "水务部"
-    assert rows[1]["algorithm_name"] == "车牌识别"
-    assert rows[1]["department_name"] == "交管局"
+    rows_by_key = {row["key"]: row for row in rows}
+    assert rows_by_key["漂浮物识别:水务部"]["recognized_count"] == 5
+    assert rows_by_key["漂浮物识别:水务部"]["share"] == "50.0%"
+    assert rows_by_key["漂浮物识别:水务部"]["department_name"] == "水务部"
+    assert rows_by_key["车牌识别:交管局"]["recognized_count"] == 4
+    assert rows_by_key["车牌识别:交管局"]["share"] == "40.0%"
+    assert rows_by_key["车牌识别:交管局"]["department_name"] == "交管局"
+    assert rows_by_key["漂浮物识别:交管局"]["recognized_count"] == 1
+    assert rows_by_key["漂浮物识别:交管局"]["share"] == "10.0%"
+    assert rows_by_key["漂浮物识别:交管局"]["department_name"] == "交管局"
 
 
 def test_algorithm_disposal_summary_counts_status_2_by_scene_and_department():
@@ -429,6 +434,7 @@ def test_algorithm_high_frequency_locations_groups_by_scene_department_and_blank
                             {"algorithmName": "占道经营识别", "createTime": "2026-04-21 19:36:08"},
                             {"algorithmName": "占道经营识别", "createTime": "2026-04-21 19:38:08"},
                             {"algorithmName": "占道经营识别", "createTime": "2026-04-21 19:40:08"},
+                            {"algorithmName": "零星违停识别", "address": "支路 A"},
                         ]
                     },
                     "102": {
@@ -453,6 +459,7 @@ def test_algorithm_high_frequency_locations_groups_by_scene_department_and_blank
     assert rows[1]["scene_name"] == "交通拥堵识别"
     assert rows[1]["location"] == "XXX 街道 XX 路"
     assert rows[1]["occurrence_count"] == 3
+    assert len(rows) == 2
 
 
 def test_algorithm_high_frequency_time_slots_groups_by_custom_periods():
@@ -490,9 +497,29 @@ def test_algorithm_high_frequency_time_slots_groups_by_custom_periods():
     assert rows[1]["scene_name"] == "交通拥堵识别"
     assert rows[1]["time_slot"] == "工作日早高峰"
     assert rows[1]["occurrence_count"] == 2
-    assert rows[2]["scene_name"] == "人群聚集识别"
-    assert rows[2]["time_slot"] == "休息日下午"
-    assert rows[2]["occurrence_count"] == 1
+    assert len(rows) == 2
+
+
+def test_algorithm_high_frequency_locations_keeps_only_top_five_repeated_items():
+    filt = _filter("weekly").model_copy(update={"dept_ids": [101], "dept_names": ["部门一"]})
+    records = []
+    for index, occurrence_count in enumerate([7, 6, 5, 4, 3, 2, 1], start=1):
+        records.extend(
+            {
+                "algorithmName": f"算法 {index}",
+                "address": f"点位 {index}",
+            }
+            for _ in range(occurrence_count)
+        )
+
+    table = build_algorithm_high_frequency_locations(
+        RawDataset(current={"warn_static": {"101": {"records": records}}}),
+        filt,
+    )
+
+    rows = table["rows"]
+    assert [row["occurrence_count"] for row in rows] == [7, 6, 5, 4, 3]
+    assert [row["location"] for row in rows] == ["点位 1", "点位 2", "点位 3", "点位 4", "点位 5"]
 
 
 def test_algorithm_push_events_keeps_only_pushed_records():

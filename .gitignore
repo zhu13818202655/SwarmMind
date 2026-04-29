@@ -47,8 +47,9 @@ agentscope_minimal/logs/
 .agents/
 
 # artifacts
-data/artifacts/
-data/replays/
+data/
+
+# frontend
 front/
 
 

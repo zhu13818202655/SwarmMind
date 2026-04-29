@@ -12,6 +12,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from swarmmind.domains.fly_report.export.block_views import section_views
 from swarmmind.domains.fly_report.export.base import (
     BaseRenderer,
     RenderedArtifact,
@@ -41,7 +42,7 @@ class PdfRenderer(BaseRenderer):
         template = env.get_template(loaded.template_name)
         html = template.render(
             report=_report_view(ctx),
-            sections=ctx.sections,
+            sections=section_views(ctx.sections),
         )
 
         warnings: list[str] = []
@@ -62,7 +63,7 @@ class PdfRenderer(BaseRenderer):
             )
 
         pdf_path = output_dir / f"{ctx.session_id}.pdf"
-        HTML(string=html, base_url=str(loaded.format_root)).write_pdf(
+        HTML(string=html, base_url=str(output_dir)).write_pdf(
             str(pdf_path)
         )
         return RenderedArtifact(
@@ -81,7 +82,7 @@ def _report_view(ctx: ReportContext) -> dict[str, object]:
         "pilot": "飞手",
     }.get(f.dimension.scope, f.dimension.scope)
     return {
-        "title": f"{f.period.label} {scope_label}飞行报告",
+        "title": ctx.title or f"{f.period.label} {scope_label}飞行报告",
         "period_label": f.period.label,
         "scope_kind": f.dimension.scope,
         "scope_label": scope_label,

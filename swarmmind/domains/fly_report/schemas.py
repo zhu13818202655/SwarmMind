@@ -12,7 +12,7 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -164,6 +164,22 @@ class AnalysisResult(BaseModel):
 
 
 ChartType = Literal["line", "bar", "pie", "stacked_bar", "heatmap"]
+ReportBlockKind = Literal[
+    "heading",
+    "paragraph",
+    "markdown",
+    "list",
+    "table",
+    "chart",
+    "chart_text",
+    "image",
+    "kpi_group",
+    "callout",
+    "page_break",
+    "spacer",
+]
+TextAlign = Literal["left", "center", "right", "justify"]
+CalloutLevel = Literal["info", "warning", "success", "danger"]
 
 
 class ChartSpec(BaseModel):
@@ -175,9 +191,134 @@ class ChartSpec(BaseModel):
     data_ref: str | None = None
 
 
+class TextRun(BaseModel):
+    text: str
+    bold: bool = False
+    italic: bool = False
+    underline: bool = False
+    color: str | None = None
+
+
+class ReportBlockStyle(BaseModel):
+    align: TextAlign = "left"
+    page_break_before: bool = False
+    keep_with_next: bool = False
+    spacing_before: int | None = None
+    spacing_after: int | None = None
+    indent_left: int | None = None
+
+
+class ReportBlockBase(BaseModel):
+    id: str
+    kind: ReportBlockKind
+    title: str | None = None
+    style: ReportBlockStyle = Field(default_factory=ReportBlockStyle)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class HeadingBlock(ReportBlockBase):
+    kind: Literal["heading"] = "heading"
+    text: str
+    level: int = Field(default=1, ge=1, le=6)
+
+
+class ParagraphBlock(ReportBlockBase):
+    kind: Literal["paragraph"] = "paragraph"
+    text: str | None = None
+    runs: list[TextRun] = Field(default_factory=list)
+
+
+class MarkdownBlock(ReportBlockBase):
+    kind: Literal["markdown"] = "markdown"
+    markdown: str
+
+
+class ListItem(BaseModel):
+    text: str
+    children: list["ListItem"] = Field(default_factory=list)
+
+
+class ListBlock(ReportBlockBase):
+    kind: Literal["list"] = "list"
+    ordered: bool = False
+    items: list[ListItem] = Field(default_factory=list)
+
+
+class TableBlock(ReportBlockBase):
+    kind: Literal["table"] = "table"
+    table: dict[str, Any]
+    caption: str | None = None
+
+
+class ChartBlock(ReportBlockBase):
+    kind: Literal["chart"] = "chart"
+    chart: ChartSpec
+    caption: str | None = None
+
+
+class ChartTextBlock(ReportBlockBase):
+    kind: Literal["chart_text"] = "chart_text"
+    chart: ChartSpec
+    text: str | None = None
+    caption: str | None = None
+
+
+class ImageBlock(ReportBlockBase):
+    kind: Literal["image"] = "image"
+    uri: str
+    alt: str | None = None
+    caption: str | None = None
+    width: int | None = None
+    height: int | None = None
+
+
+class KpiGroupBlock(ReportBlockBase):
+    kind: Literal["kpi_group"] = "kpi_group"
+    kpis: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CalloutBlock(ReportBlockBase):
+    kind: Literal["callout"] = "callout"
+    level: CalloutLevel = "info"
+    markdown: str
+
+
+class PageBreakBlock(ReportBlockBase):
+    kind: Literal["page_break"] = "page_break"
+
+
+class SpacerBlock(ReportBlockBase):
+    kind: Literal["spacer"] = "spacer"
+    height: int = Field(default=1, ge=1)
+
+
+ReportBlock = Annotated[
+    HeadingBlock
+    | ParagraphBlock
+    | MarkdownBlock
+    | ListBlock
+    | TableBlock
+    | ChartBlock
+    | ChartTextBlock
+    | ImageBlock
+    | KpiGroupBlock
+    | CalloutBlock
+    | PageBreakBlock
+    | SpacerBlock,
+    Field(discriminator="kind"),
+]
+
+
 class ReportSection(BaseModel):
     id: str
     title: str
+    level: int = Field(default=1, ge=1, le=6)
+    blocks: list[ReportBlock] = Field(default_factory=list)
+    children: list["ReportSection"] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+    # Legacy renderer compatibility. New renderers should prefer ``blocks``;
+    # these fields remain populated during the transition.
     summary_md: str = ""
     kpis: list[dict[str, Any]] = Field(default_factory=list)
     tables: list[dict[str, Any]] = Field(default_factory=list)
@@ -186,6 +327,7 @@ class ReportSection(BaseModel):
 
 class ReportContext(BaseModel):
     session_id: str
+    title: str | None = None
     filter: NormalizedFilter
     sections: list[ReportSection] = Field(default_factory=list)
     revision: int = 1

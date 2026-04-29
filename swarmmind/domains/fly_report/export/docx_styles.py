@@ -33,8 +33,8 @@ class DocxStyle:
 
 
 _DEFAULT = DocxStyle(
-    title_font="SimHei",
-    body_font="SimSun",
+    title_font="FangSong",
+    body_font="FangSong",
     title_size_pt=22,
     heading_size_pt=14,
     body_size_pt=11,
@@ -50,8 +50,8 @@ _DEFAULT = DocxStyle(
 DOCX_STYLES: dict[str, DocxStyle] = {
     "default": _DEFAULT,
     "default_zh": DocxStyle(
-        title_font="SimHei",
-        body_font="SimSun",
+        title_font="FangSong",
+        body_font="FangSong",
         title_size_pt=24,
         heading_size_pt=15,
         body_size_pt=11,
@@ -63,11 +63,11 @@ DOCX_STYLES: dict[str, DocxStyle] = {
         section_prefix="",
     ),
     "gov_formal": DocxStyle(
-        title_font="SimHei",
+        title_font="FangSong",
         body_font="FangSong",
         title_size_pt=22,
         heading_size_pt=14,
-        body_size_pt=12,
+        body_size_pt=11,
         title_color_rgb=(0, 0, 0),
         heading_color_rgb=(0, 0, 0),
         table_header_bg_hex="E8E8E8",
@@ -76,11 +76,11 @@ DOCX_STYLES: dict[str, DocxStyle] = {
         section_prefix="",
     ),
     "dashboard": DocxStyle(
-        title_font="SimHei",
-        body_font="SimHei",
+        title_font="FangSong",
+        body_font="FangSong",
         title_size_pt=20,
         heading_size_pt=13,
-        body_size_pt=10,
+        body_size_pt=11,
         title_color_rgb=(239, 35, 60),
         heading_color_rgb=(43, 45, 66),
         table_header_bg_hex="2B2D42",
@@ -89,8 +89,8 @@ DOCX_STYLES: dict[str, DocxStyle] = {
         section_prefix="",
     ),
     "minimal": DocxStyle(
-        title_font="SimHei",
-        body_font="SimSun",
+        title_font="FangSong",
+        body_font="FangSong",
         title_size_pt=18,
         heading_size_pt=12,
         body_size_pt=11,
