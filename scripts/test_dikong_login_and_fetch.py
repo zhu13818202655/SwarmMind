@@ -186,8 +186,8 @@ def get_flight_job_log_list(token: str) -> None:
 		# "status": 4, # 状态 0 待机准备,1 进行中,2 已结束,3 取消,4 异常,5 暂停
 		"pageNum": 1,
 		"pageSize": 2000,
-		# "startTime": "2026-04-09 00:00:00",
-		# "endTime": "2026-04-09 23:59:59",
+		"startTime": "2026-01-09 00:00:00",
+		"endTime": "2026-04-09 23:59:59",
 	}
 	resp = requests.get(
 		_full_url(FLIGHT_JOB_LOG_LIST_PATH),
@@ -415,7 +415,7 @@ def main() -> None:
 	# test_user_page(token)
 	# test_mission_flight_stat(token)
 	# test_flight_calendar_stat(token)
-	# get_flight_job_log_list(token)
+	get_flight_job_log_list(token)
 	# get_flight_job_log_detail(token, job_log_id="3dd476ea-88c6-4288-9e00-d2e92bd48680")
 	# get_drone_bound(token)
 	# export_flight_job_log(token)
@@ -427,7 +427,7 @@ def main() -> None:
 	# get_route_list(token)
 	# get_storage_stats(token)
 	# get_media_stats(token)
-	get_video_list(token)
+	# get_video_list(token)
 
 
 if __name__ == "__main__":

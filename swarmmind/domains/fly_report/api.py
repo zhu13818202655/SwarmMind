@@ -496,11 +496,7 @@ def create_fly_report_router(
         keyword: str | None = None,
         state: str | None = None,
     ) -> list[SessionListItem]:
-        """List recent sessions for ``(tenant_id, user_id)``.
-
-        Supports optional ``keyword`` (substring match on title /
-        last_user_text) and ``state`` (single :class:`SessionState` value)
-        filters — DESIGN-3 R3.1.
+        """List recent sessions for ``(tenant_id, user_id)``
         """
         rows = await service.list_user_sessions(
             tenant_id=tenant_id,

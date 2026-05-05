@@ -49,6 +49,21 @@ services:
       timeout: 5s
       retries: 10
 
+  migrate:
+    image: swarmmind:wuyi-report-v0.1
+    container_name: swarmmind-migrate
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      SWARMMIND_POSTGRES__ENABLED: "true"
+      SWARMMIND_POSTGRES__DSN: postgresql://swarmmind:swarmmind@postgres:5432/swarmmind
+      SWARMMIND_PROJECT_ROOT: /app
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   backend:
     image: swarmmind:wuyi-report-v0.1
     container_name: swarmmind-backend
@@ -58,8 +73,10 @@ services:
     environment:
       SWARMMIND_API__HOST: 0.0.0.0
       SWARMMIND_API__PORT: 8000
+      SWARMMIND_UVICORN_WORKERS: "${SWARMMIND_UVICORN_WORKERS:-4}"
       SWARMMIND_POSTGRES__ENABLED: "true"
       SWARMMIND_POSTGRES__DSN: postgresql://swarmmind:swarmmind@postgres:5432/swarmmind
+      SWARMMIND_POSTGRES__AUTO_INIT_SCHEMA: "false"
       SWARMMIND_REDIS__ENABLED: "true"
       SWARMMIND_REDIS__URL: redis://redis:6379/0
       SWARMMIND_VECTOR_STORE__ENABLED: "${SWARMMIND_VECTOR_STORE__ENABLED:-false}"
@@ -71,10 +88,18 @@ services:
     volumes:
       - backend_data:/app/data
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   nginx:
     image: nginx:1.29.1-alpine

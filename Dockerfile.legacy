@@ -44,4 +44,4 @@ RUN set -eux; \
 
 EXPOSE 8000
 
-CMD ["swarmmind-api"]
+CMD ["sh", "-c", "uvicorn swarmmind.api.server:create_app --factory --host ${SWARMMIND_API__HOST:-0.0.0.0} --port ${SWARMMIND_API__PORT:-8000} --workers ${SWARMMIND_UVICORN_WORKERS:-4}"]
