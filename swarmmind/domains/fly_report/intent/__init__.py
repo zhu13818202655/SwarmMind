@@ -12,6 +12,7 @@ are owned by the FlyReport state machine (see ``DESIGN-2`` §3.1 / §7).
 
 from __future__ import annotations
 
+from .classifier import IntentClassifier, IntentLabel
 from .parser import IntentParser
 
-__all__ = ["IntentParser"]
+__all__ = ["IntentParser", "IntentClassifier", "IntentLabel"]

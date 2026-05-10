@@ -122,7 +122,7 @@ async def test_confirm_records_render_success_metric(
 
 
 class _SlowRouter:
-    def render(self, *args: Any, **kwargs: Any) -> Any:
+    def render_markdown_to_docx(self, *args: Any, **kwargs: Any) -> Any:
         time.sleep(0.5)
         raise AssertionError("should have timed out")
 
@@ -138,7 +138,7 @@ async def test_render_timeout_marks_session_failed(tmp_path: Path) -> None:
         tenant_id="t", user_id="u", initial_query="本周飞行报告"
     )
     with pytest.raises((Exception,)):
-        await svc.confirm(sid, user_id="u", output_format="markdown")
+        await svc.confirm(sid, user_id="u", output_format="docx")
     snap = await svc.get_session_snapshot(sid, user_id="u")
     assert snap["state"] == SessionState.FAILED.value
     assert svc.metrics.snapshot()["render_failure"] == 1
@@ -182,20 +182,23 @@ async def test_list_user_sessions_keyword_and_state_filter(
         tenant_id="t", user_id="u", initial_query="本月媒体统计"
     )
     # Keyword match
-    rows = await service.list_user_sessions(
+    payload = await service.list_user_sessions(
         tenant_id="t", user_id="u", keyword="媒体"
     )
+    rows = payload["items"]
     assert {r["session_id"] for r in rows} == {s2}
     # State filter (both should be previewing after initial_query)
-    rows_state = await service.list_user_sessions(
+    payload_state = await service.list_user_sessions(
         tenant_id="t",
         user_id="u",
         state_filter=SessionState.PREVIEWING.value,
     )
+    rows_state = payload_state["items"]
     assert {r["session_id"] for r in rows_state} >= {s1, s2}
-    rows_none = await service.list_user_sessions(
+    payload_none = await service.list_user_sessions(
         tenant_id="t", user_id="u", state_filter="archived"
     )
+    rows_none = payload_none["items"]
     assert rows_none == []
 
 

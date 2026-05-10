@@ -94,7 +94,7 @@ def test_full_session_lifecycle(client: TestClient):
     assert resp.status_code == 200
     payload = resp.json()["payload"]
     assert payload["output_format"] == "docx"
-    assert payload["template_ref"] == "preset:gov_formal"
+    assert payload["template_ref"] == "markdown:preset:gov_formal"
     assert payload["artifact_path"]
     assert payload["download_url"].startswith(
         f"/v1/fly-reports/sessions/{session_id}/artifacts/"
@@ -138,7 +138,7 @@ def test_confirm_defaults_template_ref_to_default(client: TestClient):
         json={"user_id": "u-1", "output_format": "markdown"},
     )
     assert resp.status_code == 200
-    assert resp.json()["payload"]["template_ref"] == "default"
+    assert resp.json()["payload"]["template_ref"] == "markdown:direct"
 
 
 def test_artifact_download_after_confirm(client: TestClient):

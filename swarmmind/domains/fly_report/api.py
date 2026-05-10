@@ -113,6 +113,11 @@ class SessionListItem(BaseModel):
     updated_at: str
 
 
+class SessionListResponse(BaseModel):
+    items: list[SessionListItem]
+    next_before_session_id: str | None = None
+
+
 class ArtifactView(BaseModel):
     artifact_id: str | None = None
     interaction_id: str | None = None
@@ -488,24 +493,29 @@ def create_fly_report_router(
 
     # ---------------------------------------------------- history / search
 
-    @router.get("/sessions", response_model=list[SessionListItem])
+    @router.get("/sessions", response_model=SessionListResponse)
     async def list_user_sessions(
         tenant_id: str,
         user_id: str,
         limit: int = 50,
         keyword: str | None = None,
         state: str | None = None,
-    ) -> list[SessionListItem]:
+        before_session_id: str | None = None,
+    ) -> SessionListResponse:
         """List recent sessions for ``(tenant_id, user_id)``
         """
-        rows = await service.list_user_sessions(
+        payload = await service.list_user_sessions(
             tenant_id=tenant_id,
             user_id=user_id,
             limit=max(1, min(limit, 200)),
             keyword=keyword,
             state_filter=state,
+            before_session_id=before_session_id,
         )
-        return [_session_list_item(r) for r in rows]
+        return SessionListResponse(
+            items=[_session_list_item(r) for r in payload["items"]],
+            next_before_session_id=payload.get("next_before_session_id"),
+        )
 
     @router.get("/metrics")
     async def metrics_snapshot() -> dict[str, Any]:

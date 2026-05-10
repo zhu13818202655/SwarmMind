@@ -115,9 +115,9 @@ async def fetch_data() -> tuple[RawDataset, NormalizedFilter]:
     live = await fetcher.fetch(filt)
     _write_json("test_data_fetcher_live_output.json", live.model_dump(mode="json"))
 
-    mocked = replace_fetched_data_with_mock(live, filt)
-    _write_json("test_data_fetcher_fetch_output.json", mocked.model_dump(mode="json"))
-    return mocked, filt
+    # mocked = replace_fetched_data_with_mock(live, filt)
+    # _write_json("test_data_fetcher_fetch_output.json", mocked.model_dump(mode="json"))
+    return live, filt
 
 
 def replace_fetched_data_with_mock(raw: RawDataset, filt: NormalizedFilter) -> RawDataset:

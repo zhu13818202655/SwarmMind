@@ -165,7 +165,14 @@ class FlyReportRepository(Protocol):
     async def get_session(self, session_id: str) -> dict[str, Any] | None: ...
 
     async def list_sessions_for_user(
-        self, *, tenant_id: str, user_id: str, limit: int = 50
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        limit: int | None = 50,
+        keyword: str | None = None,
+        state_filter: str | None = None,
+        before_session_id: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     async def append_turn(
@@ -230,7 +237,14 @@ class InMemoryFlyReportRepository:
         return None
 
     async def list_sessions_for_user(
-        self, *, tenant_id: str, user_id: str, limit: int = 50
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        limit: int | None = 50,
+        keyword: str | None = None,
+        state_filter: str | None = None,
+        before_session_id: str | None = None,
     ) -> list[dict[str, Any]]:
         return []
 
@@ -354,19 +368,47 @@ class PostgresFlyReportRepository:
         return None if row is None else row["payload"]
 
     async def list_sessions_for_user(
-        self, *, tenant_id: str, user_id: str, limit: int = 50
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        limit: int | None = 50,
+        keyword: str | None = None,
+        state_filter: str | None = None,
+        before_session_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        rows = await self._store.fetch_all(
-            """
+        clauses = ["tenant_id = %s", "user_id = %s"]
+        params: list[Any] = [tenant_id, user_id]
+        if state_filter:
+            clauses.append("state = %s")
+            params.append(state_filter)
+        if keyword:
+            clauses.append(
+                "LOWER(COALESCE(title, '') || ' ' || COALESCE(last_user_text, '')) LIKE %s"
+            )
+            params.append(f"%{keyword.lower()}%")
+        if before_session_id:
+            clauses.append(
+                """
+                (updated_at, id) < (
+                    SELECT updated_at, id
+                      FROM fly_report_session
+                     WHERE tenant_id = %s AND user_id = %s AND id = %s
+                )
+                """
+            )
+            params.extend([tenant_id, user_id, before_session_id])
+        query = f"""
             SELECT id, state, title, last_user_text, revision,
                    created_at, updated_at
               FROM fly_report_session
-             WHERE tenant_id = %s AND user_id = %s
-             ORDER BY updated_at DESC
-             LIMIT %s
-            """,
-            (tenant_id, user_id, limit),
-        )
+             WHERE {' AND '.join(clauses)}
+             ORDER BY updated_at DESC, id DESC
+        """
+        if limit is not None:
+            query += " LIMIT %s"
+            params.append(limit)
+        rows = await self._store.fetch_all(query, tuple(params))
         return [
             {
                 "session_id": r["id"],

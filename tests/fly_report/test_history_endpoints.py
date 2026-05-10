@@ -44,11 +44,44 @@ def test_list_user_sessions_returns_in_memory(client) -> None:
         params={"tenant_id": "t1", "user_id": "u1"},
     )
     assert r.status_code == 200
-    items = r.json()
+    payload = r.json()
+    items = payload["items"]
+    assert "next_before_session_id" in payload
     assert any(item["session_id"] == sid for item in items)
     me = next(item for item in items if item["session_id"] == sid)
     assert me["state"] == "archived"
     assert me["revision"] >= 1
+
+
+def test_list_user_sessions_supports_cursor_pagination(client) -> None:
+    c, svc = client
+    first = _start_and_confirm(c, svc)
+    second = _start_and_confirm(c, svc)
+
+    resp_page_1 = c.get(
+        "/v1/fly-reports/sessions",
+        params={"tenant_id": "t1", "user_id": "u1", "limit": 1},
+    )
+    assert resp_page_1.status_code == 200
+    page_1 = resp_page_1.json()
+    assert len(page_1["items"]) == 1
+    cursor = page_1["next_before_session_id"]
+    assert cursor is not None
+
+    resp_page_2 = c.get(
+        "/v1/fly-reports/sessions",
+        params={
+            "tenant_id": "t1",
+            "user_id": "u1",
+            "limit": 1,
+            "before_session_id": cursor,
+        },
+    )
+    assert resp_page_2.status_code == 200
+    page_2 = resp_page_2.json()
+    assert len(page_2["items"]) == 1
+    assert page_2["items"][0]["session_id"] != page_1["items"][0]["session_id"]
+    assert {page_1["items"][0]["session_id"], page_2["items"][0]["session_id"]} >= {first, second}
 
 
 def test_list_session_artifacts(client) -> None:

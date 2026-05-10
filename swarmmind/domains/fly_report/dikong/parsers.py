@@ -214,9 +214,9 @@ class WarnStaticRow(BaseModel):
     mission_name: str | None = Field(default=None, alias="missionName")
     device_sn: str | None = Field(default=None, alias="deviceSn")
     status: int | str | None = None
-    create_time: str | None = Field(default=None, alias="createTime")
-    approval_time: str | None = Field(default=None, alias="approvalTime")
-    dispose_time: str | None = Field(default=None, alias="disposeTime")
+    create_time: str | int | None = Field(default=None, alias="createTime")
+    approval_time: str | int | None = Field(default=None, alias="approvalTime")
+    dispose_time: str | int | None = Field(default=None, alias="disposeTime")
     approvaler: int | str | None = None
     disposer: int | str | None = None
     approvaler_name: str | None = Field(default=None, alias="approvalerName")

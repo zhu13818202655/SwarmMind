@@ -31,7 +31,10 @@ from swarmmind.domains.fly_report.errors import (
 )
 from swarmmind.domains.fly_report.export import RendererRouter
 from swarmmind.domains.fly_report.export.base import RenderedArtifact
+from swarmmind.domains.fly_report.intent.classifier import IntentClassifier
 from swarmmind.domains.fly_report.intent.parser import IntentParser
+from swarmmind.domains.fly_report.lm.client import OpenAICompatibleLMClient
+from swarmmind.domains.fly_report.lm.types import LMOutputFormat
 from swarmmind.domains.fly_report.observability import (
     FlyReportMetrics,
     make_event,
@@ -363,8 +366,12 @@ class FlyReportService:
         max_clarify_rounds: int = 3,
         render_timeout_seconds: float = 60.0,
         max_text_length: int = 4000,
+        intent_classifier: IntentClassifier | None = None,
+        chitchat_client: OpenAICompatibleLMClient | None = None,
     ) -> None:
         self._intent_parser = intent_parser
+        self._intent_classifier = intent_classifier or IntentClassifier()
+        self._chitchat_client = chitchat_client
         self._data_fetcher = data_fetcher
         self._renderer_router: RendererRouter = (
             renderer_router or RendererRouter()
@@ -617,6 +624,19 @@ class FlyReportService:
                 f"session {session_id} is terminal ({record.state.value})"
             )
         async with record.lock:
+            intent = await self._intent_classifier.classify(text)
+            logger.info(
+                "fly_report.intent_classified",
+                extra={
+                    "session_id": record.id,
+                    "intent": intent,
+                    "text_preview": text[:120],
+                },
+            )
+            if intent == "chitchat":
+                return await self._handle_chitchat_turn(record, text)
+            if intent == "data_query":
+                return await self._handle_data_query_turn(record, text)
             return await self._drive_pipeline(record, text)
 
     async def _drive_pipeline(
@@ -677,7 +697,6 @@ class FlyReportService:
                 },
             )
 
-            # ----- CLARIFY check (DESIGN-2 §14.4.2) -----
             report = check_conflicts(record.filter_spec)
             if report.needs_clarification:
                 record.clarify_round += 1
@@ -1032,10 +1051,6 @@ class FlyReportService:
             await self._persist_session(record)
             return reply
 
-    # ------------------------------------------------------------------
-    # Reads
-    # ------------------------------------------------------------------
-
     async def list_user_sessions(
         self,
         *,
@@ -1044,7 +1059,8 @@ class FlyReportService:
         limit: int = 50,
         keyword: str | None = None,
         state_filter: str | None = None,
-    ) -> list[dict[str, Any]]:
+        before_session_id: str | None = None,
+    ) -> dict[str, Any]:
         """Return recent sessions for ``user_id``.
 
         Merges the durable view (``repo.list_sessions_for_user``) with the
@@ -1054,39 +1070,78 @@ class FlyReportService:
         Optional ``keyword`` filters by substring match (case-insensitive)
         against ``title`` / ``last_user_text``. ``state_filter`` restricts
         results to a single :class:`SessionState` value (DESIGN-3 R3.1).
+        Cursor pagination uses ``before_session_id``.
         """
+        page_size = max(1, min(limit, 200))
+        cursor_key: tuple[str, str] | None = None
+        if before_session_id:
+            cursor_record = self._sessions.get(before_session_id)
+            if (
+                cursor_record is not None
+                and cursor_record.tenant_id == tenant_id
+                and cursor_record.user_id == user_id
+            ):
+                cursor_key = (
+                    str(cursor_record.updated_at or ""),
+                    str(cursor_record.id or ""),
+                )
+            else:
+                cursor_payload = await self._repo.get_session(before_session_id)
+                if (
+                    cursor_payload is not None
+                    and cursor_payload.get("tenant_id") == tenant_id
+                    and cursor_payload.get("user_id") == user_id
+                ):
+                    cursor_key = (
+                        str(cursor_payload.get("updated_at") or ""),
+                        str(cursor_payload.get("id") or before_session_id),
+                    )
         seen: dict[str, dict[str, Any]] = {}
         for r in self._sessions.values():
-            if r.tenant_id == tenant_id and r.user_id == user_id:
-                seen[r.id] = {
-                    "session_id": r.id,
-                    "state": r.state.value,
-                    "title": r.title,
-                    "last_user_text": r.last_user_text,
-                    "revision": r.revision,
-                    "created_at": r.created_at,
-                    "updated_at": r.updated_at,
-                }
+            if r.tenant_id != tenant_id or r.user_id != user_id:
+                continue
+            if state_filter and r.state.value != state_filter:
+                continue
+            if keyword:
+                needle = keyword.lower()
+                if (
+                    needle not in (r.title or "").lower()
+                    and needle not in (r.last_user_text or "").lower()
+                ):
+                    continue
+            row = {
+                "session_id": r.id,
+                "state": r.state.value,
+                "title": r.title,
+                "last_user_text": r.last_user_text,
+                "revision": r.revision,
+                "created_at": r.created_at,
+                "updated_at": r.updated_at,
+            }
+            if cursor_key is not None and _session_sort_key(row) >= cursor_key:
+                continue
+            seen[r.id] = row
         for row in await self._repo.list_sessions_for_user(
-            tenant_id=tenant_id, user_id=user_id, limit=limit
+            tenant_id=tenant_id,
+            user_id=user_id,
+            limit=page_size + 1,
+            keyword=keyword,
+            state_filter=state_filter,
+            before_session_id=before_session_id,
         ):
             seen.setdefault(row["session_id"], row)
         rows = sorted(
             seen.values(),
-            key=lambda x: str(x.get("updated_at") or ""),
+            key=_session_sort_key,
             reverse=True,
         )
-        if state_filter:
-            rows = [r for r in rows if r.get("state") == state_filter]
-        if keyword:
-            needle = keyword.lower()
-            rows = [
-                r
-                for r in rows
-                if needle in (r.get("title") or "").lower()
-                or needle in (r.get("last_user_text") or "").lower()
-            ]
-        return rows[:limit]
+        page_items = rows[:page_size]
+        return {
+            "items": page_items,
+            "next_before_session_id": (
+                page_items[-1]["session_id"] if len(rows) > page_size else None
+            ),
+        }
 
     async def get_session_snapshot(
         self, session_id: str, *, user_id: str
@@ -1386,8 +1441,20 @@ class FlyReportService:
             started_at=started_at,
         )
         try:
-            if self._is_report_request(interaction.input_text):
+            intent = await self._intent_classifier.classify(interaction.input_text)
+            logger.info(
+                "fly_report.intent_classified",
+                extra={
+                    "session_id": interaction.session_id,
+                    "interaction_id": interaction.id,
+                    "intent": intent,
+                    "text_preview": interaction.input_text[:120],
+                },
+            )
+            if intent == "report":
                 await self._run_report_interaction(interaction)
+            elif intent == "data_query":
+                await self._run_data_query_interaction(interaction)
             else:
                 await self._run_plain_text_interaction(interaction)
         except asyncio.CancelledError:
@@ -1431,9 +1498,17 @@ class FlyReportService:
     ) -> None:
         await self._ensure_not_cancelled(interaction)
         message_id = f"msg_{uuid.uuid4().hex}"
-        answer = self._plain_text_answer(interaction.input_text)
-        midpoint = max(1, len(answer) // 2)
-        for chunk in (answer[:midpoint], answer[midpoint:]):
+        answer = await self._plain_text_answer(interaction.input_text)
+        # Naive client-side chunking so the UI sees streaming deltas even
+        # though we only call the LLM once. Splitting on rough thirds keeps
+        # the chunks visibly progressive without overwhelming the channel.
+        chunk_count = 3
+        chunk_size = max(1, len(answer) // chunk_count)
+        chunks = [
+            answer[i : i + chunk_size]
+            for i in range(0, len(answer), chunk_size)
+        ] or [answer]
+        for chunk in chunks:
             if not chunk:
                 continue
             await self._publish_interaction_event(
@@ -1455,6 +1530,49 @@ class FlyReportService:
             text=answer,
             status="completed",
             payload={"data": {}, "actions": [], "meta": {"source": "fly_report"}},
+        )
+        await self._update_interaction(
+            interaction,
+            status="completed",
+            phase="done",
+            completed_at=_utcnow(),
+        )
+        await self._finish_interaction_stream(interaction.id)
+
+    async def _run_data_query_interaction(
+        self, interaction: FlyReportInteraction
+    ) -> None:
+        """Placeholder branch for data-query intent (Text-to-SQL pending)."""
+
+        await self._ensure_not_cancelled(interaction)
+        message_id = f"msg_{uuid.uuid4().hex}"
+        answer = (
+            "检测到你想对业务数据进行查询。该能力（Text-to-SQL）正在开发中，"
+            "暂时还不能直接返回查询结果。你也可以尝试让我生成一份包含该范围的报告。"
+        )
+        await self._publish_interaction_event(
+            interaction.id,
+            {
+                "event": "message.delta",
+                "data": {
+                    "message_id": message_id,
+                    "interaction_id": interaction.id,
+                    "text": answer,
+                },
+            },
+        )
+        await self._record_interaction_message(
+            interaction,
+            message_id=message_id,
+            role="assistant",
+            message_type="plain_text",
+            text=answer,
+            status="completed",
+            payload={
+                "data": {"intent": "data_query", "status": "not_implemented"},
+                "actions": [],
+                "meta": {"source": "fly_report", "intent": "data_query"},
+            },
         )
         await self._update_interaction(
             interaction,
@@ -1734,9 +1852,90 @@ class FlyReportService:
         keywords = ("报告", "周报", "月报", "导出", "docx", "pdf", "markdown", "生成")
         return any(keyword in lowered for keyword in keywords)
 
-    @staticmethod
-    def _plain_text_answer(text: str) -> str:
-        return f"已收到你的问题：{text}。当前 FlyReport 会话可以继续生成报告或解释已有指标。"
+    async def _handle_chitchat_turn(
+        self, record: _SessionRecord, text: str
+    ) -> ChatTurn:
+        reply_text = await self._plain_text_answer(text)
+        reply = ChatTurn(
+            role="assistant",
+            text=reply_text,
+            payload={"intent": "chitchat"},
+        )
+        record.turns.append(reply)
+        record.updated_at = _utcnow()
+        await self._persist_turn(record, reply)
+        await self._persist_session(record)
+        return reply
+
+    async def _handle_data_query_turn(
+        self, record: _SessionRecord, text: str
+    ) -> ChatTurn:
+        reply_text = (
+            "检测到你想对业务数据进行查询。该能力（Text-to-SQL）正在开发中，"
+            "暂时还不能直接返回查询结果。你也可以尝试让我生成一份包含该范围的报告。"
+        )
+        reply = ChatTurn(
+            role="assistant",
+            text=reply_text,
+            payload={"intent": "data_query", "status": "not_implemented"},
+        )
+        record.turns.append(reply)
+        record.updated_at = _utcnow()
+        await self._persist_turn(record, reply)
+        await self._persist_session(record)
+        return reply
+
+    def _get_chitchat_client(self) -> OpenAICompatibleLMClient:
+        """Lazily build the LM client used for free-form chitchat replies.
+
+        Mirrors :class:`IntentClassifier`'s lazy-init style so unit tests
+        that inject a custom client never trigger the real network call.
+        """
+        if self._chitchat_client is None:
+            settings = get_settings()
+            self._chitchat_client = OpenAICompatibleLMClient(
+                model_name=settings.agent.model.name,
+                api_key=settings.agent.model.api_key,
+                base_url=settings.agent.model.base_url,
+                temperature=1.0,
+                max_tokens=512,
+                timeout_sec=30.0,
+            )
+        return self._chitchat_client
+
+    async def _plain_text_answer(self, text: str) -> str:
+        """Generate a real chitchat reply via the LLM.
+
+        Falls back to a short safe message if the model call fails so the
+        streaming interaction can still complete cleanly.
+        """
+        client = self._get_chitchat_client()
+        try:
+            reply = await client.chat(
+                system_prompt=(
+                    "你是武义飞行服务平台的助手，同时也可以与用户进行日常闲聊。\n"
+                    "请用中文、友好、简洁地回复用户的问题或聊天内容，"
+                    "可以带必要的表情、补充说明。\n"
+                    "如果用户提到报告、数据查询等业务需求，可以提示他们明确表述"
+                    "（例如“帮我生成本周 XX 部门的飞行报告”），"
+                    "但不要舍弃闲聊本身。\n"
+                    "输出不要超过 200 字，不要使用 Markdown 标题或代码块。"
+                ),
+                user_prompt=text.strip(),
+                output_format=LMOutputFormat.TEXT,
+                temperature=1.0,
+                max_tokens=512,
+            )
+        except Exception:
+            logger.exception(
+                "fly_report.chitchat_llm_failed",
+                extra={"text_preview": text[:120]},
+            )
+            return "不好意思，我现在连不上对话模型，稍后再试一次～"
+        cleaned = (reply or "").strip()
+        if not cleaned:
+            return "嗯嗯，我在。你想聊点什么？"
+        return cleaned
 
     async def list_audits(
         self, session_id: str, *, user_id: str, limit: int = 100
@@ -1835,6 +2034,13 @@ class FlyReportService:
         record = _rehydrate(payload)
         self._sessions[session_id] = record
         return record
+
+
+def _session_sort_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(row.get("updated_at") or ""),
+        str(row.get("session_id") or ""),
+    )
 
 
 def _context_output_format(record: _SessionRecord) -> OutputFormat:

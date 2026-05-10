@@ -825,7 +825,8 @@ class FlyReportService:
         limit: int = 50,
         keyword: str | None = None,
         state_filter: str | None = None,
-    ) -> list[dict[str, Any]]:
+        before_session_id: str | None = None,
+    ) -> dict[str, Any]:
         """Return recent sessions for ``user_id``.
 
         Merges the durable view (``repo.list_sessions_for_user``) with the
@@ -835,39 +836,78 @@ class FlyReportService:
         Optional ``keyword`` filters by substring match (case-insensitive)
         against ``title`` / ``last_user_text``. ``state_filter`` restricts
         results to a single :class:`SessionState` value (DESIGN-3 R3.1).
+        Cursor pagination uses ``before_session_id``.
         """
+        page_size = max(1, min(limit, 200))
+        cursor_key: tuple[str, str] | None = None
+        if before_session_id:
+            cursor_record = self._sessions.get(before_session_id)
+            if (
+                cursor_record is not None
+                and cursor_record.tenant_id == tenant_id
+                and cursor_record.user_id == user_id
+            ):
+                cursor_key = (
+                    str(cursor_record.updated_at or ""),
+                    str(cursor_record.id or ""),
+                )
+            else:
+                cursor_payload = await self._repo.get_session(before_session_id)
+                if (
+                    cursor_payload is not None
+                    and cursor_payload.get("tenant_id") == tenant_id
+                    and cursor_payload.get("user_id") == user_id
+                ):
+                    cursor_key = (
+                        str(cursor_payload.get("updated_at") or ""),
+                        str(cursor_payload.get("id") or before_session_id),
+                    )
         seen: dict[str, dict[str, Any]] = {}
         for r in self._sessions.values():
-            if r.tenant_id == tenant_id and r.user_id == user_id:
-                seen[r.id] = {
-                    "session_id": r.id,
-                    "state": r.state.value,
-                    "title": r.title,
-                    "last_user_text": r.last_user_text,
-                    "revision": r.revision,
-                    "created_at": r.created_at,
-                    "updated_at": r.updated_at,
-                }
+            if r.tenant_id != tenant_id or r.user_id != user_id:
+                continue
+            if state_filter and r.state.value != state_filter:
+                continue
+            if keyword:
+                needle = keyword.lower()
+                if (
+                    needle not in (r.title or "").lower()
+                    and needle not in (r.last_user_text or "").lower()
+                ):
+                    continue
+            row = {
+                "session_id": r.id,
+                "state": r.state.value,
+                "title": r.title,
+                "last_user_text": r.last_user_text,
+                "revision": r.revision,
+                "created_at": r.created_at,
+                "updated_at": r.updated_at,
+            }
+            if cursor_key is not None and _session_sort_key(row) >= cursor_key:
+                continue
+            seen[r.id] = row
         for row in await self._repo.list_sessions_for_user(
-            tenant_id=tenant_id, user_id=user_id, limit=limit
+            tenant_id=tenant_id,
+            user_id=user_id,
+            limit=page_size + 1,
+            keyword=keyword,
+            state_filter=state_filter,
+            before_session_id=before_session_id,
         ):
             seen.setdefault(row["session_id"], row)
         rows = sorted(
             seen.values(),
-            key=lambda x: str(x.get("updated_at") or ""),
+            key=_session_sort_key,
             reverse=True,
         )
-        if state_filter:
-            rows = [r for r in rows if r.get("state") == state_filter]
-        if keyword:
-            needle = keyword.lower()
-            rows = [
-                r
-                for r in rows
-                if needle in (r.get("title") or "").lower()
-                or needle in (r.get("last_user_text") or "").lower()
-            ]
-        return rows[:limit]
+        page_items = rows[:page_size]
+        return {
+            "items": page_items,
+            "next_before_session_id": (
+                page_items[-1]["session_id"] if len(rows) > page_size else None
+            ),
+        }
 
     async def get_session_snapshot(
         self, session_id: str, *, user_id: str
@@ -1616,6 +1656,13 @@ class FlyReportService:
         record = _rehydrate(payload)
         self._sessions[session_id] = record
         return record
+
+
+def _session_sort_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(row.get("updated_at") or ""),
+        str(row.get("session_id") or ""),
+    )
 
 
 def _context_output_format(record: _SessionRecord) -> OutputFormat:
