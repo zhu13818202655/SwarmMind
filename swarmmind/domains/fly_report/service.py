@@ -1294,34 +1294,14 @@ class FlyReportService:
         self, interaction: FlyReportInteraction
     ) -> None:
         await self._ensure_not_cancelled(interaction)
-        message_id = f"msg_{uuid.uuid4().hex}"
         answer = await self._plain_text_answer(interaction.input_text)
-        # Naive client-side chunking so the UI sees streaming deltas even
-        # though we only call the LLM once. Splitting on rough thirds keeps
-        # the chunks visibly progressive without overwhelming the channel.
-        chunk_count = 3
-        chunk_size = max(1, len(answer) // chunk_count)
-        chunks = [
-            answer[i : i + chunk_size]
-            for i in range(0, len(answer), chunk_size)
-        ] or [answer]
-        for chunk in chunks:
-            if not chunk:
-                continue
-            await self._publish_interaction_event(
-                interaction.id,
-                {
-                    "event": "message.delta",
-                    "data": {
-                        "message_id": message_id,
-                        "interaction_id": interaction.id,
-                        "text": chunk,
-                    },
-                },
-            )
+        # Chitchat replies are short; emit a single ``message.item`` instead
+        # of synthesising fake ``message.delta`` chunks. This avoids the UX
+        # confusion where a placeholder bubble (built from deltas) and the
+        # final item bubble both appear, and prevents shipping the full
+        # answer twice over the wire (once via deltas, once via item.text).
         await self._record_interaction_message(
             interaction,
-            message_id=message_id,
             role="assistant",
             message_type="plain_text",
             text=answer,
@@ -1339,20 +1319,71 @@ class FlyReportService:
     async def _run_data_query_interaction(
         self, interaction: FlyReportInteraction
     ) -> None:
-        """Drive the Text-to-SQL data-query branch end-to-end."""
+        """Drive the Text-to-SQL data-query branch end-to-end.
+
+        Mirrors the report flow's UX: emit a ``parsing`` phase, a ``todo``
+        plan, a ``fetching`` phase before hitting the database, an
+        ``analyzing`` phase before composing the answer, and a ``summary``
+        message after the result. All progress signals reuse the existing
+        ``phase`` / ``todo`` / ``summary`` message types so the front-end
+        does not need new rules.
+        """
 
         await self._ensure_not_cancelled(interaction)
         await self._emit_phase(
             interaction,
             "parsing",
             "解析数据查询意图",
-            "正在检索相关表结构与业务说明，准备生成 SQL。",
+            "正在理解你的提问，准备生成 SQL。",
+        )
+        await self._record_interaction_message(
+            interaction,
+            role="assistant",
+            message_type="todo",
+            title="数据查询计划",
+            text="已生成数据查询计划。",
+            status="running",
+            payload={
+                "data": {
+                    "items": [
+                        {
+                            "id": "step_1",
+                            "text": "理解问题并生成 SQL",
+                            "status": "running",
+                        },
+                        {
+                            "id": "step_2",
+                            "text": "执行 SQL 查询数据库",
+                            "status": "pending",
+                        },
+                        {
+                            "id": "step_3",
+                            "text": "汇总查询结果",
+                            "status": "pending",
+                        },
+                    ]
+                },
+                "actions": [],
+                "meta": {
+                    "source": "fly_report",
+                    "intent": "data_query",
+                    "phase": "parsing",
+                },
+            },
         )
 
         service = self._get_text2sql_service()
         if service is None:
             await self._emit_text2sql_unavailable(interaction)
             return
+
+        await self._ensure_not_cancelled(interaction)
+        await self._emit_phase(
+            interaction,
+            "fetching",
+            "查询数据",
+            "已生成 SQL，正在连接数据库执行查询。",
+        )
 
         try:
             answer = await service.answer(interaction.input_text)
@@ -1388,6 +1419,13 @@ class FlyReportService:
             )
             await self._finish_interaction_stream(interaction.id)
             return
+
+        await self._emit_phase(
+            interaction,
+            "analyzing",
+            "汇总结果",
+            "已拿到查询数据，正在汇总并生成回复。",
+        )
 
         await self._record_text2sql_answer_message(interaction, answer)
         await self._update_interaction(
