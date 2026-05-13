@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 IntentLabel = Literal["chitchat", "report", "data_query"]
 _VALID_LABELS: set[str] = {"chitchat", "report", "data_query"}
+_MAX_ATTEMPTS = 3
 
 _SYSTEM_PROMPT = (
     "你是飞行报告平台的意图分类器。\n"
@@ -58,39 +59,52 @@ class IntentClassifier:
     async def classify(self, text: str) -> IntentLabel:
         """Return the predicted intent label.
 
-        Falls back to ``"report"`` on any LLM/parse failure so that we keep
-        the existing report pipeline as the safe default.
+        Retries up to ``_MAX_ATTEMPTS`` times when the LLM call raises or the
+        response cannot be parsed into a valid label. Falls back to
+        ``"report"`` after all attempts fail so that the existing report
+        pipeline remains the safe default.
         """
 
         if not text or not text.strip():
             return "chitchat"
 
-        try:
-            response = await self._client.chat_response(
-                LMChatRequest(
-                    system_prompt=_SYSTEM_PROMPT,
-                    user_prompt=f"用户输入：\n{text.strip()}",
-                    output_format=LMOutputFormat.JSON,
-                    temperature=1.0,
-                    max_tokens=128,
-                    response_format={"type": "json_object"},
-                )
-            )
-        except Exception:
-            logger.exception(
-                "fly_report.intent_classify_llm_failed",
-                extra={"text_preview": text[:120]},
-            )
-            return "report"
+        request = LMChatRequest(
+            system_prompt=_SYSTEM_PROMPT,
+            user_prompt=f"用户输入：\n{text.strip()}",
+            output_format=LMOutputFormat.JSON,
+            temperature=1.0,
+            max_tokens=512,
+            response_format={"type": "json_object"},
+        )
 
-        label = self._parse_label(response.parsed)
-        if label is None:
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                response = await self._client.chat_response(request)
+            except Exception:
+                logger.exception(
+                    "fly_report.intent_classify_llm_failed",
+                    extra={
+                        "text_preview": text[:120],
+                        "attempt": attempt,
+                        "max_attempts": _MAX_ATTEMPTS,
+                    },
+                )
+                continue
+
+            label = self._parse_label(response.parsed)
+            if label is not None:
+                return label
+
             logger.warning(
                 "fly_report.intent_classify_unparsable",
-                extra={"raw": response.text[:200] if response.text else ""},
+                extra={
+                    "raw": response.text[:200] if response.text else "",
+                    "attempt": attempt,
+                    "max_attempts": _MAX_ATTEMPTS,
+                },
             )
-            return "report"
-        return label
+
+        return "report"
 
     @staticmethod
     def _parse_label(payload: Any) -> IntentLabel | None:

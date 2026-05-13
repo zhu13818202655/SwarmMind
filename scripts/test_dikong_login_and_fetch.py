@@ -178,11 +178,28 @@ def test_flight_calendar_stat(token: str) -> None:
 
 def get_flight_job_log_list(token: str) -> None:
 	# 获取部门的飞行历史包括任务包括飞行时间
+	"""
+	type（任务类型，t_missions.type）
+	值	名称	含义
+	0	DRONE	无人机任务
+	1	DOCK_DRONE_ONCE	机巢单次
+	2	DOCK_DRONE_ONCE_TIMER	机巢单次定时
+	3	DOCK_DRONE_REPEAT_TIMER	机巢定时重复
+
+	status（任务日志状态，sys_job_log.status）
+	值	名称	含义
+	0	PREPARE	待机准备
+	1	PROGRESS	进行中
+	2	SUCCESS	已完成
+	3	CANCLE	已取消（拼写如此）
+	4	FAILED	已失败
+	"""
 	"""Test flight job log list query: GET /api/device/job/log/list."""
 	headers = {"back-token": token}
+
 	params = {
 		# "name": "",
-		# "type": 1,  # TODO 不明白type是什么
+		# "type": 1,
 		# "status": 4, # 状态 0 待机准备,1 进行中,2 已结束,3 取消,4 异常,5 暂停
 		"pageNum": 1,
 		"pageSize": 2000,
@@ -332,9 +349,11 @@ def get_warn_static(token: str) -> None:
 	# 识别总次数、
 	headers = {"back-token": token}
 	params = {
-		# "deptId": 381,
-		# "startdate": "2026-04-01",
-		# "enddate": "2026-04-30",
+		"deptId": 380,
+		"startdate": "2026-04-01",
+		"enddate": "2026-04-30",
+		"pageNum": 1,
+		"pageSize": 999999,
 	}
 	resp = requests.get(
 		_full_url(WARN_STATIC_PATH),

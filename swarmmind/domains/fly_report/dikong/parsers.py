@@ -21,13 +21,46 @@ needs it.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from swarmmind.domains.fly_report.errors import DikongApiError
 
 T = TypeVar("T")
+
+
+def _normalize_dikong_timestamp(value: Any) -> Any:
+    """Convert epoch ms/sec timestamps to ``YYYY-MM-DD HH:MM:SS`` strings.
+
+    Upstream dikong inconsistently returns either:
+    - millisecond epoch ints (e.g. ``1776991320000``)
+    - already formatted strings (e.g. ``"2026-01-13 11:37:00"``)
+
+    Non-numeric / falsy values are passed through unchanged.
+    """
+    if value is None or value == "":
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or not stripped.lstrip("-").isdigit():
+            return value
+        try:
+            ts = int(stripped)
+        except ValueError:
+            return value
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        ts = int(value)
+    else:
+        return value
+
+    # Heuristic: > 1e12 looks like ms; otherwise treat as seconds.
+    seconds = ts / 1000 if abs(ts) >= 1_000_000_000_000 else ts
+    try:
+        return datetime.fromtimestamp(seconds).strftime("%Y-%m-%d %H:%M:%S")
+    except (OverflowError, OSError, ValueError):
+        return value
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +153,6 @@ class FlyJobLogRow(BaseModel):
     type: str | int | None = None
     algorithm_type: str | int | None = Field(default=None, alias="algorithmType")
     auto_return: bool | None = Field(default=None, alias="autoReturn")
-    begin_time: str | None = Field(default=None, alias="beginTime")
-    end_time: str | None = Field(default=None, alias="endTime")
     params: dict[str, Any] = Field(default_factory=dict)
     del_flag: bool | None = Field(default=None, alias="delFlag")
     deptids_tag: str | None = Field(default=None, alias="deptidsTag")
@@ -230,13 +261,11 @@ class WarnStaticRow(BaseModel):
     address: str | None = None
     push_result: str | None = Field(default=None, alias="pushResult")
     push_status: int | str | None = Field(default=None, alias="pushStatus")
-    starttime: str | None = None
-    endtime: str | None = None
-    push_platform: int | str | None = Field(default=None, alias="pushPlatform")
-    third_dispose_time: str | None = Field(default=None, alias="thirdDisposeTime")
-    third_dispose_name: str | None = Field(default=None, alias="thirdDisposeName")
-    third_object_key: str | None = Field(default=None, alias="thirdObjectKey")
-    is_artificial: int | bool | None = Field(default=None, alias="isArtificial")
+
+    @field_validator("create_time", "approval_time", "dispose_time", mode="before")
+    @classmethod
+    def _normalize_timestamps(cls, value: Any) -> Any:
+        return _normalize_dikong_timestamp(value)
 
 
 class WarnStaticResp(BaseModel):

@@ -8,6 +8,11 @@ __pycache__
 .mypy_cache
 
 data
+# Keep the hand-curated FlyReport Text-to-SQL knowledge base; the runtime
+# agent reads YAML from $SWARMMIND_PROJECT_ROOT/data/fly_report_text2sql/knowledge.
+!data/fly_report_text2sql
+!data/fly_report_text2sql/knowledge
+!data/fly_report_text2sql/knowledge/*.yaml
 front/*/node_modules
 front/*/dist
 

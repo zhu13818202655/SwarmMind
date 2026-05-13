@@ -70,7 +70,7 @@ def test_analyze_builds_department_share_table() -> None:
     assert rows[0]["meta"]["share_value"] > rows[1]["meta"]["share_value"]
 
 
-def test_composer_emits_flight_tables_for_department_scope() -> None:
+def test_composer_emits_flight_tables_for_department_scope(monkeypatch) -> None:
     raw = RawDataset(
         current={
             "fly_job_logs": {
@@ -83,15 +83,45 @@ def test_composer_emits_flight_tables_for_department_scope() -> None:
     filt = _dept_filter()
     analysis = analyze(raw, filt)
 
-    ctx = compose_report_context(session_id="sess-x", analysis=analysis, filt=filt)
+    # Composer makes LLM calls inline; stub them out so the test stays
+    # offline / deterministic.
+    from swarmmind.domains.fly_report.composer import simple_composer
 
-    section_ids = [section.id for section in ctx.sections]
-    assert "flight_stat_department_share" in section_ids
-    flight_section = next(
-        section for section in ctx.sections if section.id == "flight_stat_department_share"
+    async def _fake_chat(*args, **kwargs):
+        return "（mock summary）"
+
+    async def _fake_chat_response(*args, **kwargs):
+        from swarmmind.domains.fly_report.lm.types import (
+            LMChatResponse,
+            LMOutputFormat,
+        )
+
+        return LMChatResponse(
+            text="（mock）",
+            output_format=LMOutputFormat.TEXT,
+            parsed=None,
+            raw=None,
+            model_name="mock",
+            usage=None,
+        )
+
+    monkeypatch.setattr(simple_composer.llm_client, "chat", _fake_chat)
+    monkeypatch.setattr(
+        simple_composer.llm_client, "chat_response", _fake_chat_response
     )
-    assert flight_section.title == "部门飞行时长占比"
-    assert flight_section.tables
+
+    markdown = asyncio.run(
+        compose_report_context(session_id="sess-x", analysis=analysis, filt=filt)
+    )
+
+    assert isinstance(markdown, str) and markdown.strip()
+    # Composer now emits Markdown directly; assert the dept-share section
+    # heading made it into the output instead of inspecting a structured
+    # section tree (which no longer exists).
+    assert "部门飞行占比" in markdown
+    # The dept-share section should render at least one Markdown table row
+    # for the only department in the fixture.
+    assert "A大队" in markdown
 
 
 def test_data_fetcher_dept_fanout() -> None:

@@ -22,3 +22,11 @@ fly_report:
     max_concurrency: 8
     rate_limit_per_second: 10.0
     department_id_list: ["380", "375", "382", "381", "395", "394", "384"]
+  text2sql:
+    enabled: true
+    # Hand-curated YAML knowledge base (tables / metrics / golden_qa).
+    knowledge_path: "./data/fly_report_text2sql/knowledge"
+    # postgres_dsn: postgresql://fly_report_ro:***@127.0.0.1:51543/dikong
+    statement_timeout_ms: 15000
+    max_rows: 200
+    max_tool_iterations: 10

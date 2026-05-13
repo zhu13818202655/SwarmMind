@@ -86,14 +86,18 @@ class DataFetcher:
 
         current_job_logs_task = asyncio.create_task(
             self._client.get_fly_job_logs(
-                begin_time=f"{current_start} 00:00:00",
+                start_time=f"{current_start} 00:00:00",
                 end_time=f"{current_end} 23:59:59",
+                page_num=1,
+                page_size=9999999,
             )
         )
         previous_job_logs_task = asyncio.create_task(
             self._client.get_fly_job_logs(
-                begin_time=f"{previous_start} 00:00:00",
+                start_time=f"{previous_start} 00:00:00",
                 end_time=f"{previous_end} 23:59:59",
+                page_num=1,
+                page_size=9999999,
             )
         )
 
@@ -163,11 +167,14 @@ class DataFetcher:
                 dept_id=dept_id,
                 startdate=startdate,
                 enddate=enddate,
+
             ),
             self._client.get_warn_static(
                 dept_id=dept_id,
                 startdate=startdate,
                 enddate=enddate,
+                page_num=1,
+                page_size=9999999,
             ),
             self._client.get_media_static(
                 dept_id=dept_id,
@@ -206,10 +213,20 @@ class DataFetcher:
             return payload
 
         allowed = {str(dept_id) for dept_id in dept_ids}
+
+        def _record_dept_id(record: Any) -> str | None:
+            if not isinstance(record, dict):
+                return None
+            for key in ("deptId", "dept_id"):
+                value = record.get(key)
+                if value is not None:
+                    return str(value)
+            return None
+
         filtered_records = [
             record
             for record in records
-            if DataFetcher._job_log_matches_dept_ids(record, allowed)
+            if _record_dept_id(record) in allowed
         ]
         filtered = dict(payload)
         filtered["records"] = filtered_records
@@ -217,16 +234,6 @@ class DataFetcher:
         filtered["size"] = len(filtered_records)
         filtered["pages"] = 1 if filtered_records else 0
         return filtered
-
-    @staticmethod
-    def _job_log_matches_dept_ids(record: Any, allowed: set[str]) -> bool:
-        if not isinstance(record, dict):
-            return False
-        raw_tags = record.get("deptids_tag")
-        if raw_tags is None:
-            return False
-        tags = {part.strip() for part in str(raw_tags).split(",") if part.strip()}
-        return bool(tags & allowed)
 
     @staticmethod
     def _to_plain_data(value: Any) -> Any:

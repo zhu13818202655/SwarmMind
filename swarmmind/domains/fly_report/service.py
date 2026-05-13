@@ -64,226 +64,17 @@ from swarmmind.domains.fly_report.state_machine import (
     assert_transition,
     is_terminal,
 )
+from swarmmind.domains.fly_report.text2sql import (
+    Text2SqlAnswer,
+    Text2SqlError,
+    Text2SqlService,
+    build_text2sql_service_from_settings,
+)
 
 logger = logging.getLogger(__name__)
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 REPORT_MARKDOWN_TITLE = "武义飞行服务平台飞行统计报告"
-DEPT_NAMES = [
-    "武义县资规局",
-    "武义县公安局",
-    "武义县交通运输局",
-    "武义县建设局",
-    "金华市生态环境局武义分局",
-    "武义县综合行政执法局（城市管理局）",
-    "武义县农业农村局",
-    "县创建办",
-]
-DEPT_IDS = [375, 382, 381, 395, 394, 384, 217]
-def _build_mock_job_logs(
-    *,
-    dept_id: int,
-    dept_name: str,
-    period_start: datetime,
-    completed_count: int,
-    exception_count: int,
-    previous: bool,
-    rng: random.Random,
-) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    for index in range(completed_count):
-        begin = period_start + timedelta(
-            days=index % 7,
-            hours=8 + (index * 3) % 10,
-            minutes=((index * 7 + dept_id) % 60 + rng.randint(-5, 5)) % 60,
-        )
-        duration_minutes = max(10, 18 + (index % 6) * 7 + (dept_id % 5) + rng.randint(-6, 9))
-        end = begin + timedelta(minutes=duration_minutes)
-        records.append(
-            {
-                "id": f"job-{dept_id}-{index}-{'prev' if previous else 'cur'}",
-                "status": "2",
-                "begin_time": begin.strftime("%Y-%m-%d %H:%M:%S"),
-                "end_time": end.strftime("%Y-%m-%d %H:%M:%S"),
-                "deptids_tag": str(dept_id),
-                "deptidsTagName": dept_name,
-                "mission_name": f"{dept_name}巡查任务{index + 1}",
-                "drone_name": f"无人机-{dept_id % 100}-{index % 4 + 1}",
-                "pilot_name": f"飞手-{dept_id % 100}-{index % 5 + 1}",
-            }
-        )
-
-    for index in range(exception_count):
-        begin = period_start + timedelta(
-            days=(index * 2 + dept_id + rng.randint(0, 2)) % 7,
-            hours=rng.choice([10, 14, 15, 16]),
-            minutes=(index * 8 + rng.randint(0, 12)) % 60,
-        )
-        records.append(
-            {
-                "id": f"job-exception-{dept_id}-{index}-{'prev' if previous else 'cur'}",
-                "status": "4",
-                "begin_time": begin.strftime("%Y-%m-%d %H:%M:%S"),
-                "end_time": "",
-                "deptids_tag": str(dept_id),
-                "deptidsTagName": dept_name,
-                "mission_name": f"{dept_name}异常中断任务{index + 1}",
-                "drone_name": f"无人机-{dept_id % 100}-异常",
-                "pilot_name": f"飞手-{dept_id % 100}-异常{index + 1}",
-            }
-        )
-    return records
-
-def _build_mock_warn_records(
-    *,
-    dept_id: int,
-    dept_name: str,
-    period_start: datetime,
-    count: int,
-    previous: bool,
-    rng: random.Random,
-) -> list[dict[str, Any]]:
-    algorithms = ["违停识别", "裸土识别", "河道漂浮物", "违建识别", "烟火识别"]
-    locations = ["武阳路", "熟溪街道", "壶山公园", "白洋街道", "王宅镇", "泉溪镇"]
-    records: list[dict[str, Any]] = []
-    for index in range(count):
-        created = period_start + timedelta(
-            days=index % 7,
-            hours=max(6, min(22, 7 + (index * 2) % 14 + rng.randint(-1, 2))),
-            minutes=((index * 9 + dept_id) % 60 + rng.randint(-6, 6)) % 60,
-        )
-        target_count = max(1, 1 + index % 4 + rng.choice([-1, 0, 0, 1]))
-        records.append(
-            {
-                "id": f"warn-{dept_id}-{index}-{'prev' if previous else 'cur'}",
-                "deptName": dept_name,
-                "dept_name": dept_name,
-                "algorithmName": algorithms[index % len(algorithms)],
-                "workOrderName": algorithms[index % len(algorithms)],
-                "status": rng.choice(["1", "2", "2", "2"]),
-                "pushStatus": rng.choice(["0", "1", "1"]),
-                "createTime": created.strftime("%Y-%m-%d %H:%M:%S"),
-                "pushTime": (created + timedelta(minutes=6 + index % 8)).strftime("%Y-%m-%d %H:%M:%S"),
-                "location": f"{locations[index % len(locations)]}{20 + index}号附近",
-                "extraResult": json.dumps(
-                    {"targets": [f"target-{dept_id}-{index}-{num}" for num in range(target_count)]},
-                    ensure_ascii=False,
-                ),
-            }
-        )
-    return records
-
-def _build_mock_period_data(filt: NormalizedFilter, *, previous: bool) -> dict[str, Any]:
-    if filt.period is None:
-        raise InvalidStateTransition("mock report data requires a resolved period")
-    rng = random.Random()
-    scale = 0.72 if previous else 1.0
-    period_shift = filt.period.end - filt.period.start if previous else timedelta(0)
-    period_start = filt.period.start - period_shift
-    dept_ids = filt.dept_ids or DEPT_IDS
-    dept_names = filt.dept_names or DEPT_NAMES
-
-    fly_statis: dict[str, dict[str, Any]] = {}
-    media_static: dict[str, dict[str, Any]] = {}
-    warn_static: dict[str, dict[str, Any]] = {}
-    job_logs: list[dict[str, Any]] = []
-
-    for index, dept_id in enumerate(dept_ids):
-        dept_name = dept_names[index] if index < len(dept_names) else f"部门{dept_id}"
-        weight = index + 1
-        completed_count = max(8, int(round((16 + weight * 4 + rng.randint(-4, 6)) * scale)))
-        exception_count = max(1, int(round((weight % 3 + 1 + rng.choice([-1, 0, 0, 1])) * scale)))
-        total_count = completed_count + exception_count
-        flight_hours = round((completed_count * (0.34 + weight * 0.025 + rng.uniform(-0.03, 0.04))) * scale, 2)
-
-        fly_statis[str(dept_id)] = {
-            "num_total": total_count,
-            "fly_time_total": flight_hours,
-            "fly_mileage_total": round(flight_hours * (7.6 + weight + rng.uniform(-0.6, 0.8)), 2),
-            "route_plan_count": max(1, int(round((24 + weight * 5 + rng.randint(-5, 7)) * scale))),
-        }
-        media_static[str(dept_id)] = {
-            "picCount": max(0, int(round((180 + weight * 42 + rng.randint(-28, 36)) * scale))),
-            "picLableCount": max(0, int(round((96 + weight * 25 + rng.randint(-16, 22)) * scale))),
-            "picLabelCount": max(0, int(round((96 + weight * 25 + rng.randint(-16, 22)) * scale))),
-            "videoCount": max(0, int(round((18 + weight * 3 + rng.randint(-3, 5)) * scale))),
-            "videoDurationMinute": round(max(0.0, (260 + weight * 38 + rng.uniform(-35, 45)) * scale), 1),
-        }
-        warn_count = max(4, int(round((6 + weight * 2 + rng.randint(-2, 3)) * scale)))
-        warn_static[str(dept_id)] = {
-            "records": _build_mock_warn_records(
-                dept_id=dept_id,
-                dept_name=dept_name,
-                period_start=period_start,
-                count=warn_count,
-                previous=previous,
-                rng=rng,
-            ),
-            "total": warn_count,
-        }
-        job_logs.extend(
-            _build_mock_job_logs(
-                dept_id=dept_id,
-                dept_name=dept_name,
-                period_start=period_start,
-                completed_count=completed_count,
-                exception_count=exception_count,
-                previous=previous,
-                rng=rng,
-            )
-        )
-
-    return {
-        "fly_statis": fly_statis,
-        "media_static": media_static,
-        "warn_static": warn_static,
-        "fly_job_logs": {
-            "records": job_logs,
-            "total": len(job_logs),
-            "size": len(job_logs),
-            "current": 1,
-            "pages": 1,
-        },
-    }
-
-def _count_warn_records(payload: Any) -> int:
-    if not isinstance(payload, dict):
-        return 0
-    total = 0
-    for item in payload.values():
-        if isinstance(item, dict) and isinstance(item.get("records"), list):
-            total += len(item["records"])
-    return total
-
-
-def replace_fetched_data_with_mock(raw: RawDataset, filt: NormalizedFilter) -> RawDataset:
-    """Replace sparse live data with richer realistic mock data.
-
-    The live fetch still runs first, then this function returns a normal
-    RawDataset. Downstream analysis remains unaware of the replacement.
-    """
-
-    print(
-        "Fetched live dataset keys:",
-        {
-            "current": sorted(raw.current.keys()),
-            "previous": sorted(raw.previous.keys()),
-        },
-    )
-    mocked = RawDataset(
-        current=_build_mock_period_data(filt, previous=False),
-        previous=_build_mock_period_data(filt, previous=True),
-    )
-    print(
-        "Replaced with mock dataset:",
-        {
-            "current_job_logs": len(mocked.current["fly_job_logs"]["records"]),
-            "previous_job_logs": len(mocked.previous["fly_job_logs"]["records"]),
-            "current_warn_records": _count_warn_records(mocked.current["warn_static"]),
-            "previous_warn_records": _count_warn_records(mocked.previous["warn_static"]),
-        },
-    )
-    return mocked
 
 
 def _utcnow() -> datetime:
@@ -368,10 +159,14 @@ class FlyReportService:
         max_text_length: int = 4000,
         intent_classifier: IntentClassifier | None = None,
         chitchat_client: OpenAICompatibleLMClient | None = None,
+        text2sql_service: Text2SqlService | None = None,
     ) -> None:
         self._intent_parser = intent_parser
         self._intent_classifier = intent_classifier or IntentClassifier()
         self._chitchat_client = chitchat_client
+        self._text2sql_service = text2sql_service
+        self._text2sql_init_attempted = text2sql_service is not None
+        self._text2sql_init_error: str | None = None
         self._data_fetcher = data_fetcher
         self._renderer_router: RendererRouter = (
             renderer_router or RendererRouter()
@@ -764,6 +559,9 @@ class FlyReportService:
             # TODO 针对用户本身的权限进行过滤，针对用户请求的维度/部门进行过滤
             self._enter(record, SessionState.AUTHORIZING, "intent_parsed")
             t0 = time.perf_counter()
+            if not record.filter_spec.dept_ids:
+                record.filter_spec.dept_ids = config.fly_report.dikong.department_id_list
+                record.filter_spec.dept_names = dept_names
             normalized = NormalizedFilter.from_filter(record.filter_spec)
             normalized.dept_ids = [ int(_id) for name, _id in zip(dept_names, config.fly_report.dikong.department_id_list) if name in normalized.dept_names ]
             decision = self._permission_gate.evaluate(
@@ -809,8 +607,7 @@ class FlyReportService:
             # ----- FETCHING -----
             self._enter(record, SessionState.FETCHING, "authorized")
             t0 = time.perf_counter()
-            live = await self._data_fetcher.fetch(normalized)
-            record.raw = replace_fetched_data_with_mock(live, normalized)
+            record.raw = await self._data_fetcher.fetch(normalized)
             self._metrics.observe_stage("fetching", time.perf_counter() - t0)
             stages.append(
                 {
@@ -1420,7 +1217,7 @@ class FlyReportService:
                 output_dir=output_dir,
                 filename=_artifact_filename(record, "docx"),
                 template_ref=template_ref,
-                title=record.title or REPORT_MARKDOWN_TITLE,
+                title=REPORT_MARKDOWN_TITLE,
             )
 
         raise ValueError(
@@ -1542,38 +1339,57 @@ class FlyReportService:
     async def _run_data_query_interaction(
         self, interaction: FlyReportInteraction
     ) -> None:
-        """Placeholder branch for data-query intent (Text-to-SQL pending)."""
+        """Drive the Text-to-SQL data-query branch end-to-end."""
 
         await self._ensure_not_cancelled(interaction)
-        message_id = f"msg_{uuid.uuid4().hex}"
-        answer = (
-            "检测到你想对业务数据进行查询。该能力（Text-to-SQL）正在开发中，"
-            "暂时还不能直接返回查询结果。你也可以尝试让我生成一份包含该范围的报告。"
-        )
-        await self._publish_interaction_event(
-            interaction.id,
-            {
-                "event": "message.delta",
-                "data": {
-                    "message_id": message_id,
-                    "interaction_id": interaction.id,
-                    "text": answer,
-                },
-            },
-        )
-        await self._record_interaction_message(
+        await self._emit_phase(
             interaction,
-            message_id=message_id,
-            role="assistant",
-            message_type="plain_text",
-            text=answer,
-            status="completed",
-            payload={
-                "data": {"intent": "data_query", "status": "not_implemented"},
-                "actions": [],
-                "meta": {"source": "fly_report", "intent": "data_query"},
-            },
+            "parsing",
+            "解析数据查询意图",
+            "正在检索相关表结构与业务说明，准备生成 SQL。",
         )
+
+        service = self._get_text2sql_service()
+        if service is None:
+            await self._emit_text2sql_unavailable(interaction)
+            return
+
+        try:
+            answer = await service.answer(interaction.input_text)
+        except Text2SqlError as exc:
+            logger.warning(
+                "fly_report.text2sql.service_failed",
+                extra={
+                    "interaction_id": interaction.id,
+                    "error": str(exc),
+                },
+            )
+            await self._record_text2sql_error_message(interaction, str(exc))
+            await self._update_interaction(
+                interaction,
+                status="failed",
+                error=str(exc),
+                completed_at=_utcnow(),
+            )
+            await self._finish_interaction_stream(interaction.id)
+            return
+
+        await self._ensure_not_cancelled(interaction)
+
+        if not answer.is_success() and answer.sql is None:
+            await self._record_text2sql_error_message(
+                interaction, answer.error or "未生成 SQL"
+            )
+            await self._update_interaction(
+                interaction,
+                status="failed",
+                error=answer.error or "text2sql_failed",
+                completed_at=_utcnow(),
+            )
+            await self._finish_interaction_stream(interaction.id)
+            return
+
+        await self._record_text2sql_answer_message(interaction, answer)
         await self._update_interaction(
             interaction,
             status="completed",
@@ -1581,6 +1397,135 @@ class FlyReportService:
             completed_at=_utcnow(),
         )
         await self._finish_interaction_stream(interaction.id)
+
+    def _get_text2sql_service(self) -> Text2SqlService | None:
+        """Lazily build the Text-to-SQL service from settings.
+
+        Returns ``None`` if the feature is disabled or initialization
+        fails (e.g. missing PostgreSQL DSN, knowledge directory not
+        found, ``psycopg2`` driver not installed). The reason is cached
+        on ``_text2sql_init_error`` so the user-facing fallback can
+        surface a precise hint instead of a generic message.
+        """
+        if self._text2sql_service is not None:
+            return self._text2sql_service
+        if self._text2sql_init_attempted:
+            return None
+        self._text2sql_init_attempted = True
+        try:
+            self._text2sql_service = build_text2sql_service_from_settings()
+        except Text2SqlError as exc:
+            logger.warning(
+                "fly_report.text2sql.disabled",
+                extra={"reason": str(exc)},
+            )
+            self._text2sql_init_error = str(exc)
+            self._text2sql_service = None
+        except Exception as exc:
+            logger.exception("fly_report.text2sql.init_failed")
+            self._text2sql_init_error = f"{type(exc).__name__}: {exc}"
+            self._text2sql_service = None
+        return self._text2sql_service
+
+    async def _emit_text2sql_unavailable(
+        self, interaction: FlyReportInteraction
+    ) -> None:
+        reason = self._text2sql_init_error
+        lines = [
+            "数据查询能力（Text-to-SQL）暂未启用。请联系管理员检查 "
+            "fly_report.text2sql 的 knowledge_path（YAML 知识库目录）"
+            "与 postgres_dsn（FLY_REPORT_TEXT2SQL_DSN）配置后重试。",
+        ]
+        if reason:
+            lines.append(f"初始化错误：{reason}")
+        message = "\n".join(lines)
+        await self._record_interaction_message(
+            interaction,
+            role="assistant",
+            message_type="error",
+            title="数据查询暂不可用",
+            text=message,
+            status="failed",
+            payload={
+                "data": {
+                    "intent": "data_query",
+                    "status": "disabled",
+                    "reason": reason,
+                },
+                "actions": [],
+                "meta": {"source": "fly_report", "intent": "data_query"},
+            },
+        )
+        await self._update_interaction(
+            interaction,
+            status="failed",
+            error="text2sql_disabled",
+            completed_at=_utcnow(),
+        )
+        await self._finish_interaction_stream(interaction.id)
+
+    async def _record_text2sql_error_message(
+        self,
+        interaction: FlyReportInteraction,
+        error_text: str,
+    ) -> None:
+        await self._record_interaction_message(
+            interaction,
+            role="assistant",
+            message_type="error",
+            title="数据查询失败",
+            text=error_text,
+            status="failed",
+            payload={
+                "data": {"intent": "data_query"},
+                "actions": [],
+                "meta": {"source": "fly_report", "intent": "data_query"},
+            },
+        )
+
+    async def _record_text2sql_answer_message(
+        self,
+        interaction: FlyReportInteraction,
+        answer: Text2SqlAnswer,
+    ) -> None:
+        if answer.answer_text:
+            # The agent's reply already contains the SQL / Result / Summary
+            # blocks per the system prompt; surface it verbatim.
+            text = answer.answer_text
+        else:
+            text_lines = ["已根据你的问题生成 SQL：", "", "```sql", answer.sql or "", "```"]
+            if answer.executed and answer.result is not None:
+                text_lines.extend(
+                    [
+                        "",
+                        f"执行结果：返回 {answer.result.row_count} 行"
+                        + ("（已截断到上限）" if answer.result.truncated else ""),
+                    ]
+                )
+            elif answer.error:
+                text_lines.extend(["", answer.error])
+            else:
+                text_lines.extend(
+                    ["", "（未执行 SQL：当前仅返回生成结果，未连接数据库）"]
+                )
+            text = "\n".join(text_lines)
+
+        await self._record_interaction_message(
+            interaction,
+            role="assistant",
+            message_type="plain_text",
+            title="数据查询结果",
+            text=text,
+            status="completed",
+            payload={
+                "data": {
+                    "intent": "data_query",
+                    **answer.to_payload(),
+                },
+                "actions": [],
+                "meta": {"source": "fly_report", "intent": "data_query"},
+            },
+        )
 
     async def _run_report_interaction(
         self, interaction: FlyReportInteraction
@@ -1614,6 +1559,54 @@ class FlyReportService:
                 record.state = SessionState.PARSING
             turn = await self._drive_pipeline(record, interaction.input_text)
             await self._ensure_not_cancelled(interaction)
+
+            # If the pipeline produced a clarifier (missing time range,
+            # ambiguous scope, etc.) we should *not* try to render. Surface
+            # the question to the user and finish the interaction cleanly so
+            # the front-end can prompt for the missing information instead
+            # of receiving a generic error.
+            turn_payload = turn.payload or {}
+            if (
+                record.state == SessionState.CLARIFYING
+                or record.ctx is None
+                or turn_payload.get("state") == SessionState.CLARIFYING.value
+            ):
+                clarify_data = {
+                    "intent": "report",
+                    "clarify_round": turn_payload.get("clarify_round"),
+                    "clarify_exhausted": turn_payload.get(
+                        "clarify_exhausted", False
+                    ),
+                    "missing": list(turn_payload.get("missing") or []),
+                    "conflicts": list(turn_payload.get("conflicts") or []),
+                    "suggestions": list(turn_payload.get("suggestions") or []),
+                }
+                await self._record_interaction_message(
+                    interaction,
+                    role="assistant",
+                    message_type="plain_text",
+                    title="需要补充信息",
+                    text=turn.text,
+                    status="completed",
+                    payload={
+                        "data": clarify_data,
+                        "actions": [],
+                        "meta": {
+                            "source": "fly_report",
+                            "phase": "clarifying",
+                            "needs_clarification": True,
+                        },
+                    },
+                )
+                await self._update_interaction(
+                    interaction,
+                    status="completed",
+                    phase="intake",
+                    completed_at=_utcnow(),
+                )
+                await self._finish_interaction_stream(interaction.id)
+                return
+
             await self._emit_phase(interaction, "rendering", "生成文件", "正在生成报告文件。")
             assert record.ctx is not None
             output_format = interaction.output_format or _context_output_format(record)
@@ -1870,14 +1863,36 @@ class FlyReportService:
     async def _handle_data_query_turn(
         self, record: _SessionRecord, text: str
     ) -> ChatTurn:
-        reply_text = (
-            "检测到你想对业务数据进行查询。该能力（Text-to-SQL）正在开发中，"
-            "暂时还不能直接返回查询结果。你也可以尝试让我生成一份包含该范围的报告。"
-        )
+        service = self._get_text2sql_service()
+        if service is None:
+            reply_text = (
+                "数据查询能力（Text-to-SQL）暂未启用。请管理员配置 "
+                "fly_report.text2sql 后重试。"
+            )
+            payload: dict[str, Any] = {
+                "intent": "data_query",
+                "status": "disabled",
+            }
+        else:
+            try:
+                answer = await service.answer(text)
+            except Text2SqlError as exc:
+                reply_text = f"数据查询失败：{exc}"
+                payload = {"intent": "data_query", "status": "error", "error": str(exc)}
+            else:
+                payload = {"intent": "data_query", **answer.to_payload()}
+                if answer.is_success() and answer.executed and answer.result is not None:
+                    reply_text = (
+                        f"已生成并执行 SQL，返回 {answer.result.row_count} 行结果。"
+                    )
+                elif answer.is_success():
+                    reply_text = "已生成 SQL（未执行，未连接数据库）。"
+                else:
+                    reply_text = answer.error or "数据查询失败"
         reply = ChatTurn(
             role="assistant",
             text=reply_text,
-            payload={"intent": "data_query", "status": "not_implemented"},
+            payload=payload,
         )
         record.turns.append(reply)
         record.updated_at = _utcnow()

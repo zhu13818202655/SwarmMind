@@ -38,6 +38,11 @@ COPY swarmmind ./swarmmind
 COPY configs ./configs
 COPY alembic.ini ./
 COPY alembic ./alembic
+# Ship the FlyReport Text-to-SQL knowledge base outside /app/data so that
+# mounting a volume at /app/data does not shadow it. Pair this with
+# SWARMMIND_FLY_REPORT__TEXT2SQL__KNOWLEDGE_PATH=/app/knowledge/fly_report_text2sql
+# in the deployment environment.
+COPY data/fly_report_text2sql/knowledge ./knowledge/fly_report_text2sql
 
 RUN set -eux; \
     python -m pip install --no-deps .

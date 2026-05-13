@@ -345,6 +345,24 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
         create_fly_report_router(app.state.fly_report_service)
     )
 
+    # Static mount for Text-to-SQL auto-generated charts. The Text-to-SQL
+    # pipeline drops PNGs into ``CHART_OUTPUT_ROOT`` and embeds
+    # ``![chart](/v1/fly-reports/charts/<file>.png)`` markdown in the
+    # assistant reply; clients fetch the image straight from this mount.
+    from fastapi.staticfiles import StaticFiles
+
+    from swarmmind.domains.fly_report.text2sql.chart import (
+        CHART_OUTPUT_ROOT,
+        CHART_URL_PREFIX,
+    )
+
+    CHART_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        CHART_URL_PREFIX,
+        StaticFiles(directory=str(CHART_OUTPUT_ROOT)),
+        name="fly-report-charts",
+    )
+
     @app.get("/")
     async def root():
         """Root endpoint."""

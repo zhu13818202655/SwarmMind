@@ -412,11 +412,80 @@ class FlyReportDikongConfig(ValidatedDefaultsModel):
         return resolve_env_value(value, "DIKONG_PASSWORD")
 
 
+class FlyReportText2SqlConfig(ValidatedDefaultsModel):
+    """Configuration for the FlyReport Text-to-SQL data-query pipeline.
+
+    Backed by a Vanna 2.0 multi-tool agent. Business knowledge lives in
+    hand-curated YAML files under :attr:`knowledge_path`
+    (``tables.yaml`` / ``metrics.yaml`` / ``golden_qa.yaml``). The agent
+    drives a tool loop that calls schema introspection, business-knowledge
+    lookups, and a guarded SQL runner against PostgreSQL.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Toggle for the Text-to-SQL data-query branch",
+    )
+    knowledge_path: str = Field(
+        default="./data/fly_report_text2sql/knowledge",
+        description=(
+            "Directory containing tables.yaml / metrics.yaml / "
+            "golden_qa.yaml — the agent's business knowledge base."
+        ),
+    )
+    postgres_dsn: str | None = Field(
+        default=None,
+        description=(
+            "PostgreSQL DSN used by the agent's guarded SQL tool. "
+            "Required when the data-query branch is enabled."
+        ),
+    )
+    statement_timeout_ms: int = Field(
+        default=15000,
+        ge=100,
+        description="Per-statement timeout (ms) appended to the DSN options",
+    )
+    max_rows: int = Field(
+        default=200,
+        ge=1,
+        description="Row cap applied when capturing tool results",
+    )
+    max_tool_iterations: int = Field(
+        default=10,
+        ge=1,
+        description="Upper bound on the agent's tool-call loop per turn",
+    )
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def resolve_enabled(cls, value: Any) -> Any:
+        return resolve_env_value(
+            value, "SWARMMIND_FLY_REPORT__TEXT2SQL__ENABLED", cast_type=bool
+        )
+
+    @field_validator("knowledge_path", mode="before")
+    @classmethod
+    def resolve_knowledge_path(cls, value: Any) -> Any:
+        return resolve_env_value(
+            value, "SWARMMIND_FLY_REPORT__TEXT2SQL__KNOWLEDGE_PATH"
+        )
+
+    @field_validator("postgres_dsn", mode="before")
+    @classmethod
+    def resolve_postgres_dsn(cls, value: Any) -> Any:
+        return resolve_env_value(
+            value,
+            "SWARMMIND_FLY_REPORT__TEXT2SQL__POSTGRES_DSN",
+            "FLY_REPORT_TEXT2SQL_DSN",
+        )
+
+
 class FlyReportConfig(ValidatedDefaultsModel):
     """Domain-level configuration for FlyReport."""
 
     enabled: bool = Field(default=True, description="Toggle for the FlyReport domain")
     dikong: FlyReportDikongConfig = Field(default_factory=FlyReportDikongConfig)
+    text2sql: FlyReportText2SqlConfig = Field(default_factory=FlyReportText2SqlConfig)
 
     @field_validator("enabled", mode="before")
     @classmethod

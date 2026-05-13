@@ -243,18 +243,18 @@ class DikongClient:
     async def get_fly_job_logs(
         self,
         *,
-        begin_time: str | None = None,
+        start_time: str | None = None,
         end_time: str | None = None,
         status: str | int | None = None,
-        page_num: int | None = None,
-        page_size: int | None = None,
+        page_num: int = 1,
+        page_size: int = 20,
         name: str | None = None,
         type: str | int | None = None,
     ) -> FlyJobLogResp:
         envelope = await self._request(
             EndpointKey.JOB_LOG_LIST,
             params={
-                "beginTime": begin_time,
+                "startTime": start_time,
                 "endTime": end_time,
                 "status": status,
                 "pageNum": page_num,
@@ -280,10 +280,18 @@ class DikongClient:
         dept_id: int | None = None,
         startdate: str | None = None,
         enddate: str | None = None,
+        page_num: int = 1,
+        page_size: int = 20,
     ) -> WarnStaticResp:
         envelope = await self._request(
             EndpointKey.GET_WARN_STATIC,
-            params={"deptId": dept_id, "startdate": startdate, "enddate": enddate},
+            params={
+                "deptId": dept_id,
+                "startdate": startdate,
+                "enddate": enddate,
+                "pageNum": page_num,
+                "pageSize": page_size,
+            },
             data_model=WarnStaticResp,
         )
         return envelope.data or WarnStaticResp()
@@ -318,7 +326,7 @@ class DikongClient:
         self,
         *,
         page_num: int = 1,
-        page_size: int = 20,
+        page_size: int = 9999,
         dept_id: int | None = None,
         startdate: str | None = None,
         enddate: str | None = None,

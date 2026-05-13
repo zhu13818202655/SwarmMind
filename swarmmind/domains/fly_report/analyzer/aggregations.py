@@ -13,7 +13,7 @@ from swarmmind.models.table import DataTable, TableColumn
 
 # TODO 怎么定义高频
 _HIGH_FREQUENCY_MAX_ROWS = 5
-_HIGH_FREQUENCY_MIN_OCCURRENCES = 2
+_HIGH_FREQUENCY_MIN_OCCURRENCES = 1
 
 
 def analyze(raw: RawDataset, filt: NormalizedFilter) -> AnalysisResult:
@@ -75,20 +75,6 @@ def build_flight_stat_overall(raw: RawDataset, filt: NormalizedFilter) -> dict[s
     def exception_count(log_records: list[dict[str, Any]]) -> int:
         return sum(1 for item in log_records if str(item.get("status")) == "4")
 
-    def percent_change(current: float | None, previous: float | None) -> float | None:
-        if current is None or previous in (None, 0):
-            return None
-        return round((current - previous) / abs(previous) * 100, 2)
-
-    def trend(current: float | None, previous: float | None) -> str:
-        if current is None or previous is None:
-            return "unknown"
-        if current > previous:
-            return "up"
-        if current < previous:
-            return "down"
-        return "flat"
-
     def display(value: float | int | None, unit: str, precision: int = 1) -> str:
         if value is None:
             return ""
@@ -97,12 +83,6 @@ def build_flight_stat_overall(raw: RawDataset, filt: NormalizedFilter) -> dict[s
         else:
             text = f"{float(value):.{precision}f}".rstrip("0").rstrip(".")
         return f"{text} {unit}" if unit else text
-
-    def change_display(change_pct: float | None, row_trend: str) -> str:
-        if change_pct is None:
-            return ""
-        marker = {"up": "↑", "down": "↓", "flat": "-"}.get(row_trend, "")
-        return f"{marker} {abs(change_pct):.1f}%" if marker else f"{change_pct:.1f}%"
 
     cur_records = records(cur_job_logs)
     prev_records = records(prev_job_logs)
@@ -176,15 +156,14 @@ def build_flight_stat_overall(raw: RawDataset, filt: NormalizedFilter) -> dict[s
     )
 
     for key, (label, current, previous, unit, precision) in values.items():
-        row_trend = trend(current, previous)
-        change_pct = percent_change(current, previous)
+        change_text, row_trend, change_pct = _format_change(current, previous, unit, precision)
         change_value = current - previous if current is not None and previous is not None else None
         table.add_row(
             {
                 "metric": label,
                 "current": display(current, unit, precision),
                 "previous": display(previous, unit, precision),
-                "change": change_display(change_pct, row_trend),
+                "change": change_text,
             },
             key=key,
             meta={
@@ -208,11 +187,11 @@ def build_flight_stat_day_trend(raw: RawDataset, filt: NormalizedFilter) -> dict
     }
 
     for record in cur_records:
-        begin_time = _parse_dikong_datetime(record.get("begin_time") or record.get("beginTime"))
-        if begin_time is None:
+        start_time = _parse_dikong_datetime(record.get("start_time"))
+        if start_time is None:
             continue
 
-        date_key = begin_time.strftime("%Y-%m-%d")
+        date_key = start_time.strftime("%Y-%m-%d")
         if date_key not in daily_stats:
             continue
 
@@ -225,10 +204,10 @@ def build_flight_stat_day_trend(raw: RawDataset, filt: NormalizedFilter) -> dict
             continue
 
         stat["flight_count"] += 1
-        end_time = _parse_dikong_datetime(record.get("end_time") or record.get("endTime"))
-        if end_time is None or end_time < begin_time:
+        stop_time = _parse_dikong_datetime(record.get("stop_time"))
+        if stop_time is None or stop_time < start_time:
             continue
-        stat["flight_hours"] += (end_time - begin_time).total_seconds() / 3600
+        stat["flight_hours"] += (stop_time - start_time).total_seconds() / 3600
 
     table = DataTable(
         title="每日飞行趋势",
@@ -367,8 +346,7 @@ def build_media_collection_summary(raw: RawDataset, filt: NormalizedFilter) -> d
     )
 
     for key, (label, current, previous, unit, total_duration) in values.items():
-        change_pct = _percent_change_optional(current, previous)
-        row_trend = _trend(current - previous if current is not None and previous is not None else None)
+        change_text, row_trend, change_pct = _format_change(current, previous, unit, precision=0)
         average_duration = (
             round(total_duration / current, 1)
             if total_duration is not None and current not in (None, 0)
@@ -380,7 +358,7 @@ def build_media_collection_summary(raw: RawDataset, filt: NormalizedFilter) -> d
                 "count": _display_optional_count(current, unit),
                 "total_duration": _display_optional_minutes(total_duration),
                 "average_duration": _display_optional_minutes(average_duration),
-                "change": _change_display(change_pct, row_trend),
+                "change": change_text,
             },
             key=key,
             meta={
@@ -430,14 +408,13 @@ def build_algorithm_recognition_overall(raw: RawDataset, filt: NormalizedFilter)
     )
 
     for key, (label, current, previous, unit, precision) in values.items():
-        change_pct = _percent_change(current, previous)
-        row_trend = _trend(current - previous)
+        change_text, row_trend, change_pct = _format_change(current, previous, unit, precision)
         table.add_row(
             {
                 "metric": label,
                 "current": _display_number(current, unit, precision),
                 "previous": _display_number(previous, unit, precision),
-                "change": _change_display(change_pct, row_trend),
+                "change": change_text,
             },
             key=key,
             meta={
@@ -739,17 +716,14 @@ def _department_name_from_record(record: dict[str, Any]) -> str:
 def _algorithm_name(record: dict[str, Any]) -> str:
     value = (
         record.get("algorithm_name")
-        or record.get("algorithmName")
         or record.get("work_order_name")
-        or record.get("workOrderName")
     )
     return str(value).strip() if value else ""
 
 
 def _location_from_record(record: dict[str, Any]) -> str:
     value = (
-        record.get("location")
-        or record.get("address")
+        record.get("address")
         or record.get("place")
         or record.get("road")
         or record.get("streetName")
@@ -884,6 +858,49 @@ def _change_display(change_pct: float | None, row_trend: str) -> str:
     return f"{marker} {abs(change_pct):.1f}%" if marker else f"{change_pct:.1f}%"
 
 
+def _format_value(value: float, precision: int) -> str:
+    if precision == 0:
+        return str(int(round(value)))
+    return f"{value:.{precision}f}".rstrip("0").rstrip(".")
+
+
+def _format_change(
+    current: float | None,
+    previous: float | None,
+    unit: str = "",
+    precision: int = 0,
+) -> tuple[str, str, float | None]:
+    """Compute QoQ change display, trend tag, and percent value.
+
+    When ``previous == 0`` the percentage is undefined, so we fall back to
+    showing the absolute delta with a 新增 / 减少 / 持平 prefix (方案 B+D).
+    Returns ``(display_text, trend, change_pct)`` where ``trend`` is one of
+    ``up`` / ``down`` / ``flat`` / ``new`` / ``unknown`` and ``change_pct``
+    is ``None`` when not applicable.
+    """
+    if current is None or previous is None:
+        return "", "unknown", None
+    if previous == 0:
+        if current == 0:
+            return "持平", "flat", 0.0
+        prefix = "新增" if current > 0 else "减少"
+        sign = "+" if current > 0 else "-"
+        unit_suffix = f" {unit}" if unit else ""
+        return (
+            f"{prefix} {sign}{_format_value(abs(current), precision)}{unit_suffix}",
+            "new",
+            None,
+        )
+    change_pct = round((current - previous) / abs(previous) * 100, 1)
+    if current > previous:
+        row_trend, marker = "up", "↑"
+    elif current < previous:
+        row_trend, marker = "down", "↓"
+    else:
+        row_trend, marker = "flat", "-"
+    return f"{marker} {abs(change_pct):.1f}%", row_trend, change_pct
+
+
 def _format_percent(value: float) -> str:
     if float(value).is_integer():
         return f"{int(value)}%"
@@ -899,9 +916,9 @@ def _period_date_keys(filt: NormalizedFilter) -> list[str]:
     return [(start + timedelta(days=offset)).isoformat() for offset in range(days + 1)]
 
 
-def _department_names_from_job_log(record: dict[str, Any]) -> list[str]:
+def  _department_names_from_job_log(record: dict[str, Any]) -> list[str]:
     # "deptidsTag": "22,23", "deptidsTagName": "垂直部门（单位）,经济实体",
-    raw_names = record.get("deptidsTagName", "")
+    raw_names = record.get("deptids_tag_name", "")
     if not raw_names:
         return []
     names = [part.strip() for part in str(raw_names).split(",") if part.strip()]
@@ -909,11 +926,11 @@ def _department_names_from_job_log(record: dict[str, Any]) -> list[str]:
 
 
 def _completed_flight_duration_hours(record: dict[str, Any]) -> float | None:
-    begin_time = _parse_dikong_datetime(record.get("begin_time") or record.get("beginTime"))
-    end_time = _parse_dikong_datetime(record.get("end_time") or record.get("endTime"))
-    if begin_time is None or end_time is None or end_time < begin_time:
+    start_time = _parse_dikong_datetime(record.get("start_time"))
+    stop_time = _parse_dikong_datetime(record.get("stop_time"))
+    if start_time is None or stop_time is None or stop_time < start_time:
         return None
-    return (end_time - begin_time).total_seconds() / 3600
+    return (stop_time - start_time).total_seconds() / 3600
 
 
 def _period_table_label(filt: NormalizedFilter, *, current: bool) -> str:
@@ -930,11 +947,11 @@ def _completed_flight_duration_minutes(records: list[dict[str, Any]]) -> list[fl
     for record in records:
         if str(record.get("status")) != "2":
             continue
-        begin_time = _parse_dikong_datetime(record.get("begin_time") or record.get("beginTime"))
-        end_time = _parse_dikong_datetime(record.get("end_time") or record.get("endTime"))
-        if begin_time is None or end_time is None or end_time < begin_time:
+        start_time = _parse_dikong_datetime(record.get("start_time"))
+        stop_time = _parse_dikong_datetime(record.get("stop_time"))
+        if start_time is None or stop_time is None or stop_time < start_time:
             continue
-        durations.append(round((end_time - begin_time).total_seconds() / 60, 2))
+        durations.append(round((stop_time - start_time).total_seconds() / 60, 2))
     return durations
 
 

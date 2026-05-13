@@ -7,10 +7,19 @@ import re
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SECRETS_DIR = PROJECT_ROOT / ".secrets"
 ENV_PLACEHOLDER_PATTERN = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
+
+# Populate os.environ from <repo>/.env on import so that downstream
+# ``resolve_env_value`` fallbacks (e.g. ``OPENAI_API_KEY``,
+# ``FLY_REPORT_TEXT2SQL_DSN``) work without every script having to call
+# ``load_dotenv`` itself. ``override=False`` keeps real environment vars
+# winning over file values, matching pydantic-settings semantics.
+load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 
 def resolve_env_value(value: Any, *env_names: str, cast_type: type | None = None) -> Any:

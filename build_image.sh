@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_TAG="${1:-swarmmind:wuyi-report-v0.1.1}"
+IMAGE_TAG="${1:-swarmmind:wuyi-report-v0.2}"
 
 if docker buildx version >/dev/null 2>&1; then
 	echo "Using BuildKit cache build: ${IMAGE_TAG}"

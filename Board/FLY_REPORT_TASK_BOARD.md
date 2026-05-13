@@ -59,6 +59,19 @@
 
   - defaultExpanded: false
 
+### 分析数据
+
+  - due: 2026-05-10
+  - priority: high
+  - workload: Hard
+  - defaultExpanded: false
+    ```md
+    1. 分析数据
+       主要是把报告的一些接口整理清楚，需要去把之前的对接内容梳理好。
+    2. 梳理 SQL 表
+       我要搞清楚整个数据库里哪些是最主要的表，哪些是次要的表，我们主要集中在哪些查询上。
+    ```
+
 ## In Progress
 
 ### SSE 前端联动与进度可视化（后端基础已在，前端对接未完成）
