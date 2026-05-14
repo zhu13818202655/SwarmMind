@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -335,11 +336,16 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
     intent_parser = IntentParser(build_intent_agent(settings.agent.model))
     dikong_client = DikongClient(settings.fly_report.dikong)
     data_fetcher = DataFetcher(dikong_client)
+    fly_report_output_root = Path(
+        os.environ.get("FLY_REPORT_OUTPUT_ROOT")
+        or Path(settings.storage_path) / "fly_report_artifacts"
+    )
     app.state.fly_report_service = FlyReportService(
         repository=fly_report_repo,
         event_bus=fly_report_event_bus,
         intent_parser=intent_parser,
         data_fetcher=data_fetcher,
+        output_root=fly_report_output_root,
     )
     app.include_router(
         create_fly_report_router(app.state.fly_report_service)

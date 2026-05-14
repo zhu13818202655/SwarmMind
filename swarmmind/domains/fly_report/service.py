@@ -559,11 +559,18 @@ class FlyReportService:
             # TODO 针对用户本身的权限进行过滤，针对用户请求的维度/部门进行过滤
             self._enter(record, SessionState.AUTHORIZING, "intent_parsed")
             t0 = time.perf_counter()
+            configured_dept_ids = [
+                int(_id) for _id in config.fly_report.dikong.department_id_list
+            ]
             if not record.filter_spec.dept_ids:
-                record.filter_spec.dept_ids = config.fly_report.dikong.department_id_list
+                record.filter_spec.dept_ids = list(configured_dept_ids)
                 record.filter_spec.dept_names = dept_names
             normalized = NormalizedFilter.from_filter(record.filter_spec)
-            normalized.dept_ids = [ int(_id) for name, _id in zip(dept_names, config.fly_report.dikong.department_id_list) if name in normalized.dept_names ]
+            normalized.dept_ids = [
+                _id
+                for name, _id in zip(dept_names, configured_dept_ids)
+                if name in normalized.dept_names
+            ]
             decision = self._permission_gate.evaluate(
                 tenant_id=record.tenant_id,
                 user_id=record.user_id,
