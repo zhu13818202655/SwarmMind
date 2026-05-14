@@ -214,19 +214,24 @@ class DataFetcher:
 
         allowed = {str(dept_id) for dept_id in dept_ids}
 
-        def _record_dept_id(record: Any) -> str | None:
+        def _record_dept_ids(record: Any) -> set[str]:
             if not isinstance(record, dict):
-                return None
-            for key in ("deptId", "dept_id"):
+                return set()
+            for key in ("deptidsTag", "deptids_tag"):
                 value = record.get(key)
-                if value is not None:
-                    return str(value)
-            return None
+                if value is None:
+                    continue
+                if isinstance(value, (list, tuple, set)):
+                    parts: list[str] = [str(item) for item in value]
+                else:
+                    parts = str(value).split(",")
+                return {str(part.strip()) for part in parts if part and part.strip()}
+            return set()
 
         filtered_records = [
             record
             for record in records
-            if _record_dept_id(record) in allowed
+            if _record_dept_ids(record) & allowed
         ]
         filtered = dict(payload)
         filtered["records"] = filtered_records
