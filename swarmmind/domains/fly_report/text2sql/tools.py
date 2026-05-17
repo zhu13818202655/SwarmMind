@@ -172,6 +172,12 @@ def _parse_csv_payload(payload: str) -> list[dict[str, Any]]:
         from io import StringIO
 
         df = pd.read_csv(StringIO(csv_part))
+        # ``pd.read_csv`` turns empty cells into ``NaN``. Those values would
+        # later be serialised by ``json.dumps`` as the literal ``NaN`` (Python
+        # allows it by default) which is **not** valid JSON and breaks SSE
+        # consumers such as the browser ``EventSource`` / ``JSON.parse``.
+        # Convert NaN -> None so the downstream payload is strict JSON.
+        df = df.astype(object).where(pd.notna(df), None)
         return df.to_dict(orient="records")
     except Exception:
         return []

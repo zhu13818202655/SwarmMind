@@ -419,6 +419,15 @@ class FlyReportService:
                 f"session {session_id} is terminal ({record.state.value})"
             )
         async with record.lock:
+            logger.info(
+                "fly_report.send_message.received",
+                extra={
+                    "session_id": record.id,
+                    "user_id": record.user_id,
+                    "text_length": len(text),
+                    "text_preview": text[:120],
+                },
+            )
             intent = await self._intent_classifier.classify(text)
             logger.info(
                 "fly_report.intent_classified",
@@ -615,7 +624,25 @@ class FlyReportService:
             self._enter(record, SessionState.FETCHING, "authorized")
             t0 = time.perf_counter()
             record.raw = await self._data_fetcher.fetch(normalized)
-            self._metrics.observe_stage("fetching", time.perf_counter() - t0)
+            fetch_elapsed = time.perf_counter() - t0
+            self._metrics.observe_stage("fetching", fetch_elapsed)
+            fetch_summary = _summarize_raw_dataset(record.raw)
+            logger.info(
+                "fly_report.data_fetched",
+                extra={
+                    "session_id": record.id,
+                    "elapsed_sec": round(fetch_elapsed, 3),
+                    "period": (
+                        f"{normalized.period.start}~{normalized.period.end}"
+                        if normalized.period
+                        else None
+                    ),
+                    "dept_scope": normalized.dimension.scope,
+                    "dept_ids": list(normalized.dept_ids or []),
+                    "current_summary": fetch_summary["current"],
+                    "previous_summary": fetch_summary["previous"],
+                },
+            )
             stages.append(
                 {
                     "stage": "fetching",
@@ -639,7 +666,16 @@ class FlyReportService:
             self._enter(record, SessionState.ANALYZING, "data_fetched")
             t0 = time.perf_counter()
             record.analysis = analyze(record.raw, normalized)
-            self._metrics.observe_stage("analyzing", time.perf_counter() - t0)
+            analyze_elapsed = time.perf_counter() - t0
+            self._metrics.observe_stage("analyzing", analyze_elapsed)
+            logger.info(
+                "fly_report.analyzed",
+                extra={
+                    "session_id": record.id,
+                    "elapsed_sec": round(analyze_elapsed, 3),
+                    "sections": _summarize_analysis(record.analysis),
+                },
+            )
             stages.append(
                 {
                     "stage": "analyzing",
@@ -679,6 +715,16 @@ class FlyReportService:
                 {
                     "revision": record.revision,
                     "section_count": len(section_summaries),
+                },
+            )
+            logger.info(
+                "fly_report.pipeline_succeeded",
+                extra={
+                    "session_id": record.id,
+                    "revision": record.revision,
+                    "section_count": len(section_summaries),
+                    "markdown_chars": len(record.ctx or ""),
+                    "final_state": record.state.value,
                 },
             )
         except FlyReportError as exc:
@@ -796,7 +842,21 @@ class FlyReportService:
                 )
                 raise
             self._metrics.record_render(success=True)
-            self._metrics.observe_stage("rendering", time.perf_counter() - t0)
+            render_elapsed = time.perf_counter() - t0
+            self._metrics.observe_stage("rendering", render_elapsed)
+            logger.info(
+                "fly_report.render_succeeded",
+                extra={
+                    "session_id": record.id,
+                    "user_id": record.user_id,
+                    "output_format": artifact.output_format,
+                    "template_ref": artifact.template_ref,
+                    "filename": Path(artifact.artifact_path).name,
+                    "chart_count": len(artifact.chart_paths),
+                    "warning_count": len(artifact.warnings),
+                    "elapsed_sec": round(render_elapsed, 3),
+                },
+            )
 
             artifact_record = {
                 "output_format": artifact.output_format,
@@ -1300,8 +1360,27 @@ class FlyReportService:
     async def _run_plain_text_interaction(
         self, interaction: FlyReportInteraction
     ) -> None:
+        logger.info(
+            "fly_report.chitchat.interaction_start",
+            extra={
+                "interaction_id": interaction.id,
+                "session_id": interaction.session_id,
+                "user_id": interaction.user_id,
+                "text_preview": interaction.input_text[:120],
+            },
+        )
+        t0 = time.perf_counter()
         await self._ensure_not_cancelled(interaction)
         answer = await self._plain_text_answer(interaction.input_text)
+        logger.info(
+            "fly_report.chitchat.interaction_completed",
+            extra={
+                "interaction_id": interaction.id,
+                "reply_length": len(answer),
+                "reply_preview": answer[:120],
+                "elapsed_sec": round(time.perf_counter() - t0, 3),
+            },
+        )
         # Chitchat replies are short; emit a single ``message.item`` instead
         # of synthesising fake ``message.delta`` chunks. This avoids the UX
         # confusion where a placeholder bubble (built from deltas) and the
@@ -1336,6 +1415,15 @@ class FlyReportService:
         does not need new rules.
         """
 
+        logger.info(
+            "fly_report.data_query.interaction_start",
+            extra={
+                "interaction_id": interaction.id,
+                "session_id": interaction.session_id,
+                "user_id": interaction.user_id,
+                "text_preview": interaction.input_text[:120],
+            },
+        )
         await self._ensure_not_cancelled(interaction)
         await self._emit_phase(
             interaction,
@@ -1392,6 +1480,7 @@ class FlyReportService:
             "已生成 SQL，正在连接数据库执行查询。",
         )
 
+        t0 = time.perf_counter()
         try:
             answer = await service.answer(interaction.input_text)
         except Text2SqlError as exc:
@@ -1399,7 +1488,9 @@ class FlyReportService:
                 "fly_report.text2sql.service_failed",
                 extra={
                     "interaction_id": interaction.id,
+                    "session_id": interaction.session_id,
                     "error": str(exc),
+                    "elapsed_sec": round(time.perf_counter() - t0, 3),
                 },
             )
             await self._record_text2sql_error_message(interaction, str(exc))
@@ -1414,7 +1505,30 @@ class FlyReportService:
 
         await self._ensure_not_cancelled(interaction)
 
+        logger.info(
+            "fly_report.data_query.interaction_answered",
+            extra={
+                "interaction_id": interaction.id,
+                "session_id": interaction.session_id,
+                "elapsed_sec": round(time.perf_counter() - t0, 3),
+                "executed": answer.executed,
+                "row_count": answer.result.row_count if answer.result else 0,
+                "sql_attempts": len(answer.sql_attempts),
+                "success": answer.is_success(),
+                "has_sql": bool(answer.sql),
+                "error": answer.error,
+            },
+        )
+
         if not answer.is_success() and answer.sql is None:
+            logger.warning(
+                "fly_report.data_query.interaction_no_sql",
+                extra={
+                    "interaction_id": interaction.id,
+                    "session_id": interaction.session_id,
+                    "error": answer.error,
+                },
+            )
             await self._record_text2sql_error_message(
                 interaction, answer.error or "未生成 SQL"
             )
@@ -1440,6 +1554,14 @@ class FlyReportService:
             status="completed",
             phase="done",
             completed_at=_utcnow(),
+        )
+        logger.info(
+            "fly_report.data_query.interaction_succeeded",
+            extra={
+                "interaction_id": interaction.id,
+                "session_id": interaction.session_id,
+                "row_count": answer.result.row_count if answer.result else 0,
+            },
         )
         await self._finish_interaction_stream(interaction.id)
 
@@ -1575,6 +1697,17 @@ class FlyReportService:
     async def _run_report_interaction(
         self, interaction: FlyReportInteraction
     ) -> None:
+        logger.info(
+            "fly_report.report.interaction_start",
+            extra={
+                "interaction_id": interaction.id,
+                "session_id": interaction.session_id,
+                "user_id": interaction.user_id,
+                "text_preview": interaction.input_text[:120],
+                "output_format": interaction.output_format,
+                "template_ref": interaction.template_ref,
+            },
+        )
         record = await self._load_session(
             interaction.session_id, user_id=interaction.user_id
         )
@@ -1731,6 +1864,17 @@ class FlyReportService:
             status="completed",
             phase="done",
             completed_at=_utcnow(),
+        )
+        logger.info(
+            "fly_report.report.interaction_succeeded",
+            extra={
+                "interaction_id": interaction.id,
+                "session_id": interaction.session_id,
+                "revision": record.revision,
+                "output_format": artifact.output_format,
+                "filename": Path(artifact.artifact_path).name,
+                "chart_count": len(artifact.chart_paths),
+            },
         )
         await self._finish_interaction_stream(interaction.id)
 
@@ -1893,7 +2037,25 @@ class FlyReportService:
     async def _handle_chitchat_turn(
         self, record: _SessionRecord, text: str
     ) -> ChatTurn:
+        logger.info(
+            "fly_report.chitchat.start",
+            extra={
+                "session_id": record.id,
+                "user_id": record.user_id,
+                "text_preview": text[:120],
+            },
+        )
+        t0 = time.perf_counter()
         reply_text = await self._plain_text_answer(text)
+        logger.info(
+            "fly_report.chitchat.completed",
+            extra={
+                "session_id": record.id,
+                "reply_length": len(reply_text),
+                "reply_preview": reply_text[:120],
+                "elapsed_sec": round(time.perf_counter() - t0, 3),
+            },
+        )
         reply = ChatTurn(
             role="assistant",
             text=reply_text,
@@ -1908,8 +2070,23 @@ class FlyReportService:
     async def _handle_data_query_turn(
         self, record: _SessionRecord, text: str
     ) -> ChatTurn:
+        logger.info(
+            "fly_report.data_query.start",
+            extra={
+                "session_id": record.id,
+                "user_id": record.user_id,
+                "text_preview": text[:120],
+            },
+        )
         service = self._get_text2sql_service()
         if service is None:
+            logger.warning(
+                "fly_report.data_query.unavailable",
+                extra={
+                    "session_id": record.id,
+                    "reason": self._text2sql_init_error,
+                },
+            )
             reply_text = (
                 "数据查询能力（Text-to-SQL）暂未启用。请管理员配置 "
                 "fly_report.text2sql 后重试。"
@@ -1919,12 +2096,35 @@ class FlyReportService:
                 "status": "disabled",
             }
         else:
+            t0 = time.perf_counter()
             try:
                 answer = await service.answer(text)
             except Text2SqlError as exc:
+                logger.warning(
+                    "fly_report.data_query.failed",
+                    extra={
+                        "session_id": record.id,
+                        "error": str(exc),
+                        "elapsed_sec": round(time.perf_counter() - t0, 3),
+                    },
+                )
                 reply_text = f"数据查询失败：{exc}"
                 payload = {"intent": "data_query", "status": "error", "error": str(exc)}
             else:
+                logger.info(
+                    "fly_report.data_query.completed",
+                    extra={
+                        "session_id": record.id,
+                        "elapsed_sec": round(time.perf_counter() - t0, 3),
+                        "executed": answer.executed,
+                        "row_count": (
+                            answer.result.row_count if answer.result else 0
+                        ),
+                        "sql_attempts": len(answer.sql_attempts),
+                        "success": answer.is_success(),
+                        "error": answer.error,
+                    },
+                )
                 payload = {"intent": "data_query", **answer.to_payload()}
                 if answer.is_success() and answer.executed and answer.result is not None:
                     reply_text = (
@@ -2270,6 +2470,74 @@ def _content_type_for_format(output_format: str, filename: str) -> str:
     if suffix == ".html":
         return "text/html; charset=utf-8"
     return "application/octet-stream"
+
+
+def _summarize_payload(payload: Any) -> Any:
+    """Return a lightweight, log-safe summary of a fetched payload.
+
+    Only structural metadata is emitted (counts, top-level keys); raw
+    business data is intentionally omitted to keep logs small and free
+    of PII.
+    """
+    if isinstance(payload, list):
+        return {"type": "list", "count": len(payload)}
+    if isinstance(payload, dict):
+        keys = list(payload.keys())
+        # If the dict looks like a paginated response, surface the total.
+        total: Any = None
+        for k in ("total", "totalCount", "rows_count"):
+            if k in payload and isinstance(payload[k], int):
+                total = payload[k]
+                break
+        rows = payload.get("rows") if isinstance(payload, dict) else None
+        rows_count = len(rows) if isinstance(rows, list) else None
+        summary: dict[str, Any] = {
+            "type": "dict",
+            "key_count": len(keys),
+            "keys": keys[:12],
+        }
+        if total is not None:
+            summary["total"] = total
+        if rows_count is not None:
+            summary["rows_count"] = rows_count
+        return summary
+    if payload is None:
+        return {"type": "none"}
+    return {"type": type(payload).__name__}
+
+
+def _summarize_raw_dataset(raw: RawDataset) -> dict[str, Any]:
+    def _walk(bucket: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for endpoint, payload in bucket.items():
+            if endpoint.startswith("__"):
+                continue
+            # Endpoints scoped per-department arrive as ``{dept_id: payload}``.
+            if isinstance(payload, dict) and payload and all(
+                isinstance(k, str) and k.isdigit() for k in payload.keys()
+            ):
+                out[endpoint] = {
+                    dept_id: _summarize_payload(inner)
+                    for dept_id, inner in payload.items()
+                }
+            else:
+                out[endpoint] = _summarize_payload(payload)
+        return out
+
+    return {
+        "current": _walk(raw.current or {}),
+        "previous": _walk(raw.previous or {}),
+    }
+
+
+def _summarize_analysis(analysis: AnalysisResult | None) -> dict[str, int]:
+    if analysis is None:
+        return {}
+    out: dict[str, int] = {}
+    for field_name, value in analysis.model_dump().items():
+        if isinstance(value, dict):
+            out[field_name] = len(value)
+    return out
 
 
 __all__ = ["FlyReportService", "FlyReportError"]

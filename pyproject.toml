@@ -11,6 +11,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "psycopg[binary]>=3.2.0",
+    "psycopg-pool>=3.2.0",
     # Vanna 2.0 PostgresRunner imports psycopg2 (the legacy v2 driver) directly,
     # so we ship psycopg2-binary alongside psycopg v3.
     "psycopg2-binary>=2.9.0",

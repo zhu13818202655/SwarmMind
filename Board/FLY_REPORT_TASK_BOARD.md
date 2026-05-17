@@ -5,9 +5,6 @@
 ### 偏好系统（被动学习）
 
 
-### FlyReport 轻量 LM Chat 接入（替代旧方案）
-
-
 ### Tracing/OTel 贯通
 
 
@@ -49,28 +46,17 @@
     2. 视频时长
     ```
 
-### 优化部门filter prompt
-
-  - due: 2026-05-09
-  - priority: high
-  - defaultExpanded: false
-
 ### 大模型部署客户机器
 
   - defaultExpanded: false
 
-### 分析数据
+### text2sql优化
 
-  - due: 2026-05-10
-  - priority: high
-  - workload: Hard
   - defaultExpanded: false
-    ```md
-    1. 分析数据
-       主要是把报告的一些接口整理清楚，需要去把之前的对接内容梳理好。
-    2. 梳理 SQL 表
-       我要搞清楚整个数据库里哪些是最主要的表，哪些是次要的表，我们主要集中在哪些查询上。
-    ```
+  - steps:
+      - [ ] 输出result- 结果
+      - [ ] 输出summary 总结
+      - [ ] 检查json里面不要有nan
 
 ## In Progress
 
@@ -99,6 +85,28 @@
 ## Done
 
 ### 会话主链路 API 已落地（创建会话、发消息、确认、取消、查询会话、查询历史）
+
+
+### 优化部门filter prompt
+
+  - due: 2026-05-09
+  - priority: high
+  - defaultExpanded: false
+
+### 分析数据
+
+  - due: 2026-05-10
+  - priority: high
+  - workload: Hard
+  - defaultExpanded: false
+    ```md
+    1. 分析数据
+    主要是把报告的一些接口整理清楚，需要去把之前的对接内容梳理好。
+    2. 梳理 SQL 表
+    我要搞清楚整个数据库里哪些是最主要的表，哪些是次要的表，我们主要集中在哪些查询上。
+    ```
+
+### FlyReport 轻量 LM Chat 接入（替代旧方案）
 
 
 ### 流式消息接口已落地（SSE）

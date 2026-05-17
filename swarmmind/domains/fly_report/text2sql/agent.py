@@ -89,7 +89,7 @@ _SILENT_RICH_TYPES = {
     "ComponentType.CHAT_INPUT_UPDATE",
 }
 _NOISE_SUFFIXES = ("**IMPORTANT: FOR VISUALIZE_DATA USE FILENAME:",)
-_FINAL_HINTS = ("**summary**", "**sql**", "**result**")
+_FINAL_HINTS = ("**总结**", "**sql**", "**结果**", "**summary**", "**result**")
 
 
 def _component_text(component) -> tuple[str | None, str | None]:
@@ -323,7 +323,7 @@ class Text2SqlAgent:
 
         return Text2SqlAgentResult(
             question=question,
-            answer=final_text or "(no answer)",
+            answer=final_text or "（无回答）",
             sql=sql,
             rows=(last_ok or {}).get("rows", []),
             row_count=(last_ok or {}).get("row_count", 0),

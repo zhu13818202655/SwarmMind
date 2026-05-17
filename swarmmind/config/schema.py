@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -412,6 +412,101 @@ class FlyReportDikongConfig(ValidatedDefaultsModel):
         return resolve_env_value(value, "DIKONG_PASSWORD")
 
 
+class FlyReportPostgresConfig(ValidatedDefaultsModel):
+    """PostgreSQL connection settings for the FlyReport SQL data fetcher.
+
+    Used by :class:`swarmmind.domains.fly_report.dikong_sql.client.DikongSqlClient`
+    to drive a single ``psycopg_pool.AsyncConnectionPool`` per process.
+    Credentials must come from environment variables – never commit a real DSN.
+    """
+
+    dsn: str | None = Field(
+        default=None,
+        description=(
+            "PostgreSQL DSN, e.g. ``postgresql://user:pwd@host:port/dbname``. "
+            "Resolved from env: FLY_REPORT_DIKONG_PG_DSN."
+        ),
+    )
+    pool_min_size: int = Field(default=2, ge=0)
+    pool_max_size: int = Field(default=10, ge=1)
+    pool_timeout_seconds: float = Field(default=10.0, gt=0.0)
+    statement_timeout_ms: int = Field(default=30_000, ge=100)
+    server_side_cursor_itersize: int = Field(default=5_000, ge=1)
+    application_name: str = Field(default="swarmmind-fly-report")
+    fly_job_logs_row_cap: int = Field(
+        default=1_000_000,
+        ge=1,
+        description="Hard SQL-side LIMIT applied to fly_job_logs to avoid OOM.",
+    )
+
+    @field_validator("dsn", mode="before")
+    @classmethod
+    def resolve_dsn(cls, value: Any) -> Any:
+        return resolve_env_value(
+            value,
+            "FLY_REPORT_DIKONG_PG_DSN",
+            "SWARMMIND_FLY_REPORT__DIKONG_SQL__POSTGRES__DSN",
+        )
+
+
+class FlyReportTDengineConfig(ValidatedDefaultsModel):
+    """TDengine REST connection settings for the FlyReport SQL data fetcher.
+
+    Talks to taosAdapter (default port 6041). Credentials come from env.
+    """
+
+    base_url: str = Field(
+        default="http://127.0.0.1:6041",
+        description="taosAdapter base URL, e.g. http://host:6041",
+    )
+    database: str = Field(default="dikong")
+    username: str = Field(default="root")
+    password: str | None = Field(default=None)
+    timeout_seconds: float = Field(default=30.0, gt=0.0)
+    max_connections: int = Field(default=10, ge=1)
+    max_keepalive_connections: int = Field(default=5, ge=0)
+    verify_tls: bool = Field(default=True)
+    max_retries: int = Field(default=1, ge=0)
+    retry_backoff_seconds: float = Field(default=0.5, ge=0.0)
+
+    @field_validator("base_url", mode="before")
+    @classmethod
+    def resolve_base_url(cls, value: Any) -> Any:
+        return resolve_env_value(
+            value,
+            "FLY_REPORT_DIKONG_TDENGINE_URL",
+            "SWARMMIND_FLY_REPORT__DIKONG_SQL__TDENGINE__BASE_URL",
+        )
+
+    @field_validator("database", mode="before")
+    @classmethod
+    def resolve_database(cls, value: Any) -> Any:
+        return resolve_env_value(
+            value, "FLY_REPORT_DIKONG_TDENGINE_DB"
+        )
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def resolve_username(cls, value: Any) -> Any:
+        return resolve_env_value(
+            value, "FLY_REPORT_DIKONG_TDENGINE_USER"
+        )
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def resolve_password(cls, value: Any) -> Any:
+        return resolve_env_value(
+            value, "FLY_REPORT_DIKONG_TDENGINE_PASSWORD"
+        )
+
+
+class FlyReportDikongSqlConfig(ValidatedDefaultsModel):
+    """Combined PG + TDengine settings driving the SQL data fetcher."""
+
+    postgres: FlyReportPostgresConfig = Field(default_factory=FlyReportPostgresConfig)
+    tdengine: FlyReportTDengineConfig = Field(default_factory=FlyReportTDengineConfig)
+
+
 class FlyReportText2SqlConfig(ValidatedDefaultsModel):
     """Configuration for the FlyReport Text-to-SQL data-query pipeline.
 
@@ -484,10 +579,27 @@ class FlyReportConfig(ValidatedDefaultsModel):
     """Domain-level configuration for FlyReport."""
 
     enabled: bool = Field(default=True, description="Toggle for the FlyReport domain")
+    source: Literal["http", "sql"] = Field(
+        default="http",
+        description=(
+            "Data source for the FlyReport pipeline. ``http`` uses the dikong "
+            "REST client; ``sql`` reads PostgreSQL + TDengine directly via "
+            ":class:`DikongSqlClient`."
+        ),
+    )
     dikong: FlyReportDikongConfig = Field(default_factory=FlyReportDikongConfig)
+    dikong_sql: FlyReportDikongSqlConfig = Field(
+        default_factory=FlyReportDikongSqlConfig,
+        description="PG + TDengine settings used when ``source == 'sql'``.",
+    )
     text2sql: FlyReportText2SqlConfig = Field(default_factory=FlyReportText2SqlConfig)
 
     @field_validator("enabled", mode="before")
     @classmethod
     def resolve_enabled(cls, value: Any) -> Any:
         return resolve_env_value(value, "SWARMMIND_FLY_REPORT__ENABLED", cast_type=bool)
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def resolve_source(cls, value: Any) -> Any:
+        return resolve_env_value(value, "SWARMMIND_FLY_REPORT__SOURCE")

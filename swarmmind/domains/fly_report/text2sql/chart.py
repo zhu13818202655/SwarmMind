@@ -22,6 +22,7 @@ import datetime as _dt
 import hashlib
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,32 @@ CHART_OUTPUT_ROOT = (
     / "generated_charts"
 )
 CHART_URL_PREFIX = "/v1/fly-reports/charts"
+
+
+def _resolve_public_base_url() -> str:
+    """Return an absolute URL prefix for chart links.
+
+    When ``FLY_REPORT_PUBLIC_BASE_URL`` (or ``SWARMMIND_PUBLIC_BASE_URL``)
+    is set, chart links become absolute URLs so they render correctly when
+    the assistant answer is exported (Markdown/DOCX), copied to another
+    host, or rendered by a frontend served from a different origin. When
+    unset, fall back to the relative ``/v1/fly-reports/charts`` prefix
+    (preserves the previous same-origin behaviour).
+    """
+    raw = (
+        os.environ.get("FLY_REPORT_PUBLIC_BASE_URL")
+        or ""
+    ).strip()
+    if not raw:
+        return ""
+    return raw.rstrip("/")
+
+
+def _build_chart_url(filename: str) -> str:
+    base = _resolve_public_base_url()
+    if base:
+        return f"{base}{CHART_URL_PREFIX}/{filename}"
+    return f"{CHART_URL_PREFIX}/{filename}"
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +108,7 @@ def build_chart_for_text2sql(
         logger.exception("fly_report.text2sql.chart_render_failed")
         return None
 
-    url = f"{CHART_URL_PREFIX}/{path.name}"
+    url = _build_chart_url(path.name)
     return ChartArtifact(
         path=path,
         url=url,

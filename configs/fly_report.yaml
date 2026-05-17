@@ -10,6 +10,9 @@
 # re-logs in on 401.
 fly_report:
   enabled: true
+  # Data source: "http" uses the dikong REST client (default for backwards
+  # compat), "sql" reads PostgreSQL + TDengine directly via DikongSqlClient.
+  source: sql
   dikong:
     base_url: "http://127.0.0.1:50001"
     account: null
@@ -22,6 +25,35 @@ fly_report:
     max_concurrency: 8
     rate_limit_per_second: 10.0
     department_id_list: ["380", "375", "382", "381", "395", "394", "384"]
+  # Direct SQL access used when source == "sql".
+  # All credentials come from environment variables -- the validators on
+  # ``FlyReportPostgresConfig`` / ``FlyReportTDengineConfig`` resolve the
+  # following env vars automatically:
+  #   FLY_REPORT_DIKONG_PG_DSN
+  #   FLY_REPORT_DIKONG_TDENGINE_URL
+  #   FLY_REPORT_DIKONG_TDENGINE_DB
+  #   FLY_REPORT_DIKONG_TDENGINE_USER
+  #   FLY_REPORT_DIKONG_TDENGINE_PASSWORD
+  # so YAML only needs to override non-secret tunables.
+  dikong_sql:
+    postgres:
+      pool_min_size: 2
+      pool_max_size: 10
+      pool_timeout_seconds: 10.0
+      statement_timeout_ms: 30000
+      server_side_cursor_itersize: 5000
+      application_name: "swarmmind-fly-report"
+      fly_job_logs_row_cap: 1000000
+    tdengine:
+      base_url: "http://127.0.0.1:51741"
+      database: dikong
+      username: fly_report_ro
+      timeout_seconds: 30.0
+      max_connections: 10
+      max_keepalive_connections: 5
+      verify_tls: true
+      max_retries: 1
+      retry_backoff_seconds: 0.5
   text2sql:
     enabled: true
     # Hand-curated YAML knowledge base (tables / metrics / golden_qa).

@@ -55,6 +55,13 @@ docker buildx inspect --bootstrap
 
 > 注意：`no_proxy` 必须用 `|` 分隔，逗号会被 buildx CLI 解析成多 driver-opt。
 
+> ⚠️ **代理环境变量只在 `docker buildx create` 时注入，事后无法用 `update` 补加**。
+> 如果 builder 早先是不带 `--driver-opt env.*_proxy=...` 创建的（例如此前手动跑过
+> 一遍 `create` 没带代理），构建第一步拉 `docker/dockerfile:1.7` 时会直接报
+> `failed to fetch anonymous token: ... read: connection reset by peer`。
+> 处理方式：`docker buildx rm swarmmind-arm64` 后按上面命令完整重建一次即可，
+> 历史 layer 缓存丢失没关系，下一次构建会重新建立。
+
 ---
 
 ## 2. 日常构建（代码每次改动后做这个）
@@ -155,6 +162,7 @@ sudo docker image prune -f
 |---|---|---|
 | `docker buildx: 'buildx' is not a docker command` | buildx 未安装 | 见 1.1 |
 | `failed to resolve source metadata for docker.io/...: i/o timeout` | builder 容器没走代理 | 见 1.3，重建 builder |
+| `failed to fetch anonymous token: ... read: connection reset by peer`（拉 `docker/dockerfile:1.7` 时） | builder 是早先无代理参数创建的，`*_proxy` 没生效 | `docker buildx rm swarmmind-arm64` 后按 1.3 完整重建（不能 `update` 补代理） |
 | `invalid value "127.0.0.1", expecting k=v` | `no_proxy` 用了逗号 | 改成 `\|` 分隔，见 1.3 |
 | 12 上 `exec /usr/local/bin/python: exec format error` | 镜像还是 amd64 | 确认 12 上 `docker image inspect` 是 `linux/arm64`，重新 load |
 | 12 上 backend 起不来，migrate 退出 255 | DSN 连不上 PG / 密码错 | 在 12 上跑 `docker run --rm --platform linux/arm64 postgres:16-alpine psql "<DSN>" -c "select 1"` 验证 |

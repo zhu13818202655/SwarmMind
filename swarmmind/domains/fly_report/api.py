@@ -665,8 +665,33 @@ def _interaction_view(interaction) -> InteractionView:
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
-    payload = json.dumps(data, ensure_ascii=False, default=str)
+    # ``allow_nan=False`` enforces strict JSON so we never emit the literal
+    # ``NaN`` / ``Infinity`` tokens (which browsers and ``JSON.parse`` reject)
+    # over the SSE stream. If a payload still slips through with NaN we fall
+    # back to a sanitised dump that converts NaN/inf to ``null``.
+    try:
+        payload = json.dumps(
+            data, ensure_ascii=False, default=str, allow_nan=False
+        )
+    except ValueError:
+        payload = json.dumps(
+            _sanitise_json(data), ensure_ascii=False, default=str
+        )
     return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _sanitise_json(value: Any) -> Any:
+    import math
+
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+    if isinstance(value, dict):
+        return {k: _sanitise_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_sanitise_json(v) for v in value]
+    return value
 
 
 def _audit_view(row: dict[str, Any]) -> AuditView:

@@ -61,6 +61,48 @@ class DikongAuthError(DikongApiError):
     code = "fly_report.dikong_auth_error"
 
 
+class DikongPgSqlError(FlyReportError):
+    """PostgreSQL query failure when running the SQL data fetcher."""
+
+    code = "fly_report.dikong_pg_sql_error"
+
+
+class DikongPgSqlTimeoutError(DikongPgSqlError):
+    """A PostgreSQL statement hit ``statement_timeout``."""
+
+    code = "fly_report.dikong_pg_sql_timeout"
+
+
+class DikongTdError(FlyReportError):
+    """TDengine REST API returned a non-zero ``code`` or transport failure."""
+
+    code = "fly_report.dikong_td_error"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        td_code: int | None = None,
+        desc: str | None = None,
+        sql: str | None = None,
+    ) -> None:
+        details: dict[str, Any] = {}
+        if td_code is not None:
+            details["td_code"] = td_code
+        if desc is not None:
+            details["desc"] = desc
+        if sql is not None:
+            # Avoid leaking the full statement in logs; trim to a short preview.
+            details["sql_preview"] = sql.strip()[:512]
+        super().__init__(message, details=details)
+
+
+class DikongTdTimeoutError(DikongTdError):
+    """TDengine REST request timed out."""
+
+    code = "fly_report.dikong_td_timeout"
+
+
 class RenderError(FlyReportError):
     code = "fly_report.render_error"
 

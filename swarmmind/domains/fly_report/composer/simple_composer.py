@@ -30,6 +30,7 @@ REPORT_TITLE = "武义飞行服务平台飞行统计报告"
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 CHART_OUTPUT_ROOT = Path(__file__).resolve().parents[4] / "data" / "fly_report_artifacts" / "generated_charts"
 LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
+EMPTY_DATA_HINT = "本期暂无相关数据。"
 
 config = get_settings()
 
@@ -87,6 +88,20 @@ async def build_overview_section(
     filt: NormalizedFilter,
     section_title: str,
 ) -> str:
+    overview_tables = [
+        analysis.flight_stat_overall,
+        analysis.flight_stat_day_trend,
+        analysis.flight_stat_department_share,
+        analysis.media_collection_summary,
+        analysis.algorithm_recognition_overall,
+        analysis.algorithm_recognition_distribution,
+        analysis.algorithm_disposal_summary,
+        analysis.algorithm_high_frequency_locations,
+        analysis.algorithm_high_frequency_time_slots,
+        analysis.algorithm_push_events,
+    ]
+    if not any(_table_has_numeric_data(table) for table in overview_tables):
+        return _empty_section_markdown(section_title)
     summary = await llm_client.chat(
         system_prompt=(
             "你是一个简洁的助手，根据提供的数据概况生成一段简短的总结，"
@@ -123,6 +138,8 @@ async def build_flight_stat_overall_section(
     filt: NormalizedFilter,
     section_title: str,
 ) -> str:
+    if not _table_has_numeric_data(analysis.flight_stat_overall):
+        return _empty_section_markdown(section_title)
     table = dict_table_to_markdown(analysis.flight_stat_overall, title_level=-1)
     summary = await llm_client.chat(
         system_prompt=(
@@ -153,6 +170,8 @@ async def build_flight_stat_day_trend_section(
     filt: NormalizedFilter,
     section_title: str,
 ) -> str:
+    if not _table_has_numeric_data(analysis.flight_stat_day_trend):
+        return _empty_section_markdown(section_title)
     table = dict_table_to_markdown(analysis.flight_stat_day_trend, title_level=-1)
     chart = _build_day_trend_line_chart_markdown(analysis.flight_stat_day_trend)
     summary = await llm_client.chat(
@@ -400,6 +419,8 @@ async def build_department_share_section(
     filt: NormalizedFilter,
     section_title: str,
 ) -> str:
+    if not _table_has_numeric_data(analysis.flight_stat_department_share):
+        return _empty_section_markdown(section_title)
     table = dict_table_to_markdown(analysis.flight_stat_department_share, title_level=-1)
     chart = _build_table_pie_chart_markdown(
         table=analysis.flight_stat_department_share,
@@ -437,33 +458,45 @@ async def build_algorithm_stat_overall_section(
     filt: NormalizedFilter,
     section_title: str,
 ) -> str:
-    overall_table = dict_table_to_markdown(analysis.algorithm_recognition_overall, title_level=-1)
-    distribution_table = dict_table_to_markdown(
-        analysis.algorithm_recognition_distribution,
-        title_level=-1,
-    )
-    chart = _build_table_pie_chart_markdown(
-        table=analysis.algorithm_recognition_distribution,
-        label_key="algorithm_name",
-        value_meta_key="recognized_count_value",
-        value_key="recognized_count",
-        title="各场景算法调用次数",
-        filename_prefix="algorithm-recognition-distribution",
-        aggregate_by_label=True,
-    )
-    heading = f"## {section_title}\n\n" if section_title else ""
+    has_overall = _table_has_numeric_data(analysis.algorithm_recognition_overall)
+    has_distribution = _table_has_numeric_data(analysis.algorithm_recognition_distribution)
+    if not has_overall and not has_distribution:
+        return _empty_section_markdown(section_title)
 
-    return (
-        f"{heading}"
-        "::: {align=center}\n"
-        f"{overall_table}\n"
-        ":::\n\n"
-        "**各场景算法调用次数**\n\n"
-        f"{chart}\n\n"
-        "::: {align=center}\n"
-        f"{distribution_table}\n"
-        ":::\n"
-    )
+    heading = f"## {section_title}\n\n" if section_title else ""
+    parts: list[str] = [heading]
+
+    if has_overall:
+        overall_table = dict_table_to_markdown(
+            analysis.algorithm_recognition_overall, title_level=-1
+        )
+        parts.append("::: {align=center}\n" f"{overall_table}\n" ":::\n\n")
+
+    parts.append("**各场景算法调用次数**\n\n")
+    if has_distribution:
+        distribution_table = dict_table_to_markdown(
+            analysis.algorithm_recognition_distribution,
+            title_level=-1,
+        )
+        chart = _build_table_pie_chart_markdown(
+            table=analysis.algorithm_recognition_distribution,
+            label_key="algorithm_name",
+            value_meta_key="recognized_count_value",
+            value_key="recognized_count",
+            title="各场景算法调用次数",
+            filename_prefix="algorithm-recognition-distribution",
+            aggregate_by_label=True,
+        )
+        parts.append(
+            f"{chart}\n\n"
+            "::: {align=center}\n"
+            f"{distribution_table}\n"
+            ":::\n"
+        )
+    else:
+        parts.append(f"{EMPTY_DATA_HINT}\n")
+
+    return "".join(parts)
 
 
 async def build_disposal_rate_section(
@@ -471,24 +504,42 @@ async def build_disposal_rate_section(
     filt: NormalizedFilter,
     section_title: str,
 ) -> str:
-    occurrence_total, disposal_total = _sum_disposal_totals(analysis.algorithm_disposal_summary)
-    disposal_table = dict_table_to_markdown(analysis.algorithm_disposal_summary, title_level=-1)
-    push_table = dict_table_to_markdown(analysis.algorithm_push_events, title_level=-1)
-    chart = _build_disposal_rate_line_chart_markdown(analysis.algorithm_disposal_summary)
-    heading = f"## {section_title}\n\n" if section_title else ""
+    has_disposal = _table_has_numeric_data(analysis.algorithm_disposal_summary)
+    has_push = _table_has_numeric_data(analysis.algorithm_push_events)
+    if not has_disposal and not has_push:
+        return _empty_section_markdown(section_title)
 
-    return (
-        f"{heading}"
-        f"本周期共监测事件{occurrence_total:g}件，处置{disposal_total:g}件，处置统计如下：\n\n"
-        f"{chart}\n\n"
-        "::: {align=center}\n"
-        f"{disposal_table}\n"
-        ":::\n\n"
-        "已推送事件如下：\n\n"
-        "::: {align=center}\n"
-        f"{push_table}\n"
-        ":::\n"
-    )
+    heading = f"## {section_title}\n\n" if section_title else ""
+    parts: list[str] = [heading]
+
+    if has_disposal:
+        occurrence_total, disposal_total = _sum_disposal_totals(
+            analysis.algorithm_disposal_summary
+        )
+        disposal_table = dict_table_to_markdown(
+            analysis.algorithm_disposal_summary, title_level=-1
+        )
+        chart = _build_disposal_rate_line_chart_markdown(
+            analysis.algorithm_disposal_summary
+        )
+        parts.append(
+            f"本周期共监测事件{occurrence_total:g}件，处置{disposal_total:g}件，处置统计如下：\n\n"
+            f"{chart}\n\n"
+            "::: {align=center}\n"
+            f"{disposal_table}\n"
+            ":::\n\n"
+        )
+    else:
+        parts.append(f"处置统计：{EMPTY_DATA_HINT}\n\n")
+
+    parts.append("已推送事件如下：\n\n")
+    if has_push:
+        push_table = dict_table_to_markdown(analysis.algorithm_push_events, title_level=-1)
+        parts.append("::: {align=center}\n" f"{push_table}\n" ":::\n")
+    else:
+        parts.append(f"{EMPTY_DATA_HINT}\n")
+
+    return "".join(parts)
 
 
 async def build_hotspot_section(
@@ -496,27 +547,34 @@ async def build_hotspot_section(
     filt: NormalizedFilter,
     section_title: str,
 ) -> str:
-    location_table = dict_table_to_markdown(
-        analysis.algorithm_high_frequency_locations,
-        title_level=-1,
-    )
-    time_slot_table = dict_table_to_markdown(
-        analysis.algorithm_high_frequency_time_slots,
-        title_level=-1,
-    )
-    heading = f"## {section_title}\n\n" if section_title else ""
+    has_location = _table_has_numeric_data(analysis.algorithm_high_frequency_locations)
+    has_time_slot = _table_has_numeric_data(analysis.algorithm_high_frequency_time_slots)
+    if not has_location and not has_time_slot:
+        return _empty_section_markdown(section_title)
 
-    return (
-        f"{heading}"
-        "高频案发点统计如下：\n\n"
-        "::: {align=center}\n"
-        f"{location_table}\n"
-        ":::\n\n"
-        "高频案发时间段统计如下：\n\n"
-        "::: {align=center}\n"
-        f"{time_slot_table}\n"
-        ":::\n"
-    )
+    heading = f"## {section_title}\n\n" if section_title else ""
+    parts: list[str] = [heading, "高频案发点统计如下：\n\n"]
+
+    if has_location:
+        location_table = dict_table_to_markdown(
+            analysis.algorithm_high_frequency_locations,
+            title_level=-1,
+        )
+        parts.append("::: {align=center}\n" f"{location_table}\n" ":::\n\n")
+    else:
+        parts.append(f"{EMPTY_DATA_HINT}\n\n")
+
+    parts.append("高频案发时间段统计如下：\n\n")
+    if has_time_slot:
+        time_slot_table = dict_table_to_markdown(
+            analysis.algorithm_high_frequency_time_slots,
+            title_level=-1,
+        )
+        parts.append("::: {align=center}\n" f"{time_slot_table}\n" ":::\n")
+    else:
+        parts.append(f"{EMPTY_DATA_HINT}\n")
+
+    return "".join(parts)
 
 
 async def build_media_section(
@@ -524,6 +582,8 @@ async def build_media_section(
     filt: NormalizedFilter,
     section_title: str,
 ) -> str:
+    if not _table_has_numeric_data(analysis.media_collection_summary):
+        return _empty_section_markdown(section_title)
     table = dict_table_to_markdown(analysis.media_collection_summary, title_level=-1)
     heading = f"## {section_title}\n\n" if section_title else ""
 
@@ -866,6 +926,52 @@ def _table_rows(table: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(rows, list):
         return []
     return [row for row in rows if isinstance(row, dict)]
+
+
+def _table_has_numeric_data(table: dict[str, Any] | None) -> bool:
+    """Return True only when table contains at least one non-zero numeric value."""
+    if not isinstance(table, dict):
+        return False
+    rows = _table_rows(table)
+    if not rows:
+        return False
+    columns = table.get("columns") if isinstance(table.get("columns"), list) else []
+    column_keys = [
+        str(column.get("key") or "")
+        for column in columns
+        if isinstance(column, dict) and column.get("key")
+    ]
+    for row in rows:
+        for key in column_keys:
+            if _value_is_nonzero_number(row.get(key)):
+                return True
+        meta = row.get("meta")
+        if isinstance(meta, dict):
+            for value in meta.values():
+                if _value_is_nonzero_number(value):
+                    return True
+    return False
+
+
+def _value_is_nonzero_number(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return float(value) != 0
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return False
+        try:
+            return float(text) != 0
+        except ValueError:
+            return False
+    return False
+
+
+def _empty_section_markdown(section_title: str, hint: str = EMPTY_DATA_HINT) -> str:
+    heading = f"## {section_title}\n\n" if section_title else ""
+    return f"{heading}{hint}\n"
 
 
 def _row_meta_number(row: dict[str, Any], key: str, fallback_key: str | None = None) -> float:

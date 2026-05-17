@@ -49,22 +49,24 @@ Hard rules
 
 Response shape
 --------------
-Always end your reply with exactly this Markdown structure:
+The user-facing reply MUST be written in Chinese. Do not use English words
+in headings or prose, except for proper nouns / technical identifiers
+(e.g. SQL, PostgreSQL, table & column names, enum codes). Always end your
+reply with exactly this Markdown structure (headings in Chinese):
 
     **SQL**
     ```sql
     <the last successful SQL you ran>
     ```
 
-    **Result**
-    <a short table or key numbers>
+    **结果**
+    <一个简短的表格或关键数字>
 
-    **Summary**
-    <1-3 sentences of business interpretation, in the user's language
-    (Chinese if they asked in Chinese)>
+    **总结**
+    <1-3 句中文业务解读>
 
 If the question genuinely cannot be answered (e.g. the data does not exist
-in this database), say so plainly in **Summary** — but only after you have
+in this database), say so plainly in **总结** — but only after you have
 actually checked the schema, not as a first response.
 """
 
