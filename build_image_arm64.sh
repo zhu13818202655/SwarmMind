@@ -23,7 +23,7 @@
 # ============================================================================
 set -euo pipefail
 
-INPUT_TAG="${1:-swarmmind:wuyi-report-v0.2.2}"
+INPUT_TAG="${1:-swarmmind:wuyi-report-v0.2.7}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT_DIR="${2:-${SCRIPT_DIR}/wuliao/images}"
 

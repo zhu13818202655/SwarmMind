@@ -35,15 +35,25 @@ def _build_model(
 ) -> AuditedOpenAIChatModel:
     """Build a JSON-only audited chat model from a ``ModelConfig``."""
 
+    generate_kwargs: dict[str, Any] = {
+        "temperature": model_config.temperature,
+        "max_tokens": model_config.max_tokens,
+        "response_format": {"type": "json_object"},
+    }
+    if model_config.disable_thinking:
+        # Disable hybrid-reasoning ("thinking") for DeepSeek V3.x/V4 Pro, Qwen3, etc.
+        # Multiple keys are sent for cross-gateway compatibility (vLLM/SGLang/LiteLLM).
+        generate_kwargs["extra_body"] = {
+            "chat_template_kwargs": {"thinking": False},
+            "enable_thinking": False,
+            "thinking": {"type": "disabled"},
+        }
+
     return AuditedOpenAIChatModel(
         model_name=model_config.name,
         api_key=model_config.api_key,
         event_publisher=event_publisher,
-        generate_kwargs={
-            "temperature": model_config.temperature,
-            "max_tokens": model_config.max_tokens,
-            "response_format": {"type": "json_object"},
-        },
+        generate_kwargs=generate_kwargs,
         client_kwargs={"base_url": model_config.base_url},
     )
 

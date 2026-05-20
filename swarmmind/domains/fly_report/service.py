@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import html
-import json
-import logging
-import random
 import shutil
 import tempfile
 import time
@@ -70,8 +68,7 @@ from swarmmind.domains.fly_report.text2sql import (
     Text2SqlService,
     build_text2sql_service_from_settings,
 )
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 REPORT_MARKDOWN_TITLE = "武义飞行服务平台飞行统计报告"
@@ -229,7 +226,30 @@ class FlyReportService:
             self._sessions[session_id] = record
         await self._persist_session(record)
         if initial_query:
-            await self.send_message(session_id, initial_query, user_id=user_id)
+            # Run the initial query in the background so the HTTP
+            # ``POST /sessions`` response (which only carries the
+            # ``session_id`` + links) returns immediately. Awaiting
+            # ``send_message`` here blocks the response on the full
+            # PARSING→...→PREVIEWING pipeline, which routinely
+            # exceeds the frontend's ~30s request timeout and leaves
+            # the caller with nothing. The frontend is expected to
+            # open the SSE stream right after creation.
+            async def _run_initial_query() -> None:
+                try:
+                    await self.send_message(
+                        session_id, initial_query, user_id=user_id
+                    )
+                except Exception:  # pragma: no cover - best-effort background
+                    logger.exception(
+                        "fly_report.start_session.initial_query_failed",
+                        extra={
+                            "session_id": session_id,
+                            "user_id": user_id,
+                            "text_preview": initial_query[:120],
+                        },
+                    )
+
+            asyncio.create_task(_run_initial_query())
         return session_id
 
     # ------------------------------------------------------------------
@@ -851,7 +871,7 @@ class FlyReportService:
                     "user_id": record.user_id,
                     "output_format": artifact.output_format,
                     "template_ref": artifact.template_ref,
-                    "filename": Path(artifact.artifact_path).name,
+                    "artifact_filename": Path(artifact.artifact_path).name,
                     "chart_count": len(artifact.chart_paths),
                     "warning_count": len(artifact.warnings),
                     "elapsed_sec": round(render_elapsed, 3),
@@ -1304,6 +1324,64 @@ class FlyReportService:
             phase="intake",
             started_at=started_at,
         )
+
+        # Pre-branch heartbeat: covers the window between accepting the
+        # SSE connection and figuring out which branch to run. In
+        # practice the very first request after a cold start can take
+        # longer than the frontend's ~30s SSE idle timeout (model
+        # warm-up, DNS / first TLS handshake to the LLM, etc.), so we
+        # always emit a placeholder bubble and tick it every 8s until
+        # intent classification finishes. The branch handlers then
+        # install their OWN heartbeats with branch-specific text, so we
+        # cancel this one before entering them to avoid two tickers
+        # racing on the same chat.
+        intake_placeholder = await self._record_interaction_message(
+            interaction,
+            role="assistant",
+            message_type="plain_text",
+            text="正在处理你的请求，请稍候…",
+            status="running",
+            payload={
+                "data": {},
+                "actions": [],
+                "meta": {
+                    "source": "fly_report",
+                    "phase": "intake",
+                    "placeholder": True,
+                },
+            },
+        )
+        intake_start = time.perf_counter()
+
+        async def _intake_heartbeat() -> None:
+            try:
+                while True:
+                    await asyncio.sleep(8)
+                    elapsed = int(time.perf_counter() - intake_start)
+                    intake_placeholder.text = (
+                        f"正在处理你的请求，请稍候…（已用 {elapsed}s）"
+                    )
+                    intake_placeholder.updated_at = _utcnow()
+                    self._messages_by_id[intake_placeholder.id] = intake_placeholder
+                    await self._publish_interaction_event(
+                        interaction.id,
+                        {
+                            "event": "message.item",
+                            "data": self._message_payload(intake_placeholder),
+                        },
+                    )
+            except asyncio.CancelledError:
+                return
+
+        intake_task = asyncio.create_task(_intake_heartbeat())
+
+        async def _stop_intake_heartbeat() -> None:
+            if intake_task.done():
+                return
+            intake_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await intake_task
+
         try:
             intent = await self._intent_classifier.classify(interaction.input_text)
             logger.info(
@@ -1315,6 +1393,12 @@ class FlyReportService:
                     "text_preview": interaction.input_text[:120],
                 },
             )
+            # Hand off to the branch handler. Branches that have their
+            # own heartbeat (report / data_query) must NOT run alongside
+            # the intake one, so cancel it first; for chitchat we also
+            # cancel because the reply is typically short enough to come
+            # back before the next 8s tick.
+            await _stop_intake_heartbeat()
             if intent == "report":
                 await self._run_report_interaction(interaction)
             elif intent == "data_query":
@@ -1356,6 +1440,71 @@ class FlyReportService:
                 payload={"data": {}, "actions": [], "meta": {"source": "fly_report"}},
             )
             await self._finish_interaction_stream(interaction.id)
+        finally:
+            # Belt-and-braces: ensure the intake heartbeat is dead on
+            # every exit path (success / cancel / error). Idempotent
+            # because _stop_intake_heartbeat checks task.done().
+            await _stop_intake_heartbeat()
+
+    @contextlib.asynccontextmanager
+    async def _branch_heartbeat(
+        self,
+        interaction: FlyReportInteraction,
+        initial_text: str,
+    ) -> AsyncIterator[FlyReportMessage]:
+        """Emit a placeholder bubble + tick it every 8s until exit.
+
+        Used by branch handlers (``_run_data_query_interaction``,
+        ``_run_report_interaction``) whose work may exceed the
+        frontend's ~30s SSE idle timeout. We re-publish the SAME
+        ``message_id`` via ``message.item`` so the frontend merges
+        in place instead of spamming the chat. Custom event names
+        (``ping`` / ``text2sql.step``) are dropped by the production
+        frontend and cannot be used for keep-alive.
+        """
+        placeholder = await self._record_interaction_message(
+            interaction,
+            role="assistant",
+            message_type="plain_text",
+            text=initial_text,
+            status="running",
+            payload={
+                "data": {},
+                "actions": [],
+                "meta": {
+                    "source": "fly_report",
+                    "phase": interaction.phase,
+                    "placeholder": True,
+                },
+            },
+        )
+        start = time.perf_counter()
+
+        async def _tick() -> None:
+            try:
+                while True:
+                    await asyncio.sleep(8)
+                    elapsed = int(time.perf_counter() - start)
+                    placeholder.text = f"{initial_text}（已用 {elapsed}s）"
+                    placeholder.updated_at = _utcnow()
+                    self._messages_by_id[placeholder.id] = placeholder
+                    await self._publish_interaction_event(
+                        interaction.id,
+                        {
+                            "event": "message.item",
+                            "data": self._message_payload(placeholder),
+                        },
+                    )
+            except asyncio.CancelledError:
+                return
+
+        task = asyncio.create_task(_tick())
+        try:
+            yield placeholder
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     async def _run_plain_text_interaction(
         self, interaction: FlyReportInteraction
@@ -1403,6 +1552,22 @@ class FlyReportService:
         await self._finish_interaction_stream(interaction.id)
 
     async def _run_data_query_interaction(
+        self, interaction: FlyReportInteraction
+    ) -> None:
+        """Public entry: wrap the data-query body with a heartbeat bubble.
+
+        The body itself (SQL generation + Postgres query) can easily take
+        more than the frontend's ~30s SSE idle timeout. Emit a status
+        bubble immediately and tick it every 8s so the SSE connection
+        stays alive.
+        """
+        async with self._branch_heartbeat(
+            interaction,
+            "正在处理你的数据查询请求，请稍候…",
+        ):
+            await self._run_data_query_interaction_impl(interaction)
+
+    async def _run_data_query_interaction_impl(
         self, interaction: FlyReportInteraction
     ) -> None:
         """Drive the Text-to-SQL data-query branch end-to-end.
@@ -1467,7 +1632,13 @@ class FlyReportService:
             },
         )
 
-        service = self._get_text2sql_service()
+        # First call to _get_text2sql_service() does heavy synchronous
+        # init (load YAML knowledge base, init Vanna 2.0, open PG
+        # connection, etc.) and can easily block the event loop for
+        # 10–60s — which prevents the branch heartbeat from ticking.
+        # Run the (idempotent) lazy init on a worker thread so the
+        # outer loop stays free to publish heartbeat events.
+        service = await asyncio.to_thread(self._get_text2sql_service)
         if service is None:
             await self._emit_text2sql_unavailable(interaction)
             return
@@ -1482,7 +1653,25 @@ class FlyReportService:
 
         t0 = time.perf_counter()
         try:
-            answer = await service.answer(interaction.input_text)
+            logger.info(f"fly_report.data_query.interaction_fetching_started", extra={
+                "interaction_id": interaction.id,
+                "session_id": interaction.session_id,
+                "query_preview": interaction.input_text[:120],
+            })
+
+            # IMPORTANT: ``Text2SqlService.answer`` is declared async but
+            # internally drives the Vanna ReAct agent, which uses sync
+            # HTTP (LLM) and sync psycopg2 (PostgreSQL). A single slow
+            # LLM/SQL call therefore *blocks the event loop*, which
+            # prevents the global heartbeat in
+            # ``_run_streaming_interaction`` from firing — and the
+            # frontend hits its ~30s SSE idle timeout. Run the whole
+            # call in a worker thread (with its own event loop) so the
+            # outer loop stays free to schedule the heartbeat.
+            answer = await asyncio.to_thread(
+                asyncio.run,
+                service.answer(interaction.input_text),
+            )
         except Text2SqlError as exc:
             logger.warning(
                 "fly_report.text2sql.service_failed",
@@ -1530,7 +1719,7 @@ class FlyReportService:
                 },
             )
             await self._record_text2sql_error_message(
-                interaction, answer.error or "未生成 SQL"
+                interaction, answer.error or "未能查询到数据"
             )
             await self._update_interaction(
                 interaction,
@@ -1695,6 +1884,22 @@ class FlyReportService:
         )
 
     async def _run_report_interaction(
+        self, interaction: FlyReportInteraction
+    ) -> None:
+        """Public entry: wrap the report body with a heartbeat bubble.
+
+        Report generation (fetch + analyze + render docx) typically takes
+        well over the frontend's ~30s SSE idle timeout, so we emit a
+        status bubble immediately and tick it every 8s to keep the SSE
+        connection alive.
+        """
+        async with self._branch_heartbeat(
+            interaction,
+            "正在生成报告，请稍候…",
+        ):
+            await self._run_report_interaction_impl(interaction)
+
+    async def _run_report_interaction_impl(
         self, interaction: FlyReportInteraction
     ) -> None:
         logger.info(
@@ -1872,7 +2077,7 @@ class FlyReportService:
                 "session_id": interaction.session_id,
                 "revision": record.revision,
                 "output_format": artifact.output_format,
-                "filename": Path(artifact.artifact_path).name,
+                "artifact_filename": Path(artifact.artifact_path).name,
                 "chart_count": len(artifact.chart_paths),
             },
         )

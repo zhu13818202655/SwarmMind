@@ -60,10 +60,32 @@ reply with exactly this Markdown structure (headings in Chinese):
     ```
 
     **结果**
-    <一个简短的表格或关键数字>
+    <一个简短的表格或关键数字，必须来自上面那条 SQL 的真实返回值>
 
     **总结**
     <1-3 句中文业务解读>
+
+Result-section rules (MUST follow)
+----------------------------------
+A. **绝对禁止占位符。** **结果** 一节里的每一个数字都必须来自你刚刚通过
+   `run_sql` 真正执行成功的那条 SQL 的返回行。严禁出现 `(见查询结果)`、
+   `(待填)`、`(待查询)`、`TBD`、`TODO`、`N/A`、`—`、`...`、空白、
+   `<value>`、`(略)` 之类的占位写法。如果你没有具体数字，就必须先去
+   `run_sql` 把它查出来，而不是先写表格再留空。
+
+B. **多指标一次查回。** 如果用户的问题需要多个统计指标（如「飞行总架次、
+   成功架次、活跃无人机数、飞行总时长」），优先写**一条** SELECT，用
+   `COUNT(*)`、`COUNT(*) FILTER (WHERE ...)`、`COUNT(DISTINCT ...)`、
+   `SUM(...)` 等聚合在**同一行**里把所有指标一次性查出来；不要先编一张
+   想要的指标表、再逐项留空。
+
+C. **结果与 SQL 必须一致。** **结果** 里展示的每一列 / 每一个指标，都
+   必须能在 **SQL** 块的 SELECT 列表里找到对应的表达式或别名。不要
+   出现 SQL 没查、但表格却列出来的指标。
+
+D. **真的查不到就直说。** 如果某个指标在 schema 里确实不存在或当前条件
+   下没有数据，请在 **总结** 里用中文明确说明「数据库中没有此指标 / 该
+   时段无数据」，而不是用占位符敷衍。
 
 If the question genuinely cannot be answered (e.g. the data does not exist
 in this database), say so plainly in **总结** — but only after you have

@@ -33,6 +33,7 @@ class OpenAICompatibleLMClient:
         max_tokens: int = 8192 * 8,
         timeout_sec: float = 30.0,
         http_client: httpx.AsyncClient | None = None,
+        disable_thinking: bool = True,
     ) -> None:
         if not model_name or not model_name.strip():
             raise LMConfigError("model_name is required")
@@ -44,6 +45,7 @@ class OpenAICompatibleLMClient:
         self.max_tokens = max_tokens
         self.timeout_sec = timeout_sec
         self._http_client = http_client
+        self.disable_thinking = disable_thinking
 
     @classmethod
     def from_model_config(
@@ -63,6 +65,7 @@ class OpenAICompatibleLMClient:
             max_tokens=config.max_tokens,
             timeout_sec=timeout_sec,
             http_client=http_client,
+            disable_thinking=config.disable_thinking,
         )
 
     async def chat(
@@ -116,6 +119,12 @@ class OpenAICompatibleLMClient:
         }
         if request.response_format is not None:
             payload["response_format"] = request.response_format
+        if self.disable_thinking:
+            # Disable hybrid-reasoning ("thinking") for DeepSeek V3.x/V4 Pro, Qwen3, etc.
+            # Multiple keys are emitted for cross-gateway compatibility.
+            payload["chat_template_kwargs"] = {"thinking": False}
+            payload["enable_thinking"] = False
+            payload["thinking"] = {"type": "disabled"}
         return payload
 
     @staticmethod

@@ -43,31 +43,7 @@ async def lifespan(app: FastAPI):
             logging.getLogger(__name__).exception(
                 "fly_report.repo_init_failed"
             )
-
-    # Open the FlyReport SQL backend resources lazily here so the same
-    # ``create_app`` call works in both ``http`` and ``sql`` modes.
-    if getattr(app.state, "fly_report_sql_open", None):
-        try:
-            await app.state.fly_report_sql_open()
-        except Exception:  # pragma: no cover - logged + non-fatal
-            import logging
-
-            logging.getLogger(__name__).exception(
-                "fly_report.dikong_sql.open_failed"
-            )
-
-    try:
-        yield
-    finally:
-        if getattr(app.state, "fly_report_sql_close", None):
-            try:
-                await app.state.fly_report_sql_close()
-            except Exception:  # pragma: no cover
-                import logging
-
-                logging.getLogger(__name__).exception(
-                    "fly_report.dikong_sql.close_failed"
-                )
+    yield
 
 
 class TaskCreateRequest(BaseModel):
@@ -163,28 +139,6 @@ class SubTaskArtifactsResponse(BaseModel):
     run_id: str
     subtask_id: str
     artifacts: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class _DeferredDataFetcher:
-    """Placeholder fetcher used between ``create_app`` and ``lifespan``.
-
-    The SQL backend opens its async pools in :func:`lifespan`, so the
-    service is constructed with this stub first and then re-bound to a
-    real :class:`SqlDataFetcher` once the pools are ready. Any access
-    before lifespan completes is a programming error.
-    """
-
-    async def fetch(self, *args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError(
-            "FlyReport SQL data fetcher accessed before lifespan startup"
-        )
-
-    async def get_department_name_list_by_id_list(
-        self, *args: Any, **kwargs: Any
-    ) -> list[str]:
-        raise RuntimeError(
-            "FlyReport SQL data fetcher accessed before lifespan startup"
-        )
 
 
 async def resolve_identity(request: Request):
@@ -327,12 +281,6 @@ def _build_event_page(entries, cursor: int, limit: int) -> tuple[list[RunEventRe
 def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
     """Create and configure the FastAPI application."""
     settings = settings or get_settings()
-    # Configure logging here so it works for both ``run_server`` (python -m
-    # swarmmind.api.server) and the production entrypoint
-    # ``uvicorn swarmmind.api.server:create_app --factory``. Without this,
-    # business loggers fall back to root WARNING and ``logger.info`` is
-    # silently dropped.
-    _configure_logging(settings.log_level)
     app = FastAPI(
         title=settings.api.title,
         description=settings.api.description,
@@ -386,49 +334,8 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
     from swarmmind.domains.fly_report.dikong.client import DikongClient
 
     intent_parser = IntentParser(build_intent_agent(settings.agent.model))
-
-    # Choose the data fetcher backend based on ``fly_report.source``.
-    # ``http`` keeps the legacy DikongClient + DataFetcher pipeline.
-    # ``sql`` uses DikongSqlClient (PostgreSQL + TDengine REST) which is a
-    # drop-in replacement returning the same RawDataset shape.
-    fly_report_source = settings.fly_report.source
-    app.state.fly_report_sql_open = None
-    app.state.fly_report_sql_close = None
-    if fly_report_source == "sql":
-        from swarmmind.domains.fly_report.dikong_sql import (
-            DikongSqlClient,
-            SqlDataFetcher,
-            close_pg_pool,
-            close_td_client,
-            get_pg_pool,
-            get_td_client,
-        )
-
-        sql_cfg = settings.fly_report.dikong_sql
-
-        async def _open_sql_backend() -> None:
-            pg_pool = await get_pg_pool(sql_cfg.postgres)
-            td_client = await get_td_client(sql_cfg.tdengine)
-            app.state.fly_report_data_fetcher = SqlDataFetcher(
-                DikongSqlClient(pg_pool, td_client, sql_cfg)
-            )
-            # Re-bind the service's data fetcher now that it's ready.
-            app.state.fly_report_service._data_fetcher = (
-                app.state.fly_report_data_fetcher
-            )
-
-        async def _close_sql_backend() -> None:
-            await close_td_client()
-            await close_pg_pool()
-
-        app.state.fly_report_sql_open = _open_sql_backend
-        app.state.fly_report_sql_close = _close_sql_backend
-        # Use a deferred placeholder fetcher so service construction below
-        # succeeds before lifespan opens the pools.
-        data_fetcher = _DeferredDataFetcher()
-    else:
-        dikong_client = DikongClient(settings.fly_report.dikong)
-        data_fetcher = DataFetcher(dikong_client)
+    dikong_client = DikongClient(settings.fly_report.dikong)
+    data_fetcher = DataFetcher(dikong_client)
     fly_report_output_root = Path(
         os.environ.get("FLY_REPORT_OUTPUT_ROOT")
         or Path(settings.storage_path) / "fly_report_artifacts"
@@ -822,41 +729,17 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
     return app
 
 
-def _configure_logging(level: str) -> None:
-    """Initialise root logging so business loggers (``swarmmind.*``) emit.
-
-    Idempotent: safe to call multiple times. ``force=True`` ensures we win
-    over any handler that uvicorn or a previous import may have attached to
-    the root logger.
-    """
-    import logging
-
-    numeric = logging.getLevelName(str(level).upper())
-    if not isinstance(numeric, int):
-        numeric = logging.INFO
-    logging.basicConfig(
-        level=numeric,
-        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
-        force=True,
-    )
-    # Make sure our own namespace honours the configured level even if some
-    # dependency lowered it.
-    logging.getLogger("swarmmind").setLevel(numeric)
-
-
 def run_server(host: str | None = None, port: int | None = None, reload: bool | None = None):
     """Run the API server."""
     import uvicorn
 
     settings = get_settings()
-    _configure_logging(settings.log_level)
     app = create_app(settings)
     uvicorn.run(
         app,
         host=host or settings.api.host,
         port=port or settings.api.port,
         reload=settings.api.reload if reload is None else reload,
-        log_level=str(settings.log_level).lower(),
     )
 
 

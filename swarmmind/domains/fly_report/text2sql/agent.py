@@ -24,7 +24,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from vanna import Agent, AgentConfig
 from vanna.core.registry import ToolRegistry
@@ -32,7 +32,6 @@ from vanna.core.system_prompt.default import DefaultSystemPromptBuilder
 from vanna.core.user import RequestContext, User, UserResolver
 from vanna.integrations.local import LocalFileSystem
 from vanna.integrations.local.agent_memory import DemoAgentMemory
-from vanna.integrations.openai import OpenAILlmService
 from vanna.integrations.postgres import PostgresRunner
 from vanna.tools.agent_memory import (
     SaveTextMemoryTool,
@@ -49,6 +48,7 @@ from swarmmind.domains.fly_report.text2sql.knowledge import (
     Knowledge,
     load_knowledge,
 )
+from swarmmind.domains.fly_report.text2sql.llm import NoThinkingOpenAILlmService
 from swarmmind.domains.fly_report.text2sql.prompt import build_system_prompt
 from swarmmind.domains.fly_report.text2sql.tools import (
     FindGoldenExamplesTool,
@@ -201,7 +201,11 @@ class Text2SqlAgent:
         self._knowledge: Knowledge = load_knowledge(kn_root)
 
         # ---- 2. LLM ----
-        llm = OpenAILlmService(
+        # Use the thinking-disabled subclass so DeepSeek's hybrid-reasoning
+        # models (V3.1/V4 Pro/Reasoner) don't emit ``reasoning_content`` —
+        # Vanna's agent loop can't echo it back on the next turn, which
+        # otherwise trips a 400 on the second request.
+        llm = NoThinkingOpenAILlmService(
             api_key=self._model.api_key,
             base_url=self._model.base_url or None,
             model=self._model.name,
@@ -276,8 +280,16 @@ class Text2SqlAgent:
         question: str,
         *,
         conversation_id: str | None = None,
+        on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> Text2SqlAgentResult:
-        """Run one agent turn and return a structured result."""
+        """Run one agent turn and return a structured result.
+
+        If ``on_event`` is provided, it is awaited once per streamed
+        component with a dict like
+        ``{"kind": <semantic_type>, "text": <str>, "iteration": <int>}``.
+        Callbacks must be cheap and must not raise — exceptions are
+        logged and swallowed so they cannot break the agent loop.
+        """
         question = (question or "").strip()
         if not question:
             return Text2SqlAgentResult(
@@ -292,6 +304,7 @@ class Text2SqlAgent:
 
         trace: list[dict[str, Any]] = []
         intermediate_texts: list[str] = []
+        iteration = 0
 
         try:
             async for component in self._agent.send_message(
@@ -302,9 +315,23 @@ class Text2SqlAgent:
                 txt, sem = _component_text(component)
                 if txt is None:
                     continue
+                iteration += 1
                 trace.append({"semantic_type": sem, "text": txt})
                 if sem is None or "TEXT" in sem.upper() or "MESSAGE" in sem.upper():
                     intermediate_texts.append(txt)
+                if on_event is not None:
+                    try:
+                        await on_event(
+                            {
+                                "kind": sem,
+                                "text": txt,
+                                "iteration": iteration,
+                            }
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.exception(
+                            "fly_report.text2sql.on_event_failed"
+                        )
         except Exception as exc:  # noqa: BLE001
             logger.exception("fly_report.text2sql.agent_failed")
             raise Text2SqlGenerationError(str(exc)) from exc

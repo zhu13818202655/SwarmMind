@@ -25,6 +25,14 @@ class ModelConfig(ValidatedDefaultsModel):
     base_url: str | None = Field(default=None, description="Base URL for API")
     temperature: float = Field(default=1.0, description="Temperature")
     max_tokens: int = Field(default=4096, description="Max tokens")
+    disable_thinking: bool = Field(
+        default=True,
+        description=(
+            "Disable hybrid-reasoning ('thinking') mode for models that support it "
+            "(e.g. DeepSeek V3.x / V4 Pro, Qwen3). Sent via OpenAI extra_body. "
+            "Defaults to True; set to false to re-enable thinking."
+        ),
+    )
 
     @field_validator("api_key", mode="before")
     @classmethod
@@ -40,6 +48,11 @@ class ModelConfig(ValidatedDefaultsModel):
     @classmethod
     def resolve_name(cls, value: Any) -> Any:
         return resolve_env_value(value, "OPENAI_MODEL")
+
+    @field_validator("disable_thinking", mode="before")
+    @classmethod
+    def resolve_disable_thinking(cls, value: Any) -> Any:
+        return resolve_env_value(value, "OPENAI_DISABLE_THINKING", cast_type=bool)
 
 
 class SandboxConfig(ValidatedDefaultsModel):

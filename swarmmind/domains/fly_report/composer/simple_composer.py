@@ -29,6 +29,9 @@ from swarmmind.domains.fly_report.utils.markdown_table import dict_table_to_mark
 REPORT_TITLE = "武义飞行服务平台飞行统计报告"
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 CHART_OUTPUT_ROOT = Path(__file__).resolve().parents[4] / "data" / "fly_report_artifacts" / "generated_charts"
+# 每日飞行趋势图横轴最多显示的日期标签数。仅控制 label 的密度，
+# 不影响实际折线点位；超出此阈值时按等步长抽稀，并强制保留最后一个点。
+MAX_X_AXIS_LABELS = 12
 LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 EMPTY_DATA_HINT = "本期暂无相关数据。"
 
@@ -309,7 +312,15 @@ def _render_day_trend_line_chart_png(
 
     label_style = option["xAxis"].get("axisLabel", {})
     interval = int(label_style.get("interval", 0))
-    visible_indexes = [index for index in range(len(dates)) if index % (interval + 1) == 0]
+    step = interval + 1
+    visible_indexes = [index for index in range(len(dates)) if index % step == 0]
+    # 始终保留最后一个点，避免区间右端缺失坐标
+    if dates and (not visible_indexes or visible_indexes[-1] != len(dates) - 1):
+        # 如果距离上一个可见标签太近，则替换而不是追加，防止拥挤
+        if visible_indexes and (len(dates) - 1 - visible_indexes[-1]) < max(1, step // 2):
+            visible_indexes[-1] = len(dates) - 1
+        else:
+            visible_indexes.append(len(dates) - 1)
     left_ax.set_xticks(visible_indexes)
     left_ax.set_xticklabels(
         [dates[index] for index in visible_indexes],
@@ -346,14 +357,21 @@ def _format_chart_date_label(value: str) -> str:
 
 
 def _build_date_axis_label(dates: list[str]) -> dict[str, Any]:
+    """限制横轴 X 坐标最多显示 ``MAX_X_AXIS_LABELS`` 个点。
+
+    与折线/柱状系列本身的点数无关，仅控制可见 label 的密度，
+    避免日期跨度较大时横轴文字互相重叠。实际选中的下标在
+    :func:`_render_day_trend_line_chart_png` 中计算（并强制拼上最后一个
+    点，保证区间终点始终可见）。
+    """
     count = len(dates)
-    if count <= 7:
-        return {"interval": 0, "rotate": 0}
-    if count <= 15:
-        return {"interval": 0, "rotate": 30}
-    if count <= 31:
-        return {"interval": 1, "rotate": 30}
-    return {"interval": 6, "rotate": 30}
+    if count <= MAX_X_AXIS_LABELS:
+        rotate = 0 if count <= 7 else 30
+        return {"interval": 0, "rotate": rotate}
+    # interval 表示“每隔 N 个点跳过不显示”，interval+1 = 步长。
+    # 取 ceil(count / MAX) - 1 可以保证可见标签数 <= MAX_X_AXIS_LABELS。
+    interval = max(1, math.ceil(count / MAX_X_AXIS_LABELS) - 1)
+    return {"interval": interval, "rotate": 30}
 
 
 def _build_value_axis(name: str, values: list[float]) -> dict[str, Any]:
