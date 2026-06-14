@@ -341,7 +341,7 @@ async def test_skill_execution_service_installs_required_python_packages(tmp_pat
     service = SkillExecutionService(executor=executor, skill_root=tmp_path)
 
     entry = service.get_skill_entry("package_skill")
-    command = executor._build_command(
+    setup_command, script_command = executor._build_commands(
         entry.metadata.runtime_requirements,
         None,
         "scripts/run.py",
@@ -351,10 +351,11 @@ async def test_skill_execution_service_installs_required_python_packages(tmp_pat
     )
 
     assert entry.metadata.runtime_requirements.python_packages == ["defusedxml"]
-    assert command == (
+    assert setup_command == (
         "python3 -m pip install --disable-pip-version-check "
-        f"-i {DEFAULT_SKILL_PIP_INDEX_URL} defusedxml && python3 scripts/run.py"
+        f"-i {DEFAULT_SKILL_PIP_INDEX_URL} defusedxml"
     )
+    assert script_command == "python3 scripts/run.py"
 
 
 def test_skill_executor_uses_env_override_for_python_package_index(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -374,7 +375,7 @@ def test_skill_executor_uses_env_override_for_python_package_index(monkeypatch: 
     service = SkillExecutionService(executor=executor, skill_root=tmp_path)
     monkeypatch.setenv("SWARMMIND_SKILL_PIP_INDEX_URL", "https://mirror.example/simple")
 
-    command = executor._build_command(
+    setup_command, script_command = executor._build_commands(
         service.get_skill_entry("package_skill").metadata.runtime_requirements,
         None,
         "scripts/run.py",
@@ -383,10 +384,11 @@ def test_skill_executor_uses_env_override_for_python_package_index(monkeypatch: 
         [],
     )
 
-    assert command == (
+    assert setup_command == (
         "python3 -m pip install --disable-pip-version-check "
-        "-i https://mirror.example/simple defusedxml && python3 scripts/run.py"
+        "-i https://mirror.example/simple defusedxml"
     )
+    assert script_command == "python3 scripts/run.py"
 
 
 @pytest.mark.asyncio

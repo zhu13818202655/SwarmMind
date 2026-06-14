@@ -165,6 +165,13 @@ def register_builtin_tools(
     if skill_execution_service is not None:
         skill_tool = SkillTool(skill_execution_service)
         register(
+            skill_tool.read_skill_reference,
+            name="read_skill_reference",
+            description="Progressively read a skill resource — SKILL.md body (design guides, script docs), reference documents, or script source code.",
+            groups=[ToolGroup.WORKSPACE],
+            contract=host_read_only,
+        )
+        register(
             skill_tool.list_skill_scripts,
             name="list_skill_scripts",
             description="List declared scripts for a skill package.",

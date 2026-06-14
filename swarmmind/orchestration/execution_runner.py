@@ -326,7 +326,7 @@ class ExecutionRunner:
         }:
             required.update({"memory_lookup", "memory_write"})
         if self._effective_skill_profiles(execution_profile, subtask):
-            required.update({"list_skill_scripts", "get_skill_details"})
+            required.update({"read_skill_reference", "list_skill_scripts", "get_skill_details"})
         if self._subtask_requires_skill_script_execution(subtask):
             required.add("run_skill_script")
         return required
@@ -1692,6 +1692,12 @@ class ExecutionRunner:
     ):
         current_run = run or await self._run_repository.get(subtask.metadata.get("run_id") or "")
         execution_profile = self._load_execution_profile(subtask)
+        # Merge runtime-selected tools into execution_profile.allowed_tool_names
+        # so the factory's strict_tool_names filter doesn't drop them.
+        selected_tools = set(subtask.metadata.get("selected_tools") or [])
+        if selected_tools:
+            merged = sorted(selected_tools.union(execution_profile.allowed_tool_names))
+            execution_profile = execution_profile.model_copy(update={"allowed_tool_names": merged})
         active_profile = agent_profile_override or self._agent_profile_store.get(execution_profile.agent_profile_id)
         tool_functions = self._build_agent_tool_functions(task, current_run, subtask) if current_run is not None else []
         skill_profiles = self._effective_skill_profiles(execution_profile, subtask)
@@ -2027,6 +2033,27 @@ class ExecutionRunner:
                 return self._summarize_artifacts(artifacts)
             register("artifact_read", "读取依赖子任务关联的产物。", artifact_read)
 
+        _skill_refs_read: set[str] = set()
+
+        if "read_skill_reference" in selected_tools:
+            async def read_skill_reference(skill_name: str, reference_path: str | None = None) -> str:
+                result = await self._run_tool(
+                    "read_skill_reference",
+                    task=task,
+                    run=run,
+                    subtask=subtask,
+                    skill_name=skill_name,
+                    reference_path=reference_path,
+                    tenant_id=task.metadata.get("tenant_id", "local"),
+                    session_id=run.session_id,
+                    task_id=task.id,
+                    run_id=run.id,
+                    subtask_id=subtask.id,
+                )
+                _skill_refs_read.add(skill_name)
+                return result
+            register("read_skill_reference", "渐进式读取技能包资源——SKILL.md 主体（设计指南、脚本说明）、参考文档或脚本源码。", read_skill_reference)
+
         if "list_skill_scripts" in selected_tools:
             async def list_skill_scripts(skill_name: str) -> list[str]:
                 return await self._run_tool("list_skill_scripts", task=task, run=run, subtask=subtask, skill_name=skill_name)
@@ -2085,6 +2112,11 @@ class ExecutionRunner:
                 effective_allow_sandbox_exec = effective_allow_sandbox_exec or default_allow_sandbox_exec
                 if not resolved_skill_name and len(execution_profile.skill_profiles) == 1:
                     resolved_skill_name = execution_profile.skill_profiles[0]
+                if resolved_skill_name and resolved_skill_name not in _skill_refs_read:
+                    raise ValueError(
+                        f"必须先调用 read_skill_reference('{resolved_skill_name}') 读取技能文档，"
+                        f"了解可用脚本和参数格式后，才能调用 run_skill_script。"
+                    )
                 if resolved_script_path and self._looks_like_inline_source(resolved_script_path):
                     raise ValueError(
                         "run_skill_script only accepts declared skill script paths like scripts/run.py; received inline source text. Use a general code execution tool for ad-hoc code."
@@ -2156,8 +2188,7 @@ class ExecutionRunner:
             dependency_summaries = self._summarize_dependency_subtasks(dependencies)
         execution_profile = self._load_execution_profile(subtask)
         skill_profiles = self._effective_skill_profiles(execution_profile, subtask)
-        skill_script_inventory = await self._build_skill_script_inventory(skill_profiles)
-        selected_skill_context = await self._build_compact_skill_context(skill_profiles)
+        skill_manifests = await self._build_skill_manifests(skill_profiles)
         return {
             "task_goal": task.goal,
             "subtask_name": subtask.name,
@@ -2169,8 +2200,7 @@ class ExecutionRunner:
             ),
             "dependency_summary_json": json.dumps(dependency_summaries, ensure_ascii=False),
             "skill_profiles_json": json.dumps(skill_profiles, ensure_ascii=False),
-            "skill_script_inventory_json": json.dumps(skill_script_inventory, ensure_ascii=False),
-            "selected_skill_context_json": json.dumps(selected_skill_context, ensure_ascii=False),
+            "skill_manifest_json": json.dumps(skill_manifests, ensure_ascii=False),
             "output_contract_json": json.dumps(
                 {
                     "requires_materialized_output": self._requires_materialized_output(task, subtask),
@@ -2180,28 +2210,19 @@ class ExecutionRunner:
             ),
         }
 
-    async def _build_compact_skill_context(self, skill_profiles: list[str]) -> list[dict[str, object]]:
-        raw_contexts = await self._build_selected_skill_context(skill_profiles)
-        compact_contexts: list[dict[str, object]] = []
-        for item in raw_contexts:
-            compact_contexts.append(
-                {
-                    "name": item.get("name"),
-                    "description": item.get("description"),
-                    "script_specs": [
-                        {
-                            "path": spec.get("path"),
-                            "description": spec.get("description"),
-                            "argument_names": spec.get("argument_names", []),
-                            "examples": spec.get("examples", [])[:1],
-                            "artifacts": spec.get("artifacts", []),
-                        }
-                        for spec in list(item.get("script_specs") or [])[:6]
-                        if isinstance(spec, dict)
-                    ],
-                }
-            )
-        return compact_contexts
+    async def _build_skill_manifests(self, skill_profiles: list[str]) -> list[dict[str, object]]:
+        if self._skill_execution_service is None:
+            return []
+
+        manifests: list[dict[str, object]] = []
+        for skill_name in skill_profiles[:3]:
+            try:
+                manifests.append(
+                    self._skill_execution_service.build_skill_manifest(skill_name).model_dump(mode="json")
+                )
+            except Exception:
+                continue
+        return manifests
 
     async def _render_subtask_content_template(self, task, subtask) -> str:
         criteria = "\\n".join(f"- {item}" for item in subtask.acceptance_criteria) or "- None"
@@ -2367,30 +2388,6 @@ class ExecutionRunner:
         if self._long_term_memory is None:
             return None
         return await self._long_term_memory.store(content, metadata=metadata)
-
-    async def _build_skill_script_inventory(self, skill_profiles: list[str]) -> dict[str, list[str]]:
-        if self._skill_execution_service is None:
-            return {}
-
-        inventory: dict[str, list[str]] = {}
-        for skill_name in skill_profiles:
-            try:
-                inventory[skill_name] = self._skill_execution_service.list_skill_scripts(skill_name)
-            except Exception:
-                inventory[skill_name] = []
-        return inventory
-
-    async def _build_selected_skill_context(self, skill_profiles: list[str]) -> list[dict[str, object]]:
-        if self._skill_execution_service is None:
-            return []
-
-        contexts: list[dict[str, object]] = []
-        for skill_name in skill_profiles[:3]:
-            try:
-                contexts.append(self._skill_execution_service.get_skill_prompt_context(skill_name))
-            except Exception:
-                continue
-        return contexts
 
     async def _resolve_declared_skill_script_path(self, skill_name: str, script_path: str) -> str:
         normalized_script = script_path.strip().lstrip("/")

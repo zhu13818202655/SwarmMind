@@ -117,12 +117,12 @@ def test_pptx_skill_exposes_from_scratch_creation_script() -> None:
     entry = load_skill_dir(skill_root / "pptx")
 
     assert entry.valid is True
-    spec_by_path = {spec.path: spec for spec in entry.metadata.script_specs}
-    create_spec = spec_by_path["scripts/create_presentation.py"]
-
-    assert create_spec.argument_names == ["deck_spec", "output_file"]
-    assert create_spec.artifacts == ["{output_file}"]
-    assert "from scratch" in create_spec.description.lower()
+    # script_specs are now optional — verify scripts are discoverable via resources
+    assert "scripts/create_presentation.py" in entry.resources.scripts
+    # Verify the body contains script interface documentation
+    assert "scripts/create_presentation.py" in entry.body
+    assert "deck_spec_json" in entry.body
+    assert "output_file" in entry.body
 
 
 def test_load_skill_registry_and_catalog_skip_disabled_and_invalid_entries(tmp_path: Path) -> None:

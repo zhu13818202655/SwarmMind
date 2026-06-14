@@ -316,10 +316,9 @@ async def test_execution_prompt_includes_declared_skill_scripts() -> None:
     prompt = await container.execution_runner._compose_subtask_prompt(task, subtask)
 
     assert '当前选中的 skill profiles：["pptx"]' in prompt
-    assert 'scripts/add_slide.py' in prompt
-    assert 'scripts/office/pack.py' in prompt
-    assert '技能执行提示：' in prompt
-    assert 'script_specs' in prompt
+    assert 'scripts/create_presentation.py' in prompt
+    assert '技能入口信息：' in prompt
+    assert 'read_skill_reference(skill_name)' in prompt
     assert '真实文件产物要求：' in prompt
     assert '必须设置 `allow_sandbox_exec=true`' in prompt
 

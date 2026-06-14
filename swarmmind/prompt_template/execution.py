@@ -34,19 +34,38 @@ EXECUTION_SUBTASK_MARKDOWN_PROMPT = PromptTemplate(
 工具组：{{ tool_groups_json }}
 依赖子任务摘要：{{ dependency_summary_json }}
 当前选中的 skill profiles：{{ skill_profiles_json }}
-当前可用技能脚本：{{ skill_script_inventory_json }}
-技能执行提示：{{ selected_skill_context_json }}
 真实文件产物要求：{{ output_contract_json }}
 
+技能驱动任务执行协议：
+
+当前子任务关联了以下技能包：{{ skill_manifest_json }}
+
+每个技能包只给出了名称、描述和可读资源列表。可用脚本列表、参数格式、工作流指南等完整信息位于技能包内部文档中。
+
+执行步骤（按顺序，不可跳步）：
+1. 调用 read_skill_reference(skill_name) 读取 SKILL.md 主体——获取可用脚本列表、参数说明、工作流指南和设计要求。
+2. 根据任务需要，继续调用 read_skill_reference(skill_name, "xxx.md") 读取特定参考文档深入理解。
+3. 确认理解脚本接口后，调用 list_skill_scripts(skill_name) 确认脚本物理存在。
+4. 调用 run_skill_script 执行脚本：
+   - script_path 必须与 SKILL.md 中声明的路径一致
+   - script_args 必须按 SKILL.md 中的参数说明顺序传入
+   - artifact_paths 必须声明所有预期产物路径
+   - allow_sandbox_exec 必须为 true
+
+⚠️ 重要：技能入口信息中不包含脚本列表和参数说明。如果你跳过第 1 步直接调用 run_skill_script，将因为不知道正确的 script_path 和参数格式而失败。
+
 技能脚本调用规则：
-- 如果需要调用 `run_skill_script`，优先使用上面的“当前可用技能脚本”；如果仍不确定，先调用 `list_skill_scripts` 或 `get_skill_details` 查询后再执行。
 - `script_path` 必须使用技能包中已声明的完整相对路径，例如 `scripts/run.py`；不要臆造未声明名称。
 - `skill`/`script` 只是 `skill_name`/`script_path` 的别名；`script` 绝不能传入内联 Python、Shell 或其他源码字符串。
-- 如果脚本需要命令行参数，必须通过 `script_args` 传入有序参数。
-- 如果 `script_specs` 声明了 `args_schema`/`argument_names`，优先通过 `script_input` 传结构化输入。
+- 必须通过 `script_args` 传位置参数（从 SKILL.md 确认参数顺序和 JSON 格式）。
+- 必须通过 `artifact_paths` 声明要回收的产物文件路径。
 - 只要实际执行技能脚本，就必须设置 `allow_sandbox_exec=true`。
 - 当输出契约要求真实文件产物，且存在对应 skill profile 时，优先使用已声明技能脚本完成文件物化；如果没有合适脚本，不要伪称已经生成文件。
 - 需要执行任意临时代码时，使用通用代码执行工具；不要把源码塞进 `run_skill_script`。
+
+语言与内容要求：
+- 输出语言必须与用户任务目标的语言一致。如果任务目标是中文，所有交付内容（包括 PPT/文档的标题、正文、要点等）都必须使用中文。
+- 当依赖子任务摘要中已提供详细数据、分析和结论时，必须充分利用这些内容来丰富产出，不要丢弃细节只保留一句话概括。
 
 输出要求：
 1) 始终返回简洁的 Markdown 摘要，说明你实际完成了什么。
@@ -54,7 +73,8 @@ EXECUTION_SUBTASK_MARKDOWN_PROMPT = PromptTemplate(
 3) 包含针对验收标准的验证说明。
 4) 如果任务或验收标准要求真实文件产物（如 `.pptx`、`.pdf`、`.docx`、`.xlsx`），Markdown 只是一份摘要，不能替代文件本身。
 5) 当要求真实文件产物时，必须使用当前可用工具实际生成该文件；如果没有生成真实文件，就不能声称已经完成交付。
-6) 当依赖子任务或依赖产物摘要中已经提供事实、数据或结论时，优先复用这些内容；不要忽略依赖结果后自行臆造。""",
+6) 当依赖子任务或依赖产物摘要中已经提供事实、数据或结论时，优先复用这些内容；不要忽略依赖结果后自行臆造。
+7) 当产出为二进制文件（如 `.pptx`、`.pdf`、`.docx`）时，必须同时提供可审查的文本版摘要（例如逐页内容要点），以便下游 Review 和 Verify 子任务验证内容覆盖度。""",
 )
 
 EXECUTION_SANDBOX_COMMAND_PROMPT = PromptTemplate(
@@ -68,8 +88,7 @@ EXECUTION_SANDBOX_COMMAND_PROMPT = PromptTemplate(
 工具组：{{ tool_groups_json }}
 依赖子任务摘要：{{ dependency_summary_json }}
 当前选中的 skill profiles：{{ skill_profiles_json }}
-当前可用技能脚本：{{ skill_script_inventory_json }}
-技能执行提示：{{ selected_skill_context_json }}
+技能入口信息：{{ skill_manifest_json }}
 真实文件产物要求：{{ output_contract_json }}
 
 返回 JSON schema：

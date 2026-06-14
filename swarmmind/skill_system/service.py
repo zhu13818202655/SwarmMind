@@ -17,6 +17,7 @@ from swarmmind.skill_system.loader import get_skill_package_root, load_skill_reg
 from swarmmind.skill_system.models import (
     SkillEntry,
     SkillExecutionContext,
+    SkillManifest,
     SkillScriptExecutionPolicy,
     SkillScriptExecutionResult,
     SkillScriptSpec,
@@ -49,26 +50,78 @@ class SkillExecutionService:
         return build_expanded_catalog_payload([entry])[0]
 
     def get_skill_prompt_context(self, skill_name: str) -> dict[str, object]:
-        """Return a concise prompt summary for a selected skill."""
+        """Return a concise prompt summary for a selected skill.
+
+        Returns the lightweight manifest format — name, description, and
+        resource/script lists — instead of the full ``script_specs``.  The
+        agent progressively loads details via ``read_skill_reference``.
+        """
+        manifest = self.build_skill_manifest(skill_name)
+        return manifest.model_dump(mode="json")
+
+    def build_skill_manifest(self, skill_name: str) -> SkillManifest:
+        """Build a lightweight manifest for progressive discovery."""
         entry = self.get_skill_entry(skill_name)
-        return {
-            "name": entry.name,
-            "description": entry.description,
-            "runtime_requirements": entry.metadata.runtime_requirements.model_dump(mode="json"),
-            "script_specs": [
-                {
-                    "path": spec.path,
-                    "runtime": spec.runtime,
-                    "description": spec.description,
-                    "args_schema": spec.args_schema,
-                    "argument_names": list(spec.argument_names),
-                    "artifacts": list(spec.artifacts),
-                    "examples": list(spec.examples),
-                }
-                for spec in entry.metadata.script_specs[:8]
-            ],
-            "body_excerpt": self._extract_body_excerpt(entry.body),
-        }
+        entrypoint_resources = self._collect_entrypoint_resources(entry)
+        artifact_types = self._infer_artifact_types(entry)
+        return SkillManifest(
+            name=entry.name,
+            description=entry.description,
+            entrypoint_resources=entrypoint_resources,
+            artifact_types=artifact_types,
+        )
+
+    def read_skill_reference(
+        self,
+        skill_name: str,
+        reference_path: str | None = None,
+        context: SkillExecutionContext | None = None,
+    ) -> str:
+        """Progressively read a resource from a skill package.
+
+        - ``reference_path=None`` returns the SKILL.md body (methodology,
+          design guides, script descriptions).
+        - ``reference_path="editing.md"`` returns a specific reference doc.
+        - ``reference_path="scripts/create_presentation.py"`` returns script
+          source code so the agent can understand the interface.
+
+        Reads on the host side — no sandbox creation required.
+        """
+        entry = self.get_skill_entry(skill_name)
+        if reference_path is None:
+            content = entry.body
+        else:
+            normalized = reference_path.strip().lstrip("/")
+            target = (entry.root_dir / normalized).resolve()
+            # Path traversal guard
+            if entry.root_dir.resolve() not in target.parents and target != entry.root_dir.resolve():
+                raise ValueError(f"Reference path escapes skill root: {reference_path}")
+            if not target.is_file():
+                raise FileNotFoundError(f"Reference not found: {reference_path}")
+            content = target.read_text(encoding="utf-8")
+
+        # Publish audit event (fire-and-forget style via sync wrapper)
+        if self._event_bus is not None and context is not None:
+            import asyncio
+
+            async def _emit() -> None:
+                await self._publish_event(
+                    "skill.resource.loaded",
+                    context,
+                    payload={
+                        "skill_name": skill_name,
+                        "reference_path": reference_path or "SKILL.md (body)",
+                        "content_length": len(content),
+                    },
+                )
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_emit())
+            except RuntimeError:
+                pass
+
+        return content
 
     def get_skill_entry(self, skill_name: str) -> SkillEntry:
         """Load a valid, enabled skill entry by name."""
@@ -296,6 +349,34 @@ class SkillExecutionService:
         if failure_category:
             return f"[{failure_category}] {message}" + (f" Retry guidance: {guidance}" if guidance else "")
         return f"{message} Retry guidance: {guidance}"
+
+    @staticmethod
+    def _collect_entrypoint_resources(entry: SkillEntry) -> list[str]:
+        """Collect top-level readable resources the agent can browse."""
+        resources: list[str] = ["SKILL.md"]
+        # Top-level .md files (editing.md, pptxgenjs.md, etc.)
+        for child in sorted(entry.root_dir.iterdir()):
+            if child.is_file() and child.suffix == ".md" and child.name != "SKILL.md":
+                resources.append(child.name)
+        # Files under references/
+        resources.extend(entry.resources.references)
+        return resources
+
+    @staticmethod
+    def _infer_artifact_types(entry: SkillEntry) -> list[str]:
+        """Infer producible artifact types from description and scripts."""
+        description_lower = entry.description.lower()
+        types: list[str] = []
+        extension_hints = {
+            ".pptx": ["pptx", "presentation", "slide", "deck"],
+            ".pdf": ["pdf"],
+            ".docx": ["docx", "document", "word"],
+            ".xlsx": ["xlsx", "spreadsheet", "excel"],
+        }
+        for ext, keywords in extension_hints.items():
+            if any(kw in description_lower for kw in keywords):
+                types.append(ext)
+        return types
 
     @staticmethod
     def _extract_body_excerpt(body: str, max_lines: int = 10) -> str:

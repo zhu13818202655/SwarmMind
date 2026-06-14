@@ -119,6 +119,19 @@ class SkillEntry(BaseModel):
         return self.metadata.description
 
 
+class SkillManifest(BaseModel):
+    """Lightweight entry manifest for progressive skill discovery.
+
+    Injected into execution prompts as the sole skill context.  The agent
+    uses ``read_skill_reference`` to progressively load details.
+    """
+
+    name: str
+    description: str
+    entrypoint_resources: list[str] = Field(default_factory=list)
+    artifact_types: list[str] = Field(default_factory=list)
+
+
 class CompactSkillCatalogEntry(BaseModel):
     """Compact catalog view for prompt-time discovery."""
 

@@ -13,7 +13,7 @@ from swarmmind.tools.builtin.file import (
     rename_file,
     write_file,
 )
-from swarmmind.tools.builtin.skill import SkillTool, get_skill_details, list_skill_scripts, run_skill_script
+from swarmmind.tools.builtin.skill import SkillTool, get_skill_details, list_skill_scripts, read_skill_reference, run_skill_script
 from swarmmind.tools.builtin.workspace import WorkspaceTool, glob_search, grep_search
 from swarmmind.tools.builtin.catalog import register_builtin_tools
 
@@ -42,6 +42,7 @@ __all__ = [
     "grep_search",
     # Skill
     "SkillTool",
+    "read_skill_reference",
     "list_skill_scripts",
     "get_skill_details",
     "run_skill_script",
