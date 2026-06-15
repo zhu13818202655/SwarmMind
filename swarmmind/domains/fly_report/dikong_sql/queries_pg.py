@@ -57,7 +57,7 @@ SELECT
     rp.deptids_tag_name                                           AS deptids_tag_name,
     to_char(CAST(jl.start_time AS timestamp),
             'YYYY-MM-DD HH24:MI:SS')                              AS start_time,
-    to_char(CAST(jl.stop_time  AS timestamp),
+    to_char(CAST(NULLIF(jl.stop_time, '') AS timestamp),
             'YYYY-MM-DD HH24:MI:SS')                              AS stop_time,
     jl.status::text                                               AS status,
     jl.create_time                                                AS create_time
@@ -65,6 +65,7 @@ SELECT
   LEFT JOIN t_missions       m  ON jl.mission_id = m.id
   LEFT JOIN t_route_planning rp ON m.route_id    = rp.id
  WHERE jl.job_group = 'MISSION'
+   AND jl.start_time IS NOT NULL AND jl.start_time != ''
    AND CAST(jl.start_time AS timestamp) BETWEEN %(start_ts)s AND %(end_ts)s
    AND (
         %(dept_ids)s::int8[] IS NULL
@@ -97,6 +98,7 @@ base AS (
       FROM sys_job_log jl
       LEFT JOIN t_missions m ON jl.mission_id = m.id
      WHERE jl.job_group = 'MISSION'
+       AND jl.start_time IS NOT NULL AND jl.start_time != ''
        AND CAST(jl.start_time AS timestamp) BETWEEN %(start_ts)s AND %(end_ts)s
        AND (
            %(dept_ids)s::int8[] IS NULL
@@ -134,6 +136,7 @@ SELECT DISTINCT m.device_sn AS device_sn
    AND jl.status::int = 2
    AND m.device_sn IS NOT NULL
    AND m.device_sn <> ''
+   AND jl.start_time IS NOT NULL AND jl.start_time != ''
    AND CAST(jl.start_time AS timestamp) BETWEEN %(start_ts)s AND %(end_ts)s
    AND (
         %(dept_ids)s::int8[] IS NULL

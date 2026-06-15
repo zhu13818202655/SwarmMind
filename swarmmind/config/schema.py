@@ -43,7 +43,7 @@ class ModelConfig(ValidatedDefaultsModel):
     @classmethod
     def resolve_base_url(cls, value: Any) -> Any:
         return resolve_env_value(value, "OPENAI_BASE_URL")
-    
+
     @field_validator("name", mode="before")
     @classmethod
     def resolve_name(cls, value: Any) -> Any:
@@ -562,6 +562,22 @@ class FlyReportText2SqlConfig(ValidatedDefaultsModel):
         default=10,
         ge=1,
         description="Upper bound on the agent's tool-call loop per turn",
+    )
+    llm_timeout_seconds: float = Field(
+        default=120.0,
+        ge=10.0,
+        description=(
+            "Per-request timeout (seconds) passed to the OpenAI client. "
+            "Covers a single LLM call inside the agent loop."
+        ),
+    )
+    agent_timeout_seconds: float = Field(
+        default=240.0,
+        ge=30.0,
+        description=(
+            "Overall timeout (seconds) for the entire Text2SQL agent run, "
+            "enforced via asyncio.wait_for in the service layer."
+        ),
     )
 
     @field_validator("enabled", mode="before")

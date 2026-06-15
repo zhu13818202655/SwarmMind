@@ -214,6 +214,17 @@ class FlyReportRepository(Protocol):
         self, session_id: str, *, limit: int = 100
     ) -> list[dict[str, Any]]: ...
 
+    async def delete_session(self, session_id: str) -> bool: ...
+
+    async def delete_sessions_for_user(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        created_before: str | None = None,
+        created_after: str | None = None,
+    ) -> int: ...
+
 
 # ---------------------------------------------------------------------------
 # In-memory no-op (used when persistence is disabled)
@@ -294,6 +305,19 @@ class InMemoryFlyReportRepository:
         self, session_id: str, *, limit: int = 100
     ) -> list[dict[str, Any]]:
         return []
+
+    async def delete_session(self, session_id: str) -> bool:
+        return False
+
+    async def delete_sessions_for_user(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        created_before: str | None = None,
+        created_after: str | None = None,
+    ) -> int:
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -665,6 +689,47 @@ class PostgresFlyReportRepository:
             (session_id, limit),
         )
         return list(rows)
+
+    async def delete_session(self, session_id: str) -> bool:
+        row = await self._store.fetch_one(
+            "SELECT id FROM fly_report_session WHERE id = %s",
+            (session_id,),
+        )
+        if row is None:
+            return False
+        await self._store.execute(
+            "DELETE FROM fly_report_session WHERE id = %s",
+            (session_id,),
+        )
+        return True
+
+    async def delete_sessions_for_user(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        created_before: str | None = None,
+        created_after: str | None = None,
+    ) -> int:
+        clauses = ["tenant_id = %s", "user_id = %s"]
+        params: list[Any] = [tenant_id, user_id]
+        if created_before:
+            clauses.append("created_at < %s")
+            params.append(created_before)
+        if created_after:
+            clauses.append("created_at >= %s")
+            params.append(created_after)
+        count_row = await self._store.fetch_one(
+            f"SELECT COUNT(*) AS cnt FROM fly_report_session WHERE {' AND '.join(clauses)}",
+            tuple(params),
+        )
+        count = int(count_row["cnt"]) if count_row else 0
+        if count > 0:
+            await self._store.execute(
+                f"DELETE FROM fly_report_session WHERE {' AND '.join(clauses)}",
+                tuple(params),
+            )
+        return count
 
 
 __all__ = [

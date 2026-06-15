@@ -1,6 +1,8 @@
 """Build the agent's system prompt from the loaded knowledge."""
 from __future__ import annotations
 
+from datetime import datetime, timezone, timedelta
+
 from .knowledge import Knowledge
 
 _HARD_RULES = """\
@@ -127,9 +129,26 @@ def _format_banned_section(k: Knowledge) -> str:
     return ", ".join(f"`{t.name}`" for t in bans)
 
 
+def _current_time_section() -> str:
+    """Return a short block telling the model the current date/time."""
+    tz = timezone(timedelta(hours=8))
+    now = datetime.now(tz)
+    return (
+        f"Current time: {now.strftime('%Y-%m-%d %H:%M:%S')} (Asia/Shanghai, UTC+8)\n"
+        f"Today is {now.strftime('%A')}.\n"
+        "Use this to resolve relative time expressions like "
+        ""昨天", "本周", "上个月", "最近7天" etc."
+    )
+
+
 def build_system_prompt(k: Knowledge, *, n_inline_examples: int = 5) -> str:
     parts = [
         _HARD_RULES,
+        "",
+        "=" * 60,
+        "CURRENT TIME:",
+        "=" * 60,
+        _current_time_section(),
         "",
         "=" * 60,
         "FOCUS TABLES (use these for ~90% of questions):",

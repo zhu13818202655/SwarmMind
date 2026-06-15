@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    platform: linux/amd64
     container_name: swarmmind-postgres
     restart: unless-stopped
     environment:
@@ -19,6 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    platform: linux/amd64
     container_name: swarmmind-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
@@ -33,7 +35,7 @@ services:
       retries: 5
 
   migrate:
-    image: swarmmind:wuyi-report-v0.2.7
+    image: swarmmind:wuyi-report-v0.2.7.2
     container_name: swarmmind-migrate
     restart: "no"
     env_file:
@@ -48,7 +50,7 @@ services:
         condition: service_healthy
 
   backend:
-    image: swarmmind:wuyi-report-v0.2.7
+    image: swarmmind:wuyi-report-v0.2.7.2
     container_name: swarmmind-backend
     restart: unless-stopped
     env_file:
@@ -92,6 +94,7 @@ services:
 
   nginx:
     image: nginx:1.29.1-alpine
+    platform: linux/amd64
     container_name: swarmmind-nginx
     restart: unless-stopped
     ports:

@@ -1,7 +1,7 @@
-"""Zero-arg smoke test for DataFetcher.fetch and analyze.
+"""Zero-arg smoke test for SqlDataFetcher.fetch and analyze.
 
-The script still performs a real fetch first to verify login/connectivity, then
-replaces the sparse live payload with richer realistic mock data before analysis.
+Uses the SQL path (DikongSqlClient → PostgreSQL + TDengine) matching the
+production ``fly_report.source: sql`` configuration.
 
 Usage:
     python scripts/test_data_fetcher_fetch.py
@@ -38,11 +38,16 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(ROOT / ".env")
 
-from swarmmind.config.schema import FlyReportDikongConfig
+from swarmmind.config.schema import (
+    FlyReportDikongSqlConfig,
+    FlyReportPostgresConfig,
+    FlyReportTDengineConfig,
+)
 from swarmmind.domains.fly_report.analyzer.aggregations import analyze
 from swarmmind.domains.fly_report.composer import compose_report_context
-from swarmmind.domains.fly_report.data_fetcher import DataFetcher
-from swarmmind.domains.fly_report.dikong.client import DikongClient
+from swarmmind.domains.fly_report.dikong_sql.client import DikongSqlClient
+from swarmmind.domains.fly_report.dikong_sql.data_fetcher import SqlDataFetcher
+from swarmmind.domains.fly_report.dikong_sql.td_client import TDengineRestClient
 from swarmmind.domains.fly_report.export import RendererRouter
 from swarmmind.domains.fly_report.schemas import (
     AnalysisResult,
@@ -94,29 +99,43 @@ def _build_filter() -> NormalizedFilter:
 
 async def fetch_data() -> tuple[RawDataset, NormalizedFilter]:
     filt = _build_filter()
-    fetcher = DataFetcher(
-        client=DikongClient(
-            config=FlyReportDikongConfig(
-                base_url="http://61.169.171.82:50001",
-                account="admin",
-                password="1qazXSW@4321",
-                token_ttl_seconds=720,
-                token_refresh_skew_seconds=60,
-                request_timeout_seconds=15.0,
-                max_retries=2,
-                retry_backoff_seconds=0.5,
-                max_concurrency=8,
-                rate_limit_per_second=10.0,
-                department_id_list=[],
-            )
-        )
+
+    pg_cfg = FlyReportPostgresConfig()
+    td_cfg = FlyReportTDengineConfig(
+        base_url=os.getenv("FLY_REPORT_DIKONG_TDENGINE_URL", "http://61.169.171.82:51741"),
+        database=os.getenv("FLY_REPORT_DIKONG_TDENGINE_DB", "dikong"),
+        username=os.getenv("FLY_REPORT_DIKONG_TDENGINE_USER", "root"),
+        password=os.getenv("FLY_REPORT_DIKONG_TDENGINE_PASSWORD", "taosdata"),
     )
+    sql_cfg = FlyReportDikongSqlConfig(postgres=pg_cfg, tdengine=td_cfg)
+
+    from psycopg.rows import dict_row
+    from psycopg_pool import AsyncConnectionPool
+
+    pg_pool = AsyncConnectionPool(
+        conninfo=pg_cfg.dsn,
+        min_size=0,
+        max_size=pg_cfg.pool_max_size,
+        timeout=pg_cfg.pool_timeout_seconds,
+        kwargs={
+            "row_factory": dict_row,
+            "application_name": pg_cfg.application_name,
+            "autocommit": True,
+        },
+        open=False,
+    )
+    await pg_pool.open(wait=True, timeout=10)
+
+    td_client = TDengineRestClient(td_cfg)
+    sql_client = DikongSqlClient(pg_pool, td_client, sql_cfg)
+    fetcher = SqlDataFetcher(sql_client)
 
     live = await fetcher.fetch(filt)
     _write_json("test_data_fetcher_live_output.json", live.model_dump(mode="json"))
 
-    # mocked = replace_fetched_data_with_mock(live, filt)
-    # _write_json("test_data_fetcher_fetch_output.json", mocked.model_dump(mode="json"))
+    await pg_pool.close()
+    await td_client.aclose()
+
     return live, filt
 
 

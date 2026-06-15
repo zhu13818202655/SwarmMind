@@ -42,9 +42,12 @@ def _build_model(
     }
     if model_config.disable_thinking:
         # Disable hybrid-reasoning ("thinking") for DeepSeek V3.x/V4 Pro, Qwen3, etc.
-        # Multiple keys are sent for cross-gateway compatibility (vLLM/SGLang/LiteLLM).
+        # chat_template_kwargs is passed through to the model's chat template renderer
+        # and MUST only contain keys that template actually reads. Adding extra keys
+        # (e.g. "thinking") breaks Qwen3 rendering and leaks <think> back into content.
+        # The top-level keys are consumed by gateways (DeepSeek/SGLang) instead.
         generate_kwargs["extra_body"] = {
-            "chat_template_kwargs": {"thinking": False},
+            "chat_template_kwargs": {"enable_thinking": False},
             "enable_thinking": False,
             "thinking": {"type": "disabled"},
         }

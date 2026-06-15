@@ -209,6 +209,7 @@ class Text2SqlAgent:
             api_key=self._model.api_key,
             base_url=self._model.base_url or None,
             model=self._model.name,
+            timeout=self._config.llm_timeout_seconds,
         )
 
         # ---- 3. PG runner (read-only via DSN options) ----

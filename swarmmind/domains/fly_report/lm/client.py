@@ -121,8 +121,12 @@ class OpenAICompatibleLMClient:
             payload["response_format"] = request.response_format
         if self.disable_thinking:
             # Disable hybrid-reasoning ("thinking") for DeepSeek V3.x/V4 Pro, Qwen3, etc.
-            # Multiple keys are emitted for cross-gateway compatibility.
-            payload["chat_template_kwargs"] = {"thinking": False}
+            # Keep chat_template_kwargs to ONLY the keys each template actually reads,
+            # otherwise some templates (e.g. Qwen3) leak `<think>` content back even
+            # when the intent was to disable thinking.
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+            # Top-level keys consumed by some gateways (DeepSeek/SGLang) — these are
+            # ignored by Qwen3's chat template and therefore safe.
             payload["enable_thinking"] = False
             payload["thinking"] = {"type": "disabled"}
         return payload

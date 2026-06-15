@@ -430,6 +430,47 @@ def create_fly_report_router(
             ) from exc
         return _turn_view(turn)
 
+    @router.delete(
+        "/sessions/{session_id}",
+        status_code=status.HTTP_200_OK,
+    )
+    async def delete_session(
+        session_id: str, tenant_id: str, user_id: str
+    ) -> dict[str, str]:
+        """Permanently delete a session and all associated data."""
+        try:
+            await service.delete_session(
+                session_id, tenant_id=tenant_id, user_id=user_id
+            )
+        except SessionNotFound as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
+        return {"status": "deleted", "session_id": session_id}
+
+    @router.delete(
+        "/sessions",
+        status_code=status.HTTP_200_OK,
+    )
+    async def batch_delete_sessions(
+        tenant_id: str,
+        user_id: str,
+        created_before: str | None = None,
+        created_after: str | None = None,
+    ) -> dict[str, Any]:
+        """Batch-delete sessions by time range.
+
+        - ``created_before``: ISO-8601 timestamp, delete sessions created before this time.
+        - ``created_after``: ISO-8601 timestamp, delete sessions created on or after this time.
+        """
+        result = await service.batch_delete_sessions(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            created_before=created_before,
+            created_after=created_after,
+        )
+        return result
+
     @router.get("/sessions/{session_id}", response_model=SessionSnapshot)
     async def get_session(session_id: str, user_id: str) -> SessionSnapshot:
         try:
@@ -501,8 +542,14 @@ def create_fly_report_router(
         keyword: str | None = None,
         state: str | None = None,
         before_session_id: str | None = None,
+        created_before: str | None = None,
+        created_after: str | None = None,
     ) -> SessionListResponse:
-        """List recent sessions for ``(tenant_id, user_id)``
+        """List recent sessions for ``(tenant_id, user_id)``.
+
+        Optional time filters:
+        - ``created_before``: ISO-8601 timestamp, only sessions created before this time.
+        - ``created_after``: ISO-8601 timestamp, only sessions created on or after this time.
         """
         payload = await service.list_user_sessions(
             tenant_id=tenant_id,
@@ -511,6 +558,8 @@ def create_fly_report_router(
             keyword=keyword,
             state_filter=state,
             before_session_id=before_session_id,
+            created_before=created_before,
+            created_after=created_after,
         )
         return SessionListResponse(
             items=[_session_list_item(r) for r in payload["items"]],

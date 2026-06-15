@@ -87,12 +87,29 @@ def build_flight_stat_overall(raw: RawDataset, filt: NormalizedFilter) -> dict[s
     cur_records = records(cur_job_logs)
     prev_records = records(prev_job_logs)
 
-    cur_flight_count = number(cur.get("num_total"))
-    prev_flight_count = number(prev.get("num_total"))
-    cur_flight_hours = number(cur.get("fly_time_total"))
-    prev_flight_hours = number(prev.get("fly_time_total"))
     cur_completed_durations = _completed_flight_duration_minutes(cur_records)
     prev_completed_durations = _completed_flight_duration_minutes(prev_records)
+
+    # START 2026-06-09
+    # 这是之前的统计口径，直接用 fly_statis 里的 num_total 和 fly_time_total 字段。现在改成从日志记录里统计，所以注释掉了。
+    # cur_flight_count = number(cur.get("num_total"))
+    # prev_flight_count = number(prev.get("num_total"))
+    # cur_flight_hours = number(cur.get("fly_time_total"))
+    # prev_flight_hours = number(prev.get("fly_time_total"))
+    # END 2026-06-09
+
+    # Derive flight count and hours from job log records (status=2) so that
+    # the totals are consistent with the per-day trend table.  Fall back to
+    # the fly_statis API values only when log records yield nothing.
+    cur_flight_count_from_logs = float(len(cur_completed_durations))
+    prev_flight_count_from_logs = float(len(prev_completed_durations))
+    cur_flight_hours_from_logs = round(sum(d / 60 for d in cur_completed_durations), 2)
+    prev_flight_hours_from_logs = round(sum(d / 60 for d in prev_completed_durations), 2)
+
+    cur_flight_count = cur_flight_count_from_logs or number(cur.get("num_total"))
+    prev_flight_count = prev_flight_count_from_logs or number(prev.get("num_total"))
+    cur_flight_hours = cur_flight_hours_from_logs or number(cur.get("fly_time_total"))
+    prev_flight_hours = prev_flight_hours_from_logs or number(prev.get("fly_time_total"))
 
     values: dict[str, tuple[str, float | None, float | None, str, int]] = {
         "flight_count": ("飞行总次数", cur_flight_count, prev_flight_count, "次", 0),

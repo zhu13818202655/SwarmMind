@@ -935,6 +935,68 @@ class FlyReportService:
             await self._persist_session(record)
             return reply
 
+    # ------------------------------------------------------------------
+    # delete
+    # ------------------------------------------------------------------
+
+    async def delete_session(
+        self, session_id: str, *, tenant_id: str, user_id: str
+    ) -> bool:
+        """Delete a single session by ID.
+
+        Removes the session from the in-memory cache, the durable store,
+        and cleans up any on-disk artifacts.
+        """
+        record = await self._load_session(session_id, user_id=user_id)
+        if record.tenant_id != tenant_id:
+            raise SessionNotFound(f"session {session_id} not found")
+        # Remove from DB (cascade deletes turns/interactions/messages/artifacts)
+        await self._repo.delete_session(session_id)
+        # Remove from in-memory cache
+        self._sessions.pop(session_id, None)
+        # Clean up artifact files on disk
+        session_dir = self._output_root / session_id
+        if session_dir.exists():
+            shutil.rmtree(session_dir, ignore_errors=True)
+        return True
+
+    async def batch_delete_sessions(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        created_before: str | None = None,
+        created_after: str | None = None,
+    ) -> dict[str, int]:
+        """Batch-delete sessions matching the given filters.
+
+        Returns ``{"deleted": n}``.
+        """
+        # Collect matching session IDs from in-memory cache for cleanup
+        matching_ids: list[str] = []
+        for sid, rec in list(self._sessions.items()):
+            if rec.tenant_id != tenant_id or rec.user_id != user_id:
+                continue
+            if created_before and rec.created_at.isoformat() >= created_before:
+                continue
+            if created_after and rec.created_at.isoformat() < created_after:
+                continue
+            matching_ids.append(sid)
+        # Delete from DB
+        count = await self._repo.delete_sessions_for_user(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            created_before=created_before,
+            created_after=created_after,
+        )
+        # Clean up in-memory cache and disk artifacts
+        for sid in matching_ids:
+            self._sessions.pop(sid, None)
+            session_dir = self._output_root / sid
+            if session_dir.exists():
+                shutil.rmtree(session_dir, ignore_errors=True)
+        return {"deleted": max(count, len(matching_ids))}
+
     async def list_user_sessions(
         self,
         *,
@@ -944,6 +1006,8 @@ class FlyReportService:
         keyword: str | None = None,
         state_filter: str | None = None,
         before_session_id: str | None = None,
+        created_before: str | None = None,
+        created_after: str | None = None,
     ) -> dict[str, Any]:
         """Return recent sessions for ``user_id``.
 
@@ -955,6 +1019,8 @@ class FlyReportService:
         against ``title`` / ``last_user_text``. ``state_filter`` restricts
         results to a single :class:`SessionState` value (DESIGN-3 R3.1).
         Cursor pagination uses ``before_session_id``.
+        Optional ``created_before`` / ``created_after`` (ISO-8601) narrow
+        by creation time.
         """
         page_size = max(1, min(limit, 200))
         cursor_key: tuple[str, str] | None = None
@@ -993,6 +1059,10 @@ class FlyReportService:
                     and needle not in (r.last_user_text or "").lower()
                 ):
                     continue
+            if created_before and r.created_at.isoformat() >= created_before:
+                continue
+            if created_after and r.created_at.isoformat() < created_after:
+                continue
             row = {
                 "session_id": r.id,
                 "state": r.state.value,
@@ -1668,9 +1738,29 @@ class FlyReportService:
             # frontend hits its ~30s SSE idle timeout. Run the whole
             # call in a worker thread (with its own event loop) so the
             # outer loop stays free to schedule the heartbeat.
-            answer = await asyncio.to_thread(
-                asyncio.run,
-                service.answer(interaction.input_text),
+            _timeout = get_settings().fly_report.text2sql.agent_timeout_seconds
+            answer = await asyncio.wait_for(
+                asyncio.to_thread(
+                    asyncio.run,
+                    service.answer(interaction.input_text),
+                ),
+                timeout=_timeout,
+            )
+        except asyncio.TimeoutError:
+            elapsed = round(time.perf_counter() - t0, 3)
+            logger.warning(
+                "fly_report.text2sql.timeout",
+                extra={
+                    "interaction_id": interaction.id,
+                    "session_id": interaction.session_id,
+                    "timeout_sec": _timeout,
+                    "elapsed_sec": elapsed,
+                },
+            )
+            answer = Text2SqlAnswer(
+                question=interaction.input_text,
+                answer_text="抱歉，查询处理时间较长，请稍后重试或尝试简化您的问题。",
+                error="agent_timeout",
             )
         except Text2SqlError as exc:
             logger.warning(

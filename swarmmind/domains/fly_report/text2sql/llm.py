@@ -23,10 +23,11 @@ from vanna.core.llm import LlmRequest
 from vanna.integrations.openai import OpenAILlmService
 
 
-# All three keys are needed for max compatibility across DeepSeek's official
-# endpoint and the various OpenAI-compatible gateways (vLLM/SGLang/LiteLLM).
+# `chat_template_kwargs` is forwarded to the model's Jinja chat template and MUST
+# only carry keys the template actually reads, otherwise some templates (Qwen3)
+# render <think> blocks anyway. Top-level keys are consumed by gateways.
 _DISABLE_THINKING_EXTRA_BODY: Dict[str, Any] = {
-    "chat_template_kwargs": {"thinking": False},
+    "chat_template_kwargs": {"enable_thinking": False},
     "enable_thinking": False,
     "thinking": {"type": "disabled"},
 }
