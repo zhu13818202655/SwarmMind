@@ -330,10 +330,10 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
     # Intent parser selection (DESIGN-3 R1.1). ``llm`` falls back to ``rule``
     # on build failure so offline / first-run deployments stay usable.
 
-    from swarmmind.domains.fly_report.agents.factory import build_intent_agent
     from swarmmind.domains.fly_report.dikong.client import DikongClient
+    from swarmmind.domains.fly_report.lm.client import build_intent_lm_client
 
-    intent_parser = IntentParser(build_intent_agent(settings.agent.model))
+    intent_parser = IntentParser(build_intent_lm_client(settings.agent.model))
     dikong_client = DikongClient(settings.fly_report.dikong)
     data_fetcher = DataFetcher(dikong_client)
     fly_report_output_root = Path(

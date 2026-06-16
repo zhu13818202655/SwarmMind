@@ -18,6 +18,7 @@ from swarmmind.domains.fly_report.lm.types import (
     LMRequestError,
     LMTimeoutError,
 )
+from swarmmind.prompt_template.fly_report import INTENT_PARSE_SYSTEM_PROMPT
 
 
 class OpenAICompatibleLMClient:
@@ -212,3 +213,34 @@ class OpenAICompatibleLMClient:
             if parts:
                 return "".join(parts)
         raise LMProviderError("LM provider message content must be text")
+
+
+# ---------------------------------------------------------------------------
+# Factory helpers
+# ---------------------------------------------------------------------------
+
+
+def build_intent_lm_client(
+    model_config: ModelConfig,
+    *,
+    timeout_sec: float = 30.0,
+    http_client: httpx.AsyncClient | None = None,
+) -> OpenAICompatibleLMClient:
+    """Build a JSON-only LM client for intent parsing.
+
+    Drop-in replacement for
+    :func:`swarmmind.domains.fly_report.agents.factory.build_intent_agent`
+    that uses the lightweight :class:`OpenAICompatibleLMClient` instead of an
+    AgentScope ``ReActAgent``.
+    """
+
+    return OpenAICompatibleLMClient(
+        model_name=model_config.name,
+        api_key=model_config.api_key,
+        base_url=model_config.base_url,
+        temperature=model_config.temperature,
+        max_tokens=model_config.max_tokens,
+        timeout_sec=timeout_sec,
+        http_client=http_client,
+        disable_thinking=model_config.disable_thinking,
+    )

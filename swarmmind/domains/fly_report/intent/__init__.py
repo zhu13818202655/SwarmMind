@@ -1,9 +1,10 @@
 """FlyReport intent layer.
 
-Wraps the JSON-only ``IntentParserAgent`` with a thin business class that:
+Wraps a lightweight :class:`OpenAICompatibleLMClient` with a thin business
+class that:
 
 - formats the user text plus optional ``preference`` / ``now`` metadata,
-- calls the underlying :class:`agentscope.agent.ReActAgent`,
+- calls the underlying LM client with a JSON-only response format,
 - parses and validates the JSON reply into :class:`DraftFilterSpec`.
 
 It does not run clarification, permission checks, or normalization — those

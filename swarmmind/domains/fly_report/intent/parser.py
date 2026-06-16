@@ -7,32 +7,33 @@ import re
 from datetime import datetime
 from typing import Any
 
-from agentscope.agent import ReActAgent
-from agentscope.message import Msg
 from pydantic import ValidationError
 
 from swarmmind.domains.fly_report.errors import FilterParseError
+from swarmmind.domains.fly_report.lm.client import OpenAICompatibleLMClient
 from swarmmind.domains.fly_report.schemas import ChatTurn, DraftFilterSpec, FilterSpec
-from swarmmind.prompt_template.fly_report.intent_parse import INTENT_PARSE_USER_PROMPT
+from swarmmind.prompt_template.fly_report.intent_parse import (
+    INTENT_PARSE_SYSTEM_PROMPT,
+    INTENT_PARSE_USER_PROMPT,
+)
 from swarmmind.prompt_template.renderer import render_prompt
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 class IntentParser:
-    """Wraps an ``IntentParserAgent`` and produces :class:`DraftFilterSpec`.
+    """Wraps an :class:`OpenAICompatibleLMClient` and produces
+    :class:`DraftFilterSpec`.
 
     Parameters
     ----------
-    agent:
-        A ``ReActAgent`` built by
-        :func:`swarmmind.domains.fly_report.agents.factory.build_intent_agent`
-        (or any compatible agent that returns a JSON ``DraftFilterSpec`` in the
-        text content of its reply).
+    client:
+        A lightweight LM client (e.g. built by
+        :func:`swarmmind.domains.fly_report.lm.client.build_intent_lm_client`).
     """
 
-    def __init__(self, agent: ReActAgent) -> None:
-        self._agent = agent
+    def __init__(self, client: OpenAICompatibleLMClient) -> None:
+        self._client = client
 
     async def parse(
         self,
@@ -46,9 +47,8 @@ class IntentParser:
     ) -> DraftFilterSpec:
         """Parse a single user utterance into a :class:`DraftFilterSpec`.
 
-        The method composes a structured user prompt (mirroring the pattern in
-        ``Planner._compose_planning_prompt``) and sends it to the LLM agent
-        whose system prompt contains only the role identity.
+        The method composes a structured user prompt and sends it to the LM
+        client with the intent-parse system prompt.
 
         Parameters
         ----------
@@ -85,14 +85,12 @@ class IntentParser:
             recent_turns=recent_turns,
         )
 
-        msg = Msg(
-            name="user",
-            role="user",
-            content=prompt,
+        text = await self._client.chat(
+            system_prompt=INTENT_PARSE_SYSTEM_PROMPT.template,
+            user_prompt=prompt,
+            response_format={"type": "json_object"},
         )
 
-        reply = await self._agent(msg)
-        text = self._extract_text(reply)
         payload = self._extract_json(text)
 
         try:
@@ -152,34 +150,6 @@ class IntentParser:
     # ------------------------------------------------------------------
     # Response extraction helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _extract_text(reply: Any) -> str:
-        """Pull text out of a ReActAgent reply (Msg-like)."""
-
-        getter = getattr(reply, "get_text_content", None)
-        if callable(getter):
-            value = getter()
-            if value:
-                return str(value)
-
-        content = getattr(reply, "content", reply)
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for block in content:
-                if isinstance(block, dict):
-                    text = block.get("text")
-                    if isinstance(text, str):
-                        parts.append(text)
-                else:
-                    text = getattr(block, "text", None)
-                    if isinstance(text, str):
-                        parts.append(text)
-            if parts:
-                return "".join(parts)
-        return str(content)
 
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any]:

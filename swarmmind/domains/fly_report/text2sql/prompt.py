@@ -137,7 +137,7 @@ def _current_time_section() -> str:
         f"Current time: {now.strftime('%Y-%m-%d %H:%M:%S')} (Asia/Shanghai, UTC+8)\n"
         f"Today is {now.strftime('%A')}.\n"
         "Use this to resolve relative time expressions like "
-        ""昨天", "本周", "上个月", "最近7天" etc."
+        "“昨天”, “本周”, “上个月”, “最近7天” etc."
     )
 
 

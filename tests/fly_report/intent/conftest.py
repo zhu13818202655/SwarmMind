@@ -1,9 +1,9 @@
 """Test fixtures for the FlyReport intent layer.
 
-We mock at the **agent boundary** rather than at the chat-model boundary so
+We mock at the **LM client boundary** rather than at the chat-model boundary so
 tests stay focused on the parser's contract: given a JSON reply from the
-``IntentParserAgent``, the parser must produce a valid ``DraftFilterSpec``
-(or raise :class:`FilterParseError`).
+``OpenAICompatibleLMClient``, the parser must produce a valid
+``DraftFilterSpec`` (or raise :class:`FilterParseError`).
 """
 
 from __future__ import annotations
@@ -13,33 +13,40 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from agentscope.message import Msg
 
 
 @dataclass
-class StubAgent:
-    """Minimal async-callable stand-in for ``IntentParserAgent``.
+class StubLMClient:
+    """Minimal async-callable stand-in for :class:`OpenAICompatibleLMClient`.
 
-    The stub records every ``Msg`` it receives in :attr:`calls` and returns a
-    pre-canned reply. ``replies`` may contain either a string (returned as the
-    text content of an assistant ``Msg``) or a callable producing one.
+    The stub records every call it receives in :attr:`calls` and returns a
+    pre-canned reply string.  ``replies`` may contain either a string or a
+    callable producing one.
     """
 
-    replies: list[str | Callable[[Msg], str]] = field(default_factory=list)
-    calls: list[Msg] = field(default_factory=list)
+    replies: list[str | Callable[[str], str]] = field(default_factory=list)
+    calls: list[dict[str, Any]] = field(default_factory=list)
 
-    async def __call__(self, msg: Msg, *args: Any, **kwargs: Any) -> Msg:
-        self.calls.append(msg)
+    async def chat(
+        self,
+        *,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        self.calls.append(
+            {"system_prompt": system_prompt, "user_prompt": user_prompt, **kwargs}
+        )
         if not self.replies:
-            raise AssertionError("StubAgent received an unexpected call")
+            raise AssertionError("StubLMClient received an unexpected call")
         reply = self.replies.pop(0)
-        text = reply(msg) if callable(reply) else reply
-        return Msg(name="fly_report.intent_parser", role="assistant", content=text)
+        text = reply(user_prompt or "") if callable(reply) else reply
+        return text
 
 
 @pytest.fixture
-def stub_agent_factory() -> Callable[..., StubAgent]:
-    def _factory(*replies: str | Callable[[Msg], str]) -> StubAgent:
-        return StubAgent(replies=list(replies))
+def stub_lm_client_factory() -> Callable[..., StubLMClient]:
+    def _factory(*replies: str | Callable[[str], str]) -> StubLMClient:
+        return StubLMClient(replies=list(replies))
 
     return _factory

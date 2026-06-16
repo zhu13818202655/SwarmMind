@@ -181,9 +181,9 @@ FUTURE_CONFLICT_JSON = json.dumps(
 
 
 @pytest.mark.asyncio
-async def test_overall_weekly_report(stub_agent_factory) -> None:
-    agent = stub_agent_factory(OVERALL_WEEKLY_JSON)
-    parser = IntentParser(agent)
+async def test_overall_weekly_report(stub_lm_client_factory) -> None:
+    client = stub_lm_client_factory(OVERALL_WEEKLY_JSON)
+    parser = IntentParser(client)
 
     draft = await parser.parse(
         "这周的飞行报告",
@@ -197,13 +197,13 @@ async def test_overall_weekly_report(stub_agent_factory) -> None:
     assert draft.options.output_format == "docx"
     assert draft.missing == [] and draft.conflicts == []
     # `now` is rendered into the user prompt content.
-    assert "2026-04-15" in agent.calls[0].content
+    assert "2026-04-15" in client.calls[0]["user_prompt"]
 
 
 @pytest.mark.asyncio
-async def test_department_monthly_report(stub_agent_factory) -> None:
-    agent = stub_agent_factory(DEPT_MONTHLY_JSON)
-    parser = IntentParser(agent)
+async def test_department_monthly_report(stub_lm_client_factory) -> None:
+    client = stub_lm_client_factory(DEPT_MONTHLY_JSON)
+    parser = IntentParser(client)
 
     draft = await parser.parse("农业局上个月的报告")
 
@@ -214,9 +214,9 @@ async def test_department_monthly_report(stub_agent_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_pilot_personal_report(stub_agent_factory) -> None:
-    agent = stub_agent_factory(PILOT_WEEKLY_JSON)
-    parser = IntentParser(agent)
+async def test_pilot_personal_report(stub_lm_client_factory) -> None:
+    client = stub_lm_client_factory(PILOT_WEEKLY_JSON)
+    parser = IntentParser(client)
 
     draft = await parser.parse("飞手 P-001 上周飞行情况")
 
@@ -226,9 +226,9 @@ async def test_pilot_personal_report(stub_agent_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_department_comparison_with_preference(stub_agent_factory) -> None:
-    agent = stub_agent_factory(DEPT_COMPARE_JSON)
-    parser = IntentParser(agent)
+async def test_department_comparison_with_preference(stub_lm_client_factory) -> None:
+    client = stub_lm_client_factory(DEPT_COMPARE_JSON)
+    parser = IntentParser(client)
     preference = {"report_options_default": {"output_format": "pdf"}}
 
     draft = await parser.parse(
@@ -241,13 +241,13 @@ async def test_department_comparison_with_preference(stub_agent_factory) -> None
     assert draft.options.include_compare is True
     assert draft.options.output_format == "pdf"
     # preference is rendered into the user prompt content.
-    assert "pdf" in agent.calls[0].content
+    assert "pdf" in client.calls[0]["user_prompt"]
 
 
 @pytest.mark.asyncio
-async def test_custom_period_markdown(stub_agent_factory) -> None:
-    agent = stub_agent_factory(CUSTOM_PERIOD_JSON)
-    parser = IntentParser(agent)
+async def test_custom_period_markdown(stub_lm_client_factory) -> None:
+    client = stub_lm_client_factory(CUSTOM_PERIOD_JSON)
+    parser = IntentParser(client)
 
     draft = await parser.parse("3月1日到3月15日的报告，导出 markdown")
 
@@ -262,11 +262,11 @@ async def test_custom_period_markdown(stub_agent_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ambiguous_input_does_not_raise(stub_agent_factory) -> None:
+async def test_ambiguous_input_does_not_raise(stub_lm_client_factory) -> None:
     """missing/conflicts是数据，不是异常 —— 由状态机决定是否走 clarifier。"""
 
-    agent = stub_agent_factory(AMBIGUOUS_JSON)
-    parser = IntentParser(agent)
+    client = stub_lm_client_factory(AMBIGUOUS_JSON)
+    parser = IntentParser(client)
 
     draft = await parser.parse("帮我看下最近那个部门的报告")
 
@@ -276,9 +276,9 @@ async def test_ambiguous_input_does_not_raise(stub_agent_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_future_period_marked_as_conflict(stub_agent_factory) -> None:
-    agent = stub_agent_factory(FUTURE_CONFLICT_JSON)
-    parser = IntentParser(agent)
+async def test_future_period_marked_as_conflict(stub_lm_client_factory) -> None:
+    client = stub_lm_client_factory(FUTURE_CONFLICT_JSON)
+    parser = IntentParser(client)
 
     draft = await parser.parse("下周的飞行报告")
 
@@ -292,9 +292,9 @@ async def test_future_period_marked_as_conflict(stub_agent_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_json_reply_raises_filter_parse_error(stub_agent_factory) -> None:
-    agent = stub_agent_factory("抱歉我不明白你想要什么")
-    parser = IntentParser(agent)
+async def test_non_json_reply_raises_filter_parse_error(stub_lm_client_factory) -> None:
+    client = stub_lm_client_factory("抱歉我不明白你想要什么")
+    parser = IntentParser(client)
 
     with pytest.raises(FilterParseError) as exc:
         await parser.parse("生成报告")
@@ -303,10 +303,10 @@ async def test_non_json_reply_raises_filter_parse_error(stub_agent_factory) -> N
 
 
 @pytest.mark.asyncio
-async def test_invalid_schema_raises_filter_parse_error(stub_agent_factory) -> None:
+async def test_invalid_schema_raises_filter_parse_error(stub_lm_client_factory) -> None:
     bad = json.dumps({"period": {"kind": "yearly"}})  # invalid period kind
-    agent = stub_agent_factory(bad)
-    parser = IntentParser(agent)
+    client = stub_lm_client_factory(bad)
+    parser = IntentParser(client)
 
     with pytest.raises(FilterParseError) as exc:
         await parser.parse("生成报告")
@@ -316,11 +316,11 @@ async def test_invalid_schema_raises_filter_parse_error(stub_agent_factory) -> N
 
 
 @pytest.mark.asyncio
-async def test_empty_user_text_rejected(stub_agent_factory) -> None:
-    agent = stub_agent_factory()  # no replies expected
-    parser = IntentParser(agent)
+async def test_empty_user_text_rejected(stub_lm_client_factory) -> None:
+    client = stub_lm_client_factory()  # no replies expected
+    parser = IntentParser(client)
 
     with pytest.raises(FilterParseError):
         await parser.parse("   ")
 
-    assert agent.calls == []
+    assert client.calls == []

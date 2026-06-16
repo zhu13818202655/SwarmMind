@@ -1,6 +1,9 @@
 """Lightweight LM chat utilities for FlyReport."""
 
-from swarmmind.domains.fly_report.lm.client import OpenAICompatibleLMClient
+from swarmmind.domains.fly_report.lm.client import (
+    OpenAICompatibleLMClient,
+    build_intent_lm_client,
+)
 from swarmmind.domains.fly_report.lm.output import parse_json_best_effort, parse_lm_output
 from swarmmind.domains.fly_report.lm.types import (
     LMChatRequest,
@@ -27,6 +30,7 @@ __all__ = [
     "LMRole",
     "LMTimeoutError",
     "OpenAICompatibleLMClient",
+    "build_intent_lm_client",
     "parse_json_best_effort",
     "parse_lm_output",
 ]
