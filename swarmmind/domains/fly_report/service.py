@@ -1159,7 +1159,10 @@ class FlyReportService:
             raise FileNotFoundError(filename)
 
         session_root = (self._output_root / record.id).resolve()
-        for artifact in record.artifacts:
+        artifacts = record.artifacts
+        if not artifacts:
+            artifacts = await self._repo.list_artifacts(record.id)
+        for artifact in artifacts:
             if Path(artifact["artifact_path"]).name == filename:
                 target = Path(artifact["artifact_path"]).resolve()
                 try:

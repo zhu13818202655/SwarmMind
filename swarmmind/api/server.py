@@ -8,6 +8,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from loguru import logger
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +19,14 @@ from swarmmind.app import get_container
 from swarmmind.config import SwarmMindConfig, get_settings
 from swarmmind.defaults import DEFAULT_SANDBOX_PROFILE
 from swarmmind.domains.fly_report.data_fetcher import DataFetcher
+from swarmmind.domains.fly_report.dikong_sql import (
+    DikongSqlClient,
+    SqlDataFetcher,
+    close_pg_pool,
+    close_td_client,
+    get_pg_pool,
+    get_td_client,
+)
 from swarmmind.domains.fly_report.intent.parser import IntentParser
 from swarmmind.gateway import RunDetail, TaskDetail, TaskSubmitRequest
 from swarmmind.models.run import RunPhase, RunStatus
@@ -43,7 +52,34 @@ async def lifespan(app: FastAPI):
             logging.getLogger(__name__).exception(
                 "fly_report.repo_init_failed"
             )
+    # If SQL source was requested, now that we're async we can open the
+    # PG pool + TDengine client and replace the placeholder service.
+    if getattr(app.state, "_fly_report_sql_deferred", False):
+        from swarmmind.domains.fly_report.service import FlyReportService
+
+        fly_report_cfg = app.state.settings.fly_report
+        pg_pool = await get_pg_pool(fly_report_cfg.dikong_sql.postgres)
+        td_client = await get_td_client(fly_report_cfg.dikong_sql.tdengine)
+        dikong_sql_client = DikongSqlClient(
+            pg_pool, td_client, fly_report_cfg.dikong_sql
+        )
+        app.state.fly_report_service = FlyReportService(
+            repository=app.state._fly_report_repo,
+            event_bus=app.state._fly_report_event_bus,
+            intent_parser=app.state._fly_report_intent_parser,
+            data_fetcher=SqlDataFetcher(dikong_sql_client),
+            output_root=app.state._fly_report_output_root,
+        )
     yield
+    # Cleanup: close SQL resources if they were opened
+    try:
+        await close_pg_pool()
+    except Exception:
+        pass
+    try:
+        await close_td_client()
+    except Exception:
+        pass
 
 
 class TaskCreateRequest(BaseModel):
@@ -334,19 +370,41 @@ def create_app(settings: SwarmMindConfig | None = None) -> FastAPI:
     from swarmmind.domains.fly_report.lm.client import build_intent_lm_client
 
     intent_parser = IntentParser(build_intent_lm_client(settings.agent.model))
-    dikong_client = DikongClient(settings.fly_report.dikong)
-    data_fetcher = DataFetcher(dikong_client)
+
+    fly_report_cfg = settings.fly_report
     fly_report_output_root = Path(
         os.environ.get("FLY_REPORT_OUTPUT_ROOT")
         or Path(settings.storage_path) / "fly_report_artifacts"
     )
-    app.state.fly_report_service = FlyReportService(
-        repository=fly_report_repo,
-        event_bus=fly_report_event_bus,
-        intent_parser=intent_parser,
-        data_fetcher=data_fetcher,
-        output_root=fly_report_output_root,
-    )
+
+    if fly_report_cfg.source == "sql":
+        logger.info("Initializing FlyReportService with SQL data source")
+        # SQL source: PG pool + TDengine client need async init, so we
+        # defer FlyReportService creation to the lifespan handler.
+        app.state._fly_report_sql_deferred = True
+        app.state._fly_report_repo = fly_report_repo
+        app.state._fly_report_event_bus = fly_report_event_bus
+        app.state._fly_report_intent_parser = intent_parser
+        app.state._fly_report_output_root = fly_report_output_root
+        # Register router now with a placeholder service; lifespan will
+        # replace it before the first request arrives.
+        app.state.fly_report_service = FlyReportService(
+            repository=fly_report_repo,
+            event_bus=fly_report_event_bus,
+            intent_parser=intent_parser,
+            data_fetcher=DataFetcher(DikongClient(fly_report_cfg.dikong)),
+            output_root=fly_report_output_root,
+        )
+    else:
+        dikong_client = DikongClient(fly_report_cfg.dikong)
+        data_fetcher = DataFetcher(dikong_client)
+        app.state.fly_report_service = FlyReportService(
+            repository=fly_report_repo,
+            event_bus=fly_report_event_bus,
+            intent_parser=intent_parser,
+            data_fetcher=data_fetcher,
+            output_root=fly_report_output_root,
+        )
     app.include_router(
         create_fly_report_router(app.state.fly_report_service)
     )
